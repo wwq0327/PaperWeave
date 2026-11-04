@@ -153,3 +153,7 @@ button.primary { background: #225c3d; color: #fff; border-color: #225c3d; }
 .review-blocks img { max-width: 100%; }
 .review-problems { color: #8a4b00; }
 .review-actions { border-top: 2px solid #dbe4db; margin-top: 16px; padding-top: 12px; }
+.ai-crop-thumb { max-width: 220px; max-height: 160px; display: block; }
+.ai-confirm { border: 1px solid #c8d8c8; background: #f6faf6; margin: 10px 0; padding: 10px; }
+.ai-question { margin-top: 10px; }
+.ai-part { border-left: 2px solid #dbe4db; margin: 6px 0; padding-left: 10px; }

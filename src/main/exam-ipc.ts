@@ -4,6 +4,7 @@ import type { Database } from "./database";
 import { AttachmentStore } from "./attachments";
 import { ExamStore } from "./exams";
 import { Intake } from "./intake";
+import { extractPdfText } from "./pdf-text";
 import { QuestionBank } from "./question-bank";
 
 const fileView = (file: OriginalFileRecord): OriginalFileView => ({
@@ -72,6 +73,11 @@ export function registerExams(db: Database, root: string, currentWindow: () => B
   ipcMain.handle("exam:questions", (event, examId: unknown) => {
     permitted(event);
     return store.listQuestions(text(examId, "考试标识"));
+  });
+  ipcMain.handle("exam:fileText", async (event, fileId: unknown) => {
+    permitted(event);
+    const { data } = store.readFile(text(fileId, "原卷文件"));
+    return extractPdfText(new Uint8Array(data));
   });
   ipcMain.handle("intake:save", (event, input: unknown) => {
     permitted(event);
