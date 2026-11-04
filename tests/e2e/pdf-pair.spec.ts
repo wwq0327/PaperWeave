@@ -1,7 +1,9 @@
 import { test, expect, _electron as electron } from "@playwright/test";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { Database } from "../../src/main/database";
 
 // 覆盖双 PDF IPC 接线（begin/capture/finish/cancel）与原子落盘；
 // 注意：两份内容当前相同，真实学生/教师内容隔离属后续 Issue #5 工作，不能据此关闭 Issue。
@@ -98,4 +100,29 @@ test("界面导出双卷：两份 PDF 由各自允许的字段生成且内容不
     rmSync(dir, { recursive: true, force: true });
     rmSync(outDir, { recursive: true, force: true });
   }
+});
+
+test("启动时清理未完成的双卷暂存目录并清除记录", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-recover-user-"));
+  const outParent = mkdtempSync(path.join(tmpdir(), "paperweave-recover-out-"));
+  const id = randomUUID();
+  const pending = path.join(outParent, `.paperweave-${id}.pending`);
+  const db = new Database(path.join(dir, "paperweave.sqlite"));
+  db.setSetting("pdf.pending", JSON.stringify([{ id, parent: outParent }]));
+  db.close();
+  mkdirSync(pending);
+  writeFileSync(path.join(pending, "学生卷.pdf"), "%PDF-1");
+  const app = await electron.launch({ args: [path.resolve(".vite/build/main.cjs"), `--user-data-dir=${dir}`] });
+  try {
+    await app.firstWindow();
+    expect(existsSync(pending)).toBe(false);
+  } finally {
+    await app.evaluate(({ app: electronApp }) => { electronApp.exit(0); }).catch(() => undefined);
+    await app.close().catch(() => undefined);
+  }
+  const check = new Database(path.join(dir, "paperweave.sqlite"));
+  expect(check.getSetting("pdf.pending")).toBe("[]");
+  check.close();
+  rmSync(dir, { recursive: true, force: true });
+  rmSync(outParent, { recursive: true, force: true });
 });

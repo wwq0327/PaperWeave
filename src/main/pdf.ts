@@ -2,12 +2,16 @@ import { BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { randomUUID } from "node:crypto";
 import { rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import type { Database } from "./database";
+import { addOperation, parseJournal, removeOperation } from "./pdf-journal";
 import { writePdfPair } from "./pdf-pair";
 
 /** M0 草稿样张：打印当前编辑预览，保存完成后打开同一份 PDF。 */
-export function registerPdf(currentWindow: () => BrowserWindow | undefined): void {
+export function registerPdf(db: Database, currentWindow: () => BrowserWindow | undefined): void {
   let busy = false;
   let pair: { id: string; parent: string; owner: number; student?: Buffer } | undefined;
+  let journal = parseJournal(db.getSetting("pdf.pending"));
+  const saveJournal = () => db.setSetting("pdf.pending", JSON.stringify(journal));
   const requireOwner = (event: Electron.IpcMainInvokeEvent) => {
     const win = currentWindow();
     if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) throw new Error("无权导出 PDF");
@@ -43,6 +47,8 @@ export function registerPdf(currentWindow: () => BrowserWindow | undefined): voi
       const choice = await dialog.showOpenDialog(win, { title: "选择双卷样张保存位置", properties: ["openDirectory", "createDirectory"] });
       if (choice.canceled || !choice.filePaths[0]) { busy = false; return null; }
       pair = { id: randomUUID(), parent: choice.filePaths[0], owner: event.sender.id };
+      journal = addOperation(journal, { id: pair.id, parent: pair.parent });
+      saveJournal();
       return pair.id;
     } catch (error) { busy = false; throw error; }
   });
@@ -57,6 +63,8 @@ export function registerPdf(currentWindow: () => BrowserWindow | undefined): voi
     try {
       const teacher = await current.win.webContents.printToPDF({ pageSize: "A4", preferCSSPageSize: true, printBackground: true, scale: 1 });
       const directory = await writePdfPair(current.pair.parent, current.pair.id, current.pair.student, teacher);
+      journal = removeOperation(journal, current.pair.id);
+      saveJournal();
       const studentPath = join(directory, "学生卷.pdf");
       const teacherPath = join(directory, "教师答案卷.pdf");
       const openErrors = await Promise.all([shell.openPath(studentPath), shell.openPath(teacherPath)]);
@@ -64,7 +72,9 @@ export function registerPdf(currentWindow: () => BrowserWindow | undefined): voi
     } finally { pair = undefined; busy = false; }
   });
   ipcMain.handle("pdf:cancelPair", (event, id: unknown) => {
-    requirePair(event, id);
+    const current = requirePair(event, id);
+    journal = removeOperation(journal, current.pair.id);
+    saveJournal();
     pair = undefined; busy = false;
   });
 
