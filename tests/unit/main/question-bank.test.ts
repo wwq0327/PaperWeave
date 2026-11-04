@@ -72,6 +72,30 @@ test("审核通过后修改生成版本 2 并回到待核，旧版本不变", ()
   expect(bank.getLatestQuestionVersion(created.questionId)?.id).toBe(next.id);
 });
 
+test("内容待核时改内容，已审核答案回到待核；仅改答案不重置内容状态", () => {
+  const { bank } = open();
+  const pendingContent = bank.createQuestion(math());
+  bank.setContentStatus(pendingContent.id, "pending");
+  bank.setAnswerStatus(pendingContent.id, "pending");
+  bank.setAnswerStatus(pendingContent.id, "approved");
+  const contentEdit = math();
+  contentEdit.stem = [paragraph("修改后的题干")];
+  const afterContent = bank.saveQuestionVersion(pendingContent.questionId, contentEdit);
+  expect(afterContent.contentStatus).toBe("pending");
+  expect(afterContent.answerStatus).toBe("pending");
+
+  const approved = bank.createQuestion(math());
+  bank.setContentStatus(approved.id, "pending");
+  bank.setContentStatus(approved.id, "approved");
+  bank.setAnswerStatus(approved.id, "pending");
+  bank.setAnswerStatus(approved.id, "approved");
+  const answerEdit = math();
+  answerEdit.subQuestions[0].answers[0].blocks = [paragraph("修改后的答案")];
+  const afterAnswer = bank.saveQuestionVersion(approved.questionId, answerEdit);
+  expect(afterAnswer.contentStatus).toBe("approved");
+  expect(afterAnswer.answerStatus).toBe("pending");
+});
+
 test("答案状态独立流转", () => {
   const { bank } = open();
   const created = bank.createQuestion(note());
@@ -245,6 +269,22 @@ const classification = {
   knowledgePoints: ["概括", "人物形象"],
 } satisfies Classification;
 
+test("仅修改分类不重置内容与答案审核状态", () => {
+  const { bank } = open();
+  const created = bank.createQuestion(note(), classification);
+  bank.setContentStatus(created.id, "pending");
+  bank.setContentStatus(created.id, "approved");
+  bank.setAnswerStatus(created.id, "pending");
+  bank.setAnswerStatus(created.id, "approved");
+  const next = bank.saveQuestionVersionWithClassification(created.questionId, note(), {
+    ...classification,
+    knowledgePoints: ["表达"],
+  });
+  expect(next.contentStatus).toBe("approved");
+  expect(next.answerStatus).toBe("approved");
+  expect(bank.getQuestionClassification(created.questionId)?.knowledgePoints).toEqual(["表达"]);
+});
+
 test("按学段与学科汇总已有知识点候选，按使用次数排序并限量", () => {
   const { bank } = open();
   bank.createQuestion(note(), { ...classification, knowledgePoints: ["概括", "人物形象"] });
@@ -372,7 +412,9 @@ test("审核状态按最新版本过滤，历史版本不误命中", () => {
   bank.setContentStatus(created.id, "approved");
   bank.setAnswerStatus(created.id, "pending");
   bank.setAnswerStatus(created.id, "approved");
-  const next = bank.saveQuestionVersion(created.questionId, note());
+  const changed = note();
+  changed.stem = [paragraph("修改后的题干")];
+  const next = bank.saveQuestionVersion(created.questionId, changed);
   expect(next.contentStatus).toBe("pending");
   expect(next.answerStatus).toBe("pending");
   expect(bank.searchQuestions({ contentStatus: "approved" })).toEqual([]);

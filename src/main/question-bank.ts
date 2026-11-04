@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type { DatabaseSync } from "node:sqlite";
 import { isBlockList, type Block } from "../shared/document";
 import { buildSearchText, classificationProblem, isQuestionContent, isClassification, questionContentProblem, questionReadiness, type AnswerStatus, type Classification, type QuestionContent, type Readiness, type ReviewStatus, type SourcePosition, type Stage } from "../shared/question";
@@ -113,6 +114,35 @@ interface MaterialRow {
 }
 
 /** 题目与材料的主进程写入口：版本只增不改，审核状态独立流转。 */
+/** 内容审核覆盖的字段；答案、解析与评分单独归入答案审核，分类挂在题目身份上不参与比较。 */
+function reviewContent(content: QuestionContent) {
+  return {
+    stem: content.stem,
+    materials: content.materials,
+    selection: content.selection,
+    source: content.source,
+    subQuestions: content.subQuestions.map((sub) => ({
+      id: sub.id,
+      originalLabel: sub.originalLabel,
+      prompt: sub.prompt,
+      options: sub.options,
+      slots: sub.slots,
+      materialIds: sub.materialIds,
+      dependsOn: sub.dependsOn,
+    })),
+  };
+}
+
+/** 评分点标识在录题表单中不保留，比较时忽略，避免仅重存就误判为答案变更。 */
+function reviewAnswer(content: QuestionContent) {
+  return content.subQuestions.map((sub) => ({
+    answers: sub.answers,
+    explanation: sub.explanation,
+    scoring: sub.scoring.map(({ description, score, slotIds }) => ({ description, score, slotIds })),
+    originalScore: sub.originalScore,
+  }));
+}
+
 export class QuestionBank {
   constructor(private readonly db: Database) {}
 
@@ -160,7 +190,7 @@ export class QuestionBank {
         questionId,
         version: previous.version + 1,
         content: valid,
-        ...this.savedStatuses(previous),
+        ...this.savedStatuses(previous, valid),
       });
     });
   }
@@ -189,7 +219,7 @@ export class QuestionBank {
       questionId,
       version: previous.version + 1,
       content: valid,
-      ...(statuses ?? this.savedStatuses(previous)),
+      ...(statuses ?? this.savedStatuses(previous, valid)),
     });
   }
 
@@ -398,7 +428,7 @@ export class QuestionBank {
         ...previous.content,
         materials: previous.content.materials.map((ref) => ref.materialId === materialId ? { materialId, versionId: materialVersionId } : ref),
       };
-      return this.insertQuestionVersion(sqlite, { questionId, version: previous.version + 1, content, ...this.savedStatuses(previous) });
+      return this.insertQuestionVersion(sqlite, { questionId, version: previous.version + 1, content, ...this.savedStatuses(previous, content) });
     });
   }
 
@@ -423,10 +453,13 @@ export class QuestionBank {
     });
   }
 
-  private savedStatuses(previous: QuestionVersionRecord): { contentStatus: ReviewStatus; answerStatus: AnswerStatus } {
+  /** 内容实质变更后答案必须重新审核；仅改答案时内容状态不变。分类不参与内容比较。 */
+  private savedStatuses(previous: QuestionVersionRecord, next: QuestionContent): { contentStatus: ReviewStatus; answerStatus: AnswerStatus } {
+    const contentChanged = !isDeepStrictEqual(reviewContent(previous.content), reviewContent(next));
+    const answerChanged = !isDeepStrictEqual(reviewAnswer(previous.content), reviewAnswer(next));
     return {
-      contentStatus: previous.contentStatus === "approved" ? "pending" : previous.contentStatus,
-      answerStatus: previous.contentStatus === "approved" && previous.answerStatus === "approved" ? "pending" : previous.answerStatus,
+      contentStatus: contentChanged && previous.contentStatus === "approved" ? "pending" : previous.contentStatus,
+      answerStatus: (contentChanged || answerChanged) && previous.answerStatus !== "missing" ? "pending" : previous.answerStatus,
     };
   }
 
