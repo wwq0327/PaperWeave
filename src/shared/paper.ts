@@ -16,7 +16,8 @@ export interface PaperDefaultScore {
 }
 
 export interface ScoreConflict {
-  subQuestionId: string;
+  /** 冲突所在小问；题组题干为 null。 */
+  subQuestionId: string | null;
   value: number;
   text: string;
   key: string;
@@ -54,33 +55,47 @@ export function paperScoringState(score: number, defaultScore: number, scoring: 
 function blockText(block: QuestionBlock): string[] {
   if (block.type === "paragraph") return block.runs.map((run) => (run.type === "text" ? run.text : run.type === "reference" ? run.fallback : ""));
   if (block.type === "table") return block.rows.flat();
+  if (block.type === "image") return block.alt ? [block.alt] : [];
   return [];
 }
 
-function subQuestionText(content: QuestionContent, subQuestionId: string): string[] {
-  const sub = content.subQuestions.find((item) => item.id === subQuestionId);
-  if (!sub) return [];
-  const blocks = [...sub.prompt, ...sub.options.flatMap((option) => option.content), ...sub.answers.flatMap((answer) => answer.blocks)];
-  return blocks.flatMap(blockText);
+function subQuestionBlocks(sub: QuestionContent["subQuestions"][number]): QuestionBlock[] {
+  return [
+    ...sub.prompt,
+    ...sub.options.flatMap((option) => option.content),
+    ...sub.answers.flatMap((answer) => answer.blocks),
+    ...sub.explanation,
+  ];
 }
 
-/** 扫描所选小问文字中的「N 分」，命中题库原分值且不等于卷内分值时列为冲突。 */
+/** 扫描题组题干与所选小问文字中的「N 分」，命中题库原分值且不等于卷内分值时列为冲突。 */
 export function scoreConflicts(content: QuestionContent, subQuestionIds: string[], score: number): ScoreConflict[] {
-  const selected = new Set(subQuestionIds);
+  const selected = content.subQuestions.filter((sub) => subQuestionIds.includes(sub.id));
   const conflicts: ScoreConflict[] = [];
-  for (const sub of content.subQuestions) {
-    if (!selected.has(sub.id) || sub.originalScore === null) continue;
-    const seen = new Set<string>();
-    for (const text of subQuestionText(content, sub.id)) {
+  const seen = new Set<string>();
+  const scan = (blocks: QuestionBlock[], originals: Set<number>, subQuestionId: string | null) => {
+    for (const text of blocks.flatMap(blockText)) {
       for (const match of text.matchAll(/(\d+(?:\.\d+)?)\s*分/g)) {
         const value = Number(match[1]);
-        if (value !== sub.originalScore || value === score) continue;
-        const key = `${sub.id}|${value}|${match[0]}`;
+        if (!originals.has(value) || value === score) continue;
+        const key = `${subQuestionId ?? "item"}|${value}|${match[0]}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        conflicts.push({ subQuestionId: sub.id, value, text: match[0], key });
+        conflicts.push({ subQuestionId, value, text: match[0], key });
       }
     }
+  };
+
+  if (content.stem.length > 0) {
+    const originals = new Set<number>();
+    for (const sub of selected) if (sub.originalScore !== null) originals.add(sub.originalScore);
+    const summary = paperDefaultScore(content, subQuestionIds);
+    if (summary.conflict === null && summary.score > 0) originals.add(summary.score);
+    if (originals.size > 0) scan(content.stem, originals, null);
+  }
+  for (const sub of selected) {
+    if (sub.originalScore === null) continue;
+    scan(subQuestionBlocks(sub), new Set([sub.originalScore]), sub.id);
   }
   return conflicts;
 }

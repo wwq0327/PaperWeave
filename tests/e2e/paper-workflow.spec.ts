@@ -117,8 +117,9 @@ function seed(dir: string): void {
   // 先建阅读题组，后建图文题，使检索结果中图文题在前。
   approve(readingGroup());
   const math = referenceGroup();
-  // 内嵌分值用于验证组卷时的分值冲突提示。
+  // 内嵌分值用于验证组卷时的分值冲突提示；解析中的分值验证扫描覆盖解析。
   math.subQuestions[0].prompt.push(paragraph("（4 分）"));
+  math.subQuestions[1].explanation.push(paragraph("评分说明：第二问 6 分。"));
   approve(math);
   approve(danglingReference(imageId));
   db.close();
@@ -205,10 +206,11 @@ test("题库检索到双卷定稿：依赖确认、改分、阻断、学生卷�
     await mathItem.getByRole("button", { name: "下移" }).click();
     await expect(page.locator("article.paper-item-edit").first()).toContainText("阅读下面的材料");
 
-    // 内嵌「4 分」与卷内 10 分冲突，确认后才可定稿。
-    await expect(mathItem.locator(".paper-conflict")).toContainText("「4 分」");
-    await mathItem.getByRole("button", { name: "确认保留" }).click();
-    await expect(mathItem.locator(".paper-conflict")).toContainText("已确认。");
+    // 题干「4 分」与解析「6 分」都命中旧分值，未确认时阻断定稿。
+    await expect(mathItem.locator(".paper-conflict", { hasText: "「4 分」" })).toContainText("「4 分」");
+    await expect(mathItem.locator(".paper-conflict", { hasText: "「6 分」" })).toContainText("（原分值 6 分）");
+    await mathItem.locator(".paper-conflict", { hasText: "「4 分」" }).getByRole("button", { name: "确认保留" }).click();
+    await expect(mathItem.locator(".paper-conflict", { hasText: "「4 分」" })).toContainText("已确认。");
 
     // 改分触发待调整，定稿被阻断并指出题号。
     await mathItem.getByLabel("卷内分值").fill("4");
@@ -219,8 +221,10 @@ test("题库检索到双卷定稿：依赖确认、改分、阻断、学生卷�
     await expect(page.getByText("定稿被阻断，请先处理下列问题。")).toBeVisible();
     const blockers = page.locator(".paper-blockers");
     await expect(blockers).toContainText("第 2 题：原评分不适用于当前分值，待调整");
+    await expect(blockers).toContainText("内嵌分值「6 分」尚未确认");
     await expect(page.getByText("总分 16 分")).toBeVisible();
 
+    await mathItem.locator(".paper-conflict", { hasText: "「6 分」" }).getByRole("button", { name: "确认保留" }).click();
     await mathItem.getByRole("button", { name: "仅输出参考答案" }).click();
     await expect(page.getByText("评分状态已更新。")).toBeVisible();
     await page.getByRole("button", { name: "检查定稿" }).click();
@@ -297,7 +301,8 @@ test("题库检索到双卷定稿：依赖确认、改分、阻断、学生卷�
     await expect(page.getByText("已加入试卷。")).toBeVisible();
     const adjustedItem = page.locator("article.paper-item-edit", { hasText: "的结论是否成立。" });
     await expect(page.getByText("总分 10 分")).toBeVisible();
-    await adjustedItem.locator(".paper-conflict").getByRole("button", { name: "确认保留" }).click();
+    await adjustedItem.locator(".paper-conflict", { hasText: "「4 分」" }).getByRole("button", { name: "确认保留" }).click();
+    await adjustedItem.locator(".paper-conflict", { hasText: "「6 分」" }).getByRole("button", { name: "确认保留" }).click();
     await adjustedItem.getByLabel("卷内分值").fill("8");
     await adjustedItem.getByRole("button", { name: "改分" }).click();
     await expect(page.getByText("卷内分值已更新。")).toBeVisible();
