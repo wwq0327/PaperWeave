@@ -210,6 +210,9 @@ test("空试卷与中断恢复：清理无记录完成目录，保留有效定�
   const pendingPaths = pdfPairPaths(out, pendingId);
   mkdirSync(pendingPaths.pending);
   writeFileSync(join(pendingPaths.pending, "学生卷.pdf"), "%PDF-1");
+  mkdirSync(pendingPaths.preview, { recursive: true });
+  writeFileSync(join(pendingPaths.preview, "学生卷.pdf"), "%PDF-1");
+  writeFileSync(join(pendingPaths.preview, "教师答案卷.pdf"), "%PDF-1");
 
   const unusual = randomUUID();
   const unusualPaths = pdfPairPaths(out, unusual);
@@ -230,6 +233,7 @@ test("空试卷与中断恢复：清理无记录完成目录，保留有效定�
   expect(existsSync(join(out, `拾题成卷-样张-${record.id}`))).toBe(true);
   expect(existsSync(orphanPaths.result)).toBe(false);
   expect(existsSync(pendingPaths.pending)).toBe(false);
+  expect(existsSync(pendingPaths.preview)).toBe(false);
   expect(existsSync(unusualPaths.result)).toBe(true);
   expect(JSON.parse(db.getSetting(PAPER_JOURNAL_KEY) ?? "[]")).toEqual([{ id: unusual, parent: out }]);
 });

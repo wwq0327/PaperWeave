@@ -77,7 +77,7 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [printJob, setPrintJob] = useState<{ id: string; paper: import("../shared/paper-layout").VolumePaper; phase: "student" | "teacher" } | null>(null);
+  const [printJob, setPrintJob] = useState<{ id: string; paper: import("../shared/paper-layout").VolumePaper; phase: "student" | "teacher" } | { id: string; phase: "confirm" } | null>(null);
 
   async function loadBasket() {
     try { setBasket(await window.paperweave.listBasket()); } catch (e) { setError(`读取题篮失败：${errorText(e)}`); }
@@ -250,17 +250,28 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
         await window.paperweave.capturePaperStudent(job.id);
         const teacher = await window.paperweave.getPaperTeacherVolume(job.id);
         setPrintJob({ ...job, paper: teacher, phase: "teacher" });
-      } else {
-        const result = await window.paperweave.finishPaperFinalize(job.id);
-        setPrintJob(null);
-        const failed = result.openErrors.filter(Boolean);
-        setMessage(failed.length ? `双卷已保存，但有文件无法自动打开：${failed.join("；")}` : "学生卷与教师答案卷已保存并打开。打印请选 A4 与 100% 缩放。");
-        await loadPaper(paperId);
+      } else if (job.phase === "teacher") {
+        const preview = await window.paperweave.capturePaperTeacher(job.id);
+        setPrintJob({ id: job.id, phase: "confirm" });
+        const failed = preview.openErrors.filter(Boolean);
+        if (failed.length) setError(`双卷预览无法自动打开，请检查后重试：${failed.join("；")}`);
       }
     } catch (e) {
       await window.paperweave.cancelPaperFinalize(job.id).catch(() => undefined);
       setPrintJob(null);
       setError(`生成双卷失败：${errorText(e)}`);
+    }
+  }
+  async function confirmFinalize(id: string) {
+    try {
+      await window.paperweave.confirmPaperFinalize(id);
+      setPrintJob(null);
+      setMessage("双卷已保存为定稿。打印请选 A4 与 100% 缩放。");
+      await loadPaper(paperId);
+    } catch (e) {
+      await window.paperweave.cancelPaperFinalize(id).catch(() => undefined);
+      setPrintJob(null);
+      setError(`保存定稿失败：${errorText(e)}`);
     }
   }
   async function cancelPrint(id: string) {
@@ -286,6 +297,15 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
     catch (e) { setError(`检查失败：${errorText(e)}`); }
   }
 
+  if (printJob?.phase === "confirm") return <main className="paper-app">
+    <section className="paper-confirm" role="dialog" aria-label="确认定稿">
+      <h1>检查双卷预览</h1>
+      <p>学生卷与教师答案卷已在系统程序中打开。确认页码、排版与答案无误后保存为定稿；取消不会产生定稿记录。</p>
+      {error && <p role="alert" className="error">{error} <button onClick={() => setError("")}>关闭</button></p>}
+      <button className="primary" onClick={() => void confirmFinalize(printJob.id)}>确认保存为定稿</button>
+      <button onClick={() => void cancelPrint(printJob.id)}>取消并丢弃</button>
+    </section>
+  </main>;
   if (printJob) return <PaperPrintView paper={printJob.paper} onReady={() => void printReady()} onCancel={() => void cancelPrint(printJob.id)} />;
 
   return <main className="paper-app">

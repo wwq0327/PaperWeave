@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { access, readdir, rm } from "node:fs/promises";
+import { access, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   buildPaperSnapshot,
@@ -15,7 +15,7 @@ import type { Database } from "./database";
 import { Paper, type PaperDetail, type PaperItemRecord } from "./paper";
 import { QuestionBank } from "./question-bank";
 import { addOperation, parseJournal, removeOperation, type PendingOperation } from "./pdf-journal";
-import { pdfPairPaths, writePdfPair } from "./pdf-pair";
+import { isValidPdf, pdfPairPaths, writePdfPair } from "./pdf-pair";
 
 export const PAPER_JOURNAL_KEY = "paper.pending";
 
@@ -164,6 +164,24 @@ export class PaperFinalizer {
     return record;
   }
 
+  /** 写入预览暂存并用路径交给界面打开；确认前不产生正式目录或记录。 */
+  async stagePreview(id: string, parent: string, student: Buffer, teacher: Buffer): Promise<{ studentPath: string; teacherPath: string }> {
+    if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error("操作标识无效");
+    if (!isValidPdf(student) || !isValidPdf(teacher)) throw new Error("双份 PDF 必须都生成并校验成功");
+    const { preview } = pdfPairPaths(parent, id);
+    const studentPath = join(preview, "学生卷.pdf");
+    const teacherPath = join(preview, "教师答案卷.pdf");
+    await mkdir(preview, { recursive: true });
+    await writeFile(studentPath, student, { flag: "wx" });
+    await writeFile(teacherPath, teacher, { flag: "wx" });
+    return { studentPath, teacherPath };
+  }
+
+  /** 删除预览暂存；确认落盘后或取消时调用。 */
+  async clearPreview(id: string, parent: string): Promise<void> {
+    await rm(pdfPairPaths(parent, id).preview, { recursive: true, force: true });
+  }
+
   /** 取消尚未落盘的定稿操作；已开始写盘的操作留给启动恢复处理。 */
   abort(id: string): void {
     const journal = parseJournal(this.db.getSetting(PAPER_JOURNAL_KEY));
@@ -264,6 +282,14 @@ export async function recoverPaperFinalizations(db: Database): Promise<{ cleared
   const kept: PendingOperation[] = [];
   for (const operation of operations) {
     const paths = pdfPairPaths(operation.parent, operation.id);
+    const previewNames = await entries(paths.preview);
+    if (previewNames !== undefined) {
+      if (!previewNames.every((name) => expectedFiles.has(name))) {
+        kept.push(operation);
+        continue;
+      }
+      await rm(paths.preview, { recursive: true, force: true });
+    }
     const pendingNames = await entries(paths.pending);
     if (pendingNames !== undefined && !pendingNames.every((name) => expectedFiles.has(name))) {
       kept.push(operation);
