@@ -24,7 +24,7 @@ const port = 9300 + Math.floor(Math.random() * 500);
 const child = spawn(path.resolve(APP), [
   `--remote-debugging-port=${port}`,
   `--user-data-dir=${dataDir}`,
-], { stdio: ["ignore", "ignore", "pipe"] });
+], { stdio: ["ignore", "ignore", "pipe"], env: { ...process.env, PAPERWEAVE_TEST: "1" } });
 let stderr = "";
 child.stderr.on("data", (d) => (stderr += d.toString()));
 

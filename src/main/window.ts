@@ -9,6 +9,8 @@ export function createMainWindow(): BrowserWindow {
     title: "拾题成卷 PaperWeave",
     width: 1280,
     height: 800,
+    // 自动化测试模式隐藏窗口，避免跑套件时频繁弹窗打扰屏幕。
+    show: !process.env.PAPERWEAVE_TEST,
     webPreferences: {
       preload: join(__dirname, "preload.cjs"),
       contextIsolation: true,
