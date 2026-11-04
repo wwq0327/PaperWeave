@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, test } from "vitest";
 import { Database } from "../../../src/main/database";
 import { QuestionBank } from "../../../src/main/question-bank";
+import type { Classification } from "../../../src/shared/question";
 import { math, note, paragraph } from "../fixtures/questions";
 
 const directories: string[] = [];
@@ -212,4 +213,62 @@ test("就绪检查接入材料状态：材料未审核阻断，确认答案待�
   const confirmed = bank.checkReady(gapQuestion.id, { confirmAnswerGap: true });
   expect(confirmed.ready).toBe(true);
   expect(confirmed.notices.length).toBeGreaterThan(0);
+});
+
+const classification = {
+  stage: "小学",
+  subject: "语文",
+  grade: "三年级",
+  examType: "期中",
+  year: "2025-2026",
+  sourceName: "自编",
+  questionType: "阅读",
+  knowledgePoints: ["概括", "人物形象"],
+} satisfies Classification;
+
+test("创建题目时写入分类，读取一致；未提供分类时返回 undefined", () => {
+  const { bank } = open();
+  const categorized = bank.createQuestion(note(), classification);
+  expect(bank.getQuestionClassification(categorized.questionId)).toEqual(classification);
+  const plain = bank.createQuestion(note());
+  expect(bank.getQuestionClassification(plain.questionId)).toBeUndefined();
+  expect(bank.getQuestionClassification("missing")).toBeUndefined();
+});
+
+test("修改分类不生成新版本，也不改变内容审核状态", () => {
+  const { bank } = open();
+  const created = bank.createQuestion(note(), classification);
+  bank.setContentStatus(created.id, "pending");
+  bank.setContentStatus(created.id, "approved");
+  const updated = { ...classification, examType: "期末", knowledgePoints: ["概括"] };
+  expect(bank.setClassification(created.questionId, updated)).toEqual(updated);
+  const latest = bank.getLatestQuestionVersion(created.questionId);
+  expect(latest?.id).toBe(created.id);
+  expect(latest?.version).toBe(1);
+  expect(latest?.contentStatus).toBe("approved");
+  expect(bank.getQuestionClassification(created.questionId)).toEqual(updated);
+});
+
+test("修改分类时知识点整体替换", () => {
+  const { bank } = open();
+  const created = bank.createQuestion(note(), classification);
+  bank.setClassification(created.questionId, { ...classification, knowledgePoints: ["分析"] });
+  expect(bank.getQuestionClassification(created.questionId)?.knowledgePoints).toEqual(["分析"]);
+  bank.setClassification(created.questionId, { ...classification, knowledgePoints: [] });
+  expect(bank.getQuestionClassification(created.questionId)?.knowledgePoints).toEqual([]);
+});
+
+test("非法分类被拒绝且不留下部分更新", () => {
+  const { bank, path } = open();
+  const created = bank.createQuestion(note(), classification);
+  expect(() => bank.setClassification(created.questionId, { ...classification, stage: "大学" })).toThrow("学段无效");
+  expect(() => bank.setClassification(created.questionId, { ...classification, knowledgePoints: ["概括", "概括"] })).toThrow();
+  expect(bank.getQuestionClassification(created.questionId)).toEqual(classification);
+  expect(() => bank.setClassification("missing", classification)).toThrow("题目不存在");
+  expect(() => bank.createQuestion(note(), { ...classification, stage: "大学" })).toThrow("学段无效");
+
+  const raw = new DatabaseSync(path);
+  expect((raw.prepare("SELECT count(*) AS count FROM questions").get() as { count: number }).count).toBe(1);
+  expect((raw.prepare("SELECT count(*) AS count FROM question_knowledge_points").get() as { count: number }).count).toBe(2);
+  raw.close();
 });

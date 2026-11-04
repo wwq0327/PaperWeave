@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { isBlockList, type Block } from "../shared/document";
-import { isQuestionContent, questionContentProblem, questionReadiness, type AnswerStatus, type QuestionContent, type Readiness, type ReviewStatus } from "../shared/question";
+import { buildSearchText, classificationProblem, isQuestionContent, isClassification, questionContentProblem, questionReadiness, type AnswerStatus, type Classification, type QuestionContent, type Readiness, type ReviewStatus } from "../shared/question";
 import type { Database } from "./database";
 
 export interface QuestionVersionRecord {
@@ -87,11 +87,13 @@ interface MaterialRow {
 export class QuestionBank {
   constructor(private readonly db: Database) {}
 
-  createQuestion(content: unknown): QuestionVersionRecord {
+  createQuestion(content: unknown, classification?: unknown): QuestionVersionRecord {
     const valid = this.validQuestion(content);
+    const validClassification = classification === undefined ? undefined : this.validClassification(classification);
     return this.db.transaction((sqlite) => {
       const questionId = randomUUID();
       sqlite.prepare("INSERT INTO questions (id, created_at) VALUES (?, ?)").run(questionId, new Date().toISOString());
+      if (validClassification) this.writeClassification(sqlite, questionId, validClassification);
       this.ensureMaterials(sqlite, valid);
       return this.insertQuestionVersion(sqlite, { questionId, version: 1, content: valid, contentStatus: "draft", answerStatus: "missing" });
     });
@@ -121,6 +123,42 @@ export class QuestionBank {
   getLatestQuestionVersion(questionId: string): QuestionVersionRecord | undefined {
     const row = this.db.read((sqlite) => this.latestQuestionRow(sqlite, questionId));
     return row === undefined ? undefined : this.questionRecord(row);
+  }
+
+  /** 分类挂在题目身份上，与版本无关；未标分类时返回 undefined。 */
+  getQuestionClassification(questionId: string): Classification | undefined {
+    return this.db.read((sqlite) => {
+      const row = sqlite.prepare("SELECT stage, subject, grade, exam_type, year, source_name, question_type FROM questions WHERE id = ?").get(questionId) as {
+        stage: string;
+        subject: string;
+        grade: string;
+        exam_type: string;
+        year: string;
+        source_name: string;
+        question_type: string;
+      } | undefined;
+      if (row === undefined || row.stage === "") return undefined;
+      const knowledgePoints = sqlite.prepare("SELECT value FROM question_knowledge_points WHERE question_id = ? ORDER BY rowid").all(questionId).map((point) => (point as { value: string }).value);
+      const value = {
+        stage: row.stage,
+        subject: row.subject,
+        grade: row.grade,
+        examType: row.exam_type,
+        year: row.year,
+        sourceName: row.source_name,
+        questionType: row.question_type,
+        knowledgePoints,
+      };
+      if (!isClassification(value)) throw new Error("分类数据损坏");
+      return value;
+    });
+  }
+
+  /** 修改分类只更新题目身份，不生成新版本，也不触碰审核状态。 */
+  setClassification(questionId: string, value: unknown): Classification {
+    const valid = this.validClassification(value);
+    this.db.transaction((sqlite) => this.writeClassification(sqlite, questionId, valid));
+    return valid;
   }
 
   setContentStatus(versionId: string, status: ReviewStatus): void {
@@ -256,6 +294,20 @@ export class QuestionBank {
     return content;
   }
 
+  private validClassification(value: unknown): Classification {
+    const problem = classificationProblem(value);
+    if (problem) throw new Error(`分类无效：${problem}`);
+    return value as Classification;
+  }
+
+  private writeClassification(sqlite: DatabaseSync, questionId: string, value: Classification): void {
+    const updated = sqlite.prepare("UPDATE questions SET stage = ?, subject = ?, grade = ?, exam_type = ?, year = ?, source_name = ?, question_type = ? WHERE id = ?").run(value.stage, value.subject, value.grade, value.examType, value.year, value.sourceName, value.questionType, questionId);
+    if (updated.changes === 0) throw new Error("题目不存在");
+    sqlite.prepare("DELETE FROM question_knowledge_points WHERE question_id = ?").run(questionId);
+    const insert = sqlite.prepare("INSERT INTO question_knowledge_points (question_id, value) VALUES (?, ?)");
+    for (const point of value.knowledgePoints) insert.run(questionId, point);
+  }
+
   private validMaterial(input: unknown): MaterialInput {
     const problem = materialProblem(input);
     if (problem) throw new Error(problem);
@@ -278,7 +330,7 @@ export class QuestionBank {
   private insertQuestionVersion(sqlite: DatabaseSync, input: { questionId: string; version: number; content: QuestionContent; contentStatus: ReviewStatus; answerStatus: AnswerStatus }): QuestionVersionRecord {
     const id = randomUUID();
     const createdAt = new Date().toISOString();
-    sqlite.prepare("INSERT INTO question_versions (id, question_id, version, content, content_status, answer_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(id, input.questionId, input.version, JSON.stringify(input.content), input.contentStatus, input.answerStatus, createdAt);
+    sqlite.prepare("INSERT INTO question_versions (id, question_id, version, content, content_status, answer_status, created_at, search_text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(id, input.questionId, input.version, JSON.stringify(input.content), input.contentStatus, input.answerStatus, createdAt, buildSearchText(input.content));
     const insertRef = sqlite.prepare("INSERT INTO question_material_refs (question_version_id, material_version_id) VALUES (?, ?)");
     for (const ref of input.content.materials) insertRef.run(id, ref.versionId);
     return { id, questionId: input.questionId, version: input.version, content: input.content, contentStatus: input.contentStatus, answerStatus: input.answerStatus, createdAt };
