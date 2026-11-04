@@ -17,6 +17,21 @@
 - 第二轮已下载 19 个公开 PDF，覆盖初中九门文化科、小学数学和英语。对照了本地小学语文、初中语文与数学卷，并核读学之思、BCTK 和 H5P 源码。高中部分选考原卷与分步评分仍待补。
 - 旧库校勘发现 mathVault 2023 南充数学第 25 题的设问和条件有偏差，已记录为迁移前必核项。
 
+## 开发状态（2026-11-04 更新）
+
+M0 已启动。Issue #1「工程脚手架——Electron 双平台安装包与断网启动」已合并（ff542ec，PR #11）：
+
+- macOS 实测通过：断网启动（E2E 零网络请求断言）、LaunchServices 启动、中文路径启动均绿，证据截图在 `tests/e2e/evidence/`
+- Windows x64 zip 交叉构建通过；安装与启动**待补验**（无 Windows 硬件，补验方式见 `docs/基线记录.md`）
+- 依赖版本基线已建：`docs/基线记录.md`（Electron 45.2.2 / 内置 Node 24.22.2 / Chrome 156.0.8078.80 等，精确锁定）
+- 检查入口：`npm run check`（typecheck + 单测）、`npm run check:artifacts`（安装包基本检查）、`npm run test:e2e`
+- Issue #2–#10 未动；实施计划与执行台账在 `docs/superpowers/plans/2026-11-04-electron-scaffold.md` 与 `.superpowers/sdd/`（后者为 gitignored 草稿）
+
+## 节奏决定（2026-11-04 用户指示）
+
+- **先把 macOS 做实**，Windows/Linux 暂不推进；Windows 保持"构建先行、实测待补验"，Linux 现阶段不做
+- **自主循环暂停**：未经用户当次指令，不继续执行 Issue #2 及后续任务
+
 ## 接着讨论
 
 开发 agent 接手时先读[产品需求文档 V1](产品需求文档-V1.md)和[开发与验收流程 V1](开发与验收流程-V1.md)，技术选型参考[本地跨平台应用方案 V1](本地跨平台应用方案-V1.md)。开发启动后先做 M0 双平台安装、离线打印与文字、裁图两种 AI 输入验证。题源见[对照研究](原卷与题库对照研究.md)及[PDF 清单](../research/PDF清单.md)。
