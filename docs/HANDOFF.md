@@ -25,7 +25,7 @@ M0 已启动。Issue #1「工程脚手架——Electron 双平台安装包与断
 - Windows x64 zip 交叉构建通过；安装与启动**待补验**（无 Windows 硬件，补验方式见 `docs/基线记录.md`）
 - 依赖版本基线已建：`docs/基线记录.md`（Electron 45.2.2 / 内置 Node 24.22.2 / Chrome 156.0.8078.80 等，精确锁定）
 - 检查入口：`npm run check`（typecheck + 单测）、`npm run check:artifacts`（安装包基本检查）、`npm run test:e2e`
-- Issue #2、#3 已在本地推进，#4 已实现部分编辑流程；尚未推送或合并。实施计划与执行台账在 `docs/superpowers/plans/2026-11-04-electron-scaffold.md` 与 `.superpowers/sdd/`（后者为 gitignored 草稿）。
+- Issue #2–#5 的部分成果已通过 PR #12–#15 合并入 main（2026-11-04），各 Issue 因验收未完成保持 OPEN。实施计划与执行台账在 `docs/superpowers/plans/2026-11-04-electron-scaffold.md` 与 `.superpowers/sdd/`（后者为 gitignored 草稿）。
 
 ## 节奏决定（2026-11-04 用户指示）
 
@@ -43,7 +43,7 @@ M0 已启动。Issue #1「工程脚手架——Electron 双平台安装包与断
 - 双 PDF 保存基础：新增 `src/main/pdf-pair.ts`，同一目录暂存两份文件，检查 PDF 文件头／结尾并回读字节，成功后以目录重命名一次呈现；同一操作标识、相同内容重试返回同一目录，不同内容被拒绝。单测覆盖正常、重复重试、第二份写入失败和无效输入，`npm run check` 通过。此模块尚未接界面或真实双卷，不是正式定稿；PDF 头尾检查不是完整解析，进程中断留下的 `.pending` 目录尚无恢复或安全清理机制，需后续补齐并测试。
 - 教师答案字段：编辑草稿结构升级为版本 2，增加独立的纯文本教师参考答案；旧版草稿读取时转换、原内容保留，保存后写新格式。界面保存重开和旧格式转换检查通过。尚无按题号关联、公式／图片答案或评分结构，也尚未生成教师卷；当前单份 PDF 仍是草稿样张，不能视作正式学生卷。
 - 双 PDF IPC 接线：`src/main/pdf.ts` 新增 `begin/captureStudent/finish/cancel` 四通道，绑定操作标识与发起窗口，接入 `pdf-pair` 原子落盘；E2E `tests/e2e/pdf-pair.spec.ts` 覆盖生成、校验、打开、无效标识与取消后失效（接线后补充，首次运行即通过）。`npm run check`（9 项）与 `npm run test:e2e`（6 项）通过。仍有两份内容相同、界面未接、`.pending` 中断恢复与纸样未验等缺口，Issue #5 不能关闭。
-- 用户要求每完成一个开发步骤就更新本交接并提交相关代码；当前这些提交仅在本地，未推送、未建 PR、未关闭 Issue。
+- 用户要求每完成一个开发步骤就更新本交接并提交相关代码。上述 #2–#5 提交已推送并按栈顺序经 PR #12–#15 合并入 main（merge commit，未 squash，保留逐 Issue 提交）；各 Issue 均未关闭，待完成项见各 PR 正文与上文。
 
 ## 接着讨论
 
