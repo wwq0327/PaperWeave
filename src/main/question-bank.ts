@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { isBlockList, type Block } from "../shared/document";
-import { buildSearchText, classificationProblem, isQuestionContent, isClassification, questionContentProblem, questionReadiness, type AnswerStatus, type Classification, type QuestionContent, type Readiness, type ReviewStatus } from "../shared/question";
+import { buildSearchText, classificationProblem, isQuestionContent, isClassification, questionContentProblem, questionReadiness, type AnswerStatus, type Classification, type QuestionContent, type Readiness, type ReviewStatus, type SourcePosition, type Stage } from "../shared/question";
 import type { Database } from "./database";
 
 export interface QuestionVersionRecord {
@@ -36,6 +36,33 @@ export interface QuestionUsage {
   versionId: string;
   version: number;
   materialVersion: number;
+}
+
+export interface QuestionFilter {
+  stage?: Stage;
+  subject?: string;
+  grade?: string;
+  examType?: string;
+  year?: string;
+  sourceName?: string;
+  questionType?: string;
+  knowledgePoint?: string;
+  keyword?: string;
+  contentStatus?: ReviewStatus;
+  answerStatus?: AnswerStatus;
+  limit?: number;
+}
+
+export interface QuestionSummary {
+  questionId: string;
+  versionId: string;
+  version: number;
+  contentStatus: ReviewStatus;
+  answerStatus: AnswerStatus;
+  classification: Classification | undefined;
+  preview: string;
+  source: SourcePosition;
+  materialIds: string[];
 }
 
 const isReviewStatus = (value: unknown): value is ReviewStatus => value === "draft" || value === "pending" || value === "approved";
@@ -159,6 +186,54 @@ export class QuestionBank {
     const valid = this.validClassification(value);
     this.db.transaction((sqlite) => this.writeClassification(sqlite, questionId, valid));
     return valid;
+  }
+
+  /** 只检索每题最新版本；关键词只查可搜索文本，不涉及答案、解析与材料正文。 */
+  searchQuestions(filter: unknown = {}): QuestionSummary[] {
+    const valid = this.validFilter(filter);
+    const limit = valid.limit ?? 50;
+    const rows = this.db.read((sqlite) => {
+      const conditions: string[] = [];
+      const params: (string | number)[] = [];
+      const equals = [
+        ["stage", "q.stage"],
+        ["subject", "q.subject"],
+        ["grade", "q.grade"],
+        ["examType", "q.exam_type"],
+        ["year", "q.year"],
+        ["sourceName", "q.source_name"],
+        ["questionType", "q.question_type"],
+        ["contentStatus", "qv.content_status"],
+        ["answerStatus", "qv.answer_status"],
+      ] as const;
+      for (const [key, column] of equals) {
+        const value = valid[key];
+        if (value !== undefined) {
+          conditions.push(`${column} = ?`);
+          params.push(value);
+        }
+      }
+      if (valid.knowledgePoint !== undefined) {
+        conditions.push("EXISTS (SELECT 1 FROM question_knowledge_points kp WHERE kp.question_id = qv.question_id AND kp.value = ?)");
+        params.push(valid.knowledgePoint);
+      }
+      if (valid.keyword !== undefined) {
+        conditions.push("instr(qv.search_text, ?) > 0");
+        params.push(valid.keyword);
+      }
+      const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+      return sqlite.prepare(`
+        SELECT qv.id AS versionId, qv.question_id AS questionId, qv.version, qv.content, qv.content_status AS contentStatus, qv.answer_status AS answerStatus, qv.search_text AS searchText
+        FROM question_versions qv
+        JOIN questions q ON q.id = qv.question_id
+        JOIN (SELECT question_id, MAX(version) AS version FROM question_versions GROUP BY question_id) latest
+          ON latest.question_id = qv.question_id AND latest.version = qv.version
+        ${where}
+        ORDER BY qv.created_at DESC
+        LIMIT ?
+      `).all(...params, limit) as unknown[];
+    });
+    return rows.map((row) => this.questionSummary(row));
   }
 
   setContentStatus(versionId: string, status: ReviewStatus): void {
@@ -298,6 +373,42 @@ export class QuestionBank {
     const problem = classificationProblem(value);
     if (problem) throw new Error(`分类无效：${problem}`);
     return value as Classification;
+  }
+
+  private validFilter(value: unknown): QuestionFilter {
+    if (value === undefined) return {};
+    if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("检索条件无效");
+    const input = value as Record<string, unknown>;
+    const allowed = ["stage", "subject", "grade", "examType", "year", "sourceName", "questionType", "knowledgePoint", "keyword", "contentStatus", "answerStatus", "limit"];
+    if (!Object.keys(input).every((key) => allowed.includes(key))) throw new Error("检索条件包含未知字段");
+    for (const key of ["subject", "grade", "examType", "year", "sourceName", "questionType", "knowledgePoint", "keyword"]) {
+      const item = input[key];
+      if (item !== undefined && (typeof item !== "string" || item.length > 200)) throw new Error(`检索条件「${key}」无效`);
+    }
+    if (input.stage !== undefined && input.stage !== "小学" && input.stage !== "初中" && input.stage !== "高中") throw new Error("检索学段无效");
+    if (input.contentStatus !== undefined && !isReviewStatus(input.contentStatus)) throw new Error("检索内容状态无效");
+    if (input.answerStatus !== undefined && !isAnswerStatus(input.answerStatus)) throw new Error("检索答案状态无效");
+    if (input.limit !== undefined && (typeof input.limit !== "number" || !Number.isInteger(input.limit) || input.limit < 1 || input.limit > 200)) throw new Error("检索数量无效");
+    return input as QuestionFilter;
+  }
+
+  private questionSummary(row: unknown): QuestionSummary {
+    const value = row as { versionId: string; questionId: string; version: number; content: string; contentStatus: string; answerStatus: string; searchText: string };
+    let content: unknown;
+    try { content = JSON.parse(value.content); } catch { throw new Error("题目版本内容损坏，已保留原数据"); }
+    if (!isQuestionContent(content)) throw new Error("题目版本内容损坏，已保留原数据");
+    if (!isReviewStatus(value.contentStatus) || !isAnswerStatus(value.answerStatus)) throw new Error("题目审核状态损坏");
+    return {
+      questionId: value.questionId,
+      versionId: value.versionId,
+      version: value.version,
+      contentStatus: value.contentStatus,
+      answerStatus: value.answerStatus,
+      classification: this.getQuestionClassification(value.questionId),
+      preview: value.searchText.replace(/\s+/g, " ").trim().slice(0, 120),
+      source: content.source,
+      materialIds: content.materials.map((ref) => ref.materialId),
+    };
   }
 
   private writeClassification(sqlite: DatabaseSync, questionId: string, value: Classification): void {
