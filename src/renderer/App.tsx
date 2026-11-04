@@ -117,6 +117,7 @@ export default function App() {
       {block.type === "table" && <><div className="table-scroll"><table><tbody>{block.rows.map((row, y) => <tr key={y}>{row.map((cell, x) => <td key={x}><input aria-label={`第 ${y + 1} 行第 ${x + 1} 列`} value={cell} onChange={(e) => update(index, { ...block, rows: block.rows.map((r, yi) => r.map((c, xi) => yi === y && xi === x ? e.target.value : c)) })} /></td>)}</tr>)}</tbody></table></div><div className="toolbar"><button disabled={block.rows.length >= 30} onClick={() => update(index, { ...block, rows: [...block.rows, block.rows[0].map(() => "")] })}>添加行</button><button disabled={block.rows[0].length >= 10} onClick={() => update(index, { ...block, rows: block.rows.map((r) => [...r, ""]) })}>添加列</button></div></>}
     </section>)}
     {!draft.blocks.length && <p>暂无内容，可从上方添加段落。</p>}
+    <section className="block"><label>教师参考答案（仅供教师卷样张使用）<textarea value={draft.teacherAnswer} onChange={(e) => setDraft((old) => old && ({ ...old, teacherAnswer: e.target.value }))} /></label><p className="muted">目前仅支持纯文本，答案与题号的自动对应及评分尚未实现。</p></section>
     <button onClick={exportPdf} disabled={saving}>{exporting ? "正在生成 PDF…" : "生成并预览草稿 PDF"}</button>
     </fieldset>
     <Preview draft={draft} cache={imageCache} />
