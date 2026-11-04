@@ -30,7 +30,7 @@ async function startAndWait() {
         const port = Number(readFileSync(portFile, "utf8").split("\n")[0]);
         const pages = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
         if (pages.some((page) => page.type === "page" && page.title === "拾题成卷 PaperWeave") &&
-            probe("const d=new (require('node:sqlite').DatabaseSync)(process.argv[1]); console.log(d.prepare('PRAGMA user_version').get().user_version); d.close()") === "1") return child;
+            probe("const d=new (require('node:sqlite').DatabaseSync)(process.argv[1]); console.log(d.prepare('PRAGMA user_version').get().user_version); d.close()") === "2") return child;
       } catch { /* 应用尚未就绪 */ }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }

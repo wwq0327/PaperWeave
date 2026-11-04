@@ -1,29 +1,89 @@
 import { useEffect, useState } from "react";
-import type { RuntimeVersions } from "../shared/versions";
+import katex from "katex";
+import "katex/dist/katex.min.css";
+import { emptyDraft, isDraft, type Block, type Draft, type Inline, type TextStyle } from "../shared/document";
+import "./editor.css";
 
+const styles: TextStyle[] = ["普通", "粗体", "斜体", "下划线", "上标", "下标"];
+const newRun = (): Inline => ({ type: "text", text: "", style: "普通" });
+function Formula({ latex, display = false }: { latex: string; display?: boolean }) {
+  if (!latex) return <span className="muted">输入 LaTeX 后预览</span>;
+  try {
+    const html = katex.renderToString(latex, { displayMode: display, throwOnError: true, trust: false, strict: "error" });
+    return <span aria-label="公式预览" dangerouslySetInnerHTML={{ __html: html }} />;
+  } catch { return <span role="alert">公式无法渲染，请检查表达式。</span>; }
+}
+function ImageView({ id, alt, cache }: { id: string; alt: string; cache: Record<string, string> }) {
+  const [url, setUrl] = useState(cache[id]);
+  const [error, setError] = useState(false);
+  useEffect(() => { let live = true; window.paperweave.getImage(id).then((v) => { if (live) setUrl(v); }).catch(() => { if (live) setError(true); }); return () => { live = false; }; }, [id]);
+  return error ? <p role="alert">图片无法读取，请勿覆盖原草稿。</p> : url ? <img src={url} alt={alt || "题图"} /> : <span>正在读取图片…</span>;
+}
+function TextPreview({ text, style }: { text: string; style: TextStyle }) {
+  if (style === "粗体") return <strong>{text}</strong>;
+  if (style === "斜体") return <em>{text}</em>;
+  if (style === "下划线") return <u>{text}</u>;
+  if (style === "上标") return <sup>{text}</sup>;
+  if (style === "下标") return <sub>{text}</sub>;
+  return <>{text}</>;
+}
+function Preview({ draft, cache }: { draft: Draft; cache: Record<string, string> }) {
+  return <section className="preview" aria-label="内容预览"><h2>内容预览</h2>{draft.blocks.map((block, index) => {
+    if (block.type === "paragraph") return <p key={index} className="preview-text">{block.runs.map((run, i) => run.type === "text" ? <TextPreview key={i} {...run} /> : <Formula key={i} latex={run.latex} />)}</p>;
+    if (block.type === "formula") return <Formula key={index} latex={block.latex} display />;
+    if (block.type === "image") return <ImageView key={index} id={block.id} alt={block.alt} cache={cache} />;
+    return <div className="table-scroll" key={index}><table><tbody>{block.rows.map((row, y) => <tr key={y}>{row.map((cell, x) => <td key={x}>{cell}</td>)}</tr>)}</tbody></table></div>;
+  })}</section>;
+}
 export default function App() {
-  const [versions, setVersions] = useState<RuntimeVersions | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    window.paperweave
-      .getRuntimeVersions()
-      .then(setVersions)
-      .catch((e: unknown) => setError(String(e)));
-  }, []);
-
-  if (error) return <p role="alert">版本信息获取失败：{error}</p>;
-  if (!versions) return <p>正在载入…</p>;
-
-  return (
-    <main>
-      <h1>拾题成卷 PaperWeave</h1>
-      <p>应用 {versions.app}</p>
-      <ul>
-        <li>Electron {versions.electron}</li>
-        <li>Node {versions.node}</li>
-        <li>Chrome {versions.chrome}</li>
-      </ul>
-    </main>
-  );
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [saved, setSaved] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [imageCache, setImageCache] = useState<Record<string, string>>({});
+  useEffect(() => { window.paperweave.loadDraft().then((value) => { if (!isDraft(value)) throw Error("草稿格式不受支持"); setDraft(value); setSaved(JSON.stringify(value)); }).catch((e: unknown) => setError(`读取失败：${String(e)}。原数据已保留。`)); }, []);
+  useEffect(() => { const handler = (event: BeforeUnloadEvent) => { if (draft && JSON.stringify(draft) !== saved) { event.preventDefault(); event.returnValue = ""; } }; window.addEventListener("beforeunload", handler); return () => window.removeEventListener("beforeunload", handler); }, [draft, saved]);
+  const update = (index: number, block: Block) => setDraft((old) => old && ({ ...old, blocks: old.blocks.map((b, i) => i === index ? block : b) }));
+  const append = (block: Block) => setDraft((old) => old && ({ ...old, blocks: [...old.blocks, block] }));
+  async function save() {
+    if (!draft) return;
+    const snapshot = draft;
+    setSaving(true); setError(""); setMessage("");
+    try { await window.paperweave.saveDraft(snapshot); setSaved(JSON.stringify(snapshot)); setMessage("草稿已保存到本机。"); }
+    catch (e) { setError(`保存失败：${String(e)}。当前编辑内容仍在。`); }
+    finally { setSaving(false); }
+  }
+  async function addImage() {
+    try { const picked = await window.paperweave.chooseImage(); if (!picked) return; setImageCache((old) => ({ ...old, [picked.id]: picked.url })); append({ type: "image", id: picked.id, alt: "" }); }
+    catch (e) { setError(`无法添加图片：${String(e)}`); }
+  }
+  function paste(event: React.ClipboardEvent) {
+    if (event.clipboardData.types.includes("text/html") || [...event.clipboardData.items].some((item) => item.kind === "file")) {
+      event.preventDefault(); setError("不支持直接粘贴带格式的内容或图片。请先粘贴为纯文本，图片请用“添加图片”；复杂内容可保留清晰裁图并核对。");
+    }
+  }
+  if (!draft) return <main><h1>拾题成卷</h1><p role={error ? "alert" : undefined}>{error || "正在读取草稿…"}</p></main>;
+  const dirty = JSON.stringify(draft) !== saved;
+  return <main onPasteCapture={paste}>
+    <header><div><h1>编辑草稿</h1><p>本地试用版 · 内容需要自行核对</p></div><button onClick={save} disabled={saving || !dirty}>{saving ? "保存中…" : "保存草稿"}</button></header>
+    <p className="intro">按顺序添加内容。文本可分成多段以设置样式；公式使用 LaTeX。表格仅支持纯文字，不支持合并单元格。复杂格式请保留清晰裁图或手工改写并核对。</p>
+    <div className="toolbar" aria-label="添加内容"><button onClick={() => append({ type: "paragraph", runs: [newRun()] })}>添加段落</button><button onClick={() => append({ type: "formula", latex: "" })}>添加独立公式</button><button onClick={addImage}>添加图片</button><button onClick={() => append({ type: "table", rows: [["", ""], ["", ""]] })}>添加表格</button></div>
+    <p aria-live="polite">{dirty ? "有未保存的修改" : "没有未保存的修改"} {message}</p>{error && <p className="error" role="alert">{error} <button onClick={() => setError("")}>关闭提示</button></p>}
+    {draft.blocks.map((block, index) => <section className="block" key={index} aria-label={`内容 ${index + 1}`}>
+      <div className="block-head"><strong>{index + 1}. {block.type === "paragraph" ? "段落" : block.type === "formula" ? "独立公式" : block.type === "image" ? "图片" : "表格"}</strong><div><button disabled={index === 0} onClick={() => setDraft((old) => { if (!old) return old; const blocks = [...old.blocks]; [blocks[index - 1], blocks[index]] = [blocks[index], blocks[index - 1]]; return { ...old, blocks }; })}>上移</button><button disabled={index === draft.blocks.length - 1} onClick={() => setDraft((old) => { if (!old) return old; const blocks = [...old.blocks]; [blocks[index + 1], blocks[index]] = [blocks[index], blocks[index + 1]]; return { ...old, blocks }; })}>下移</button><button onClick={() => { if (confirm("删除此内容？")) setDraft((old) => old && ({ ...old, blocks: old.blocks.filter((_, i) => i !== index) })); }}>删除</button></div></div>
+      {block.type === "paragraph" && <>
+        {block.runs.map((run, ri) => <div className="run" key={ri}>
+          {run.type === "text" ? <><label>文本 {ri + 1}<textarea value={run.text} onChange={(e) => update(index, { ...block, runs: block.runs.map((v, i) => i === ri ? { ...run, text: e.target.value } : v) })} /></label><label>样式<select value={run.style} onChange={(e) => update(index, { ...block, runs: block.runs.map((v, i) => i === ri ? { ...run, style: e.target.value as TextStyle } : v) })}>{styles.map((style) => <option key={style}>{style}</option>)}</select></label></> : <><label>行内公式 {ri + 1}<input value={run.latex} onChange={(e) => update(index, { ...block, runs: block.runs.map((v, i) => i === ri ? { ...run, latex: e.target.value } : v) })} /></label><Formula latex={run.latex} /></>}
+          <button aria-label={`删除第 ${ri + 1} 段文本或公式`} onClick={() => update(index, { ...block, runs: block.runs.filter((_, i) => i !== ri) })}>删除</button>
+        </div>)}
+        <div className="toolbar"><button onClick={() => update(index, { ...block, runs: [...block.runs, newRun()] })}>添加文字</button><button onClick={() => update(index, { ...block, runs: [...block.runs, { type: "formula", latex: "" }] })}>添加行内公式</button></div>
+      </>}
+      {block.type === "formula" && <><label>LaTeX 公式<input value={block.latex} onChange={(e) => update(index, { ...block, latex: e.target.value })} /></label><Formula latex={block.latex} display /></>}
+      {block.type === "image" && <><ImageView id={block.id} alt={block.alt} cache={imageCache} /><label>图片说明<input value={block.alt} onChange={(e) => update(index, { ...block, alt: e.target.value })} /></label></>}
+      {block.type === "table" && <><div className="table-scroll"><table><tbody>{block.rows.map((row, y) => <tr key={y}>{row.map((cell, x) => <td key={x}><input aria-label={`第 ${y + 1} 行第 ${x + 1} 列`} value={cell} onChange={(e) => update(index, { ...block, rows: block.rows.map((r, yi) => r.map((c, xi) => yi === y && xi === x ? e.target.value : c)) })} /></td>)}</tr>)}</tbody></table></div><div className="toolbar"><button disabled={block.rows.length >= 30} onClick={() => update(index, { ...block, rows: [...block.rows, block.rows[0].map(() => "")] })}>添加行</button><button disabled={block.rows[0].length >= 10} onClick={() => update(index, { ...block, rows: block.rows.map((r) => [...r, ""]) })}>添加列</button></div></>}
+    </section>)}
+    {!draft.blocks.length && <p>暂无内容，可从上方添加段落。</p>}
+    <Preview draft={draft} cache={imageCache} />
+  </main>;
 }

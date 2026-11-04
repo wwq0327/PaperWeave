@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 
-const DATA_VERSION = 1;
+const DATA_VERSION = 2;
 
 /** 主进程持有的唯一数据库写入口；不向渲染进程暴露 SQL。 */
 export class Database {
@@ -26,6 +26,9 @@ export class Database {
         if (count !== 0) throw new Error("未识别的数据库，拒绝初始化");
         this.db.exec("CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT; PRAGMA user_version = 1");
       }
+      if (version < 2) {
+        this.db.exec("CREATE TABLE editor_drafts (id TEXT PRIMARY KEY, document TEXT NOT NULL) STRICT; PRAGMA user_version = 2");
+      }
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -39,6 +42,14 @@ export class Database {
 
   setSetting(key: string, value: string): void {
     this.db.prepare("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
+  }
+
+  getDraft(): string | undefined {
+    return (this.db.prepare("SELECT document FROM editor_drafts WHERE id = ?").get("m0") as { document: string } | undefined)?.document;
+  }
+
+  saveDraft(document: string): void {
+    this.db.prepare("INSERT INTO editor_drafts (id, document) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET document = excluded.document").run("m0", document);
   }
 
   close(): void {
