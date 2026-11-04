@@ -1,0 +1,14 @@
+# 依赖与构建
+node_modules/
+dist/
+out/
+
+# 系统文件
+.DS_Store
+
+# 样本试卷大文件（清单见 research/PDF清单.md；确需分发时再定托管方式）
+research/pdfs/
+
+# 本地配置与密钥
+.env
+.env.*
