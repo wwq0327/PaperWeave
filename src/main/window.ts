@@ -1,6 +1,5 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow } from "electron";
 import { join } from "node:path";
-import { getRuntimeVersions } from "../shared/versions";
 
 declare const MAIN_WINDOW_VITE_NAME: string;
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -29,12 +28,3 @@ export function createMainWindow(): BrowserWindow {
 
   return window;
 }
-
-ipcMain.handle("app:getRuntimeVersions", () =>
-  getRuntimeVersions({
-    app: `${app.getName()}@${app.getVersion()}`,
-    electron: process.versions.electron,
-    node: process.versions.node,
-    chrome: process.versions.chrome,
-  }),
-);

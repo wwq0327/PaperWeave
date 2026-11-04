@@ -1,6 +1,6 @@
 import { BrowserWindow, dialog, ipcMain } from "electron";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Database } from "./database";
 import { emptyDraft, isDraft, upgradeDraft, type Draft } from "../shared/document";
@@ -21,9 +21,16 @@ export function registerEditor(db: Database, root: string, currentWindow: () => 
   };
   const readImage = (id: string): Buffer => {
     if (!/^[a-f0-9]{64}$/.test(id)) throw new Error("图片标识无效");
-    const data = readFileSync(join(attachments, id));
-    if (data.length > maxImageBytes || !mime(data) || hash(data) !== id) throw new Error("图片缺失或校验失败");
-    return data;
+    try {
+      const file = join(attachments, id);
+      // 只读取附件目录内的普通文件，拒绝符号链接指向目录外的内容。
+      if (!lstatSync(file).isFile()) throw new Error("not a file");
+      const data = readFileSync(file);
+      if (data.length > maxImageBytes || !mime(data) || hash(data) !== id) throw new Error("invalid image");
+      return data;
+    } catch {
+      throw new Error("图片缺失或校验失败");
+    }
   };
   ipcMain.handle("editor:load", (event) => {
     permitted(event);
