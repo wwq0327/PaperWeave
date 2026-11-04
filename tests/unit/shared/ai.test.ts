@@ -46,6 +46,15 @@ test("文字输入校验页码与长度，返回规范化后的数据", () => {
   expect(normalizeAiInput({ mode: "chat", text: "题干", pages: [1] }).ok).toBe(false);
 });
 
+test("AI 输入可选携带科目上下文，非法学段、未知字段与超长字段被拒绝", () => {
+  const context = { stage: "初中" as const, subject: "语文", grade: "九年级", questionType: "阅读题" };
+  const ok = normalizeAiInput({ mode: "text", text: "题干", pages: [1], context });
+  expect(ok.ok && ok.input.context).toEqual(context);
+  expect(normalizeAiInput({ mode: "text", text: "题干", pages: [1], context: { ...context, stage: "大学" } }).ok).toBe(false);
+  expect(normalizeAiInput({ mode: "text", text: "题干", pages: [1], context: { ...context, extra: "x" } }).ok).toBe(false);
+  expect(normalizeAiInput({ mode: "text", text: "题干", pages: [1], context: { ...context, subject: "字".repeat(101) } }).ok).toBe(false);
+});
+
 test("裁图输入只接受 png/jpeg data URL，并按解码后大小计算限额", () => {
   const png = "data:image/png;base64," + Buffer.alloc(1024, 1).toString("base64");
   expect(base64Bytes(png)).toBe(1024);

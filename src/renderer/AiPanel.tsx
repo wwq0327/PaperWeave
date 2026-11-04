@@ -129,9 +129,9 @@ export default function AiPanel({ onAdopt }: { onAdopt: (questions: AiQuestion[]
     const id = crypto.randomUUID();
     setRequestId(id); setSending(true); setResultError(""); setResultMessage(""); setCanRetry(false);
     try {
-      const draft = await window.paperweave.generateAiDraft(id, checked.input);
-      if (!isAiDraft(draft)) throw new Error("模型返回格式无法解析，请重试或手工录入");
-      setResult(draft); setAdopted([]);
+      const result = await window.paperweave.generateAiDraft(id, checked.input);
+      if (!isAiDraft(result.draft)) throw new Error("模型返回格式无法解析，请重试或手工录入");
+      setResult(result.draft); setAdopted([]);
       setResultMessage("草稿已生成，请逐题对照原卷核对后再采纳。");
     } catch (error) {
       const message = messageOf(error);

@@ -6,8 +6,10 @@ export interface AiIntakeResult {
   form: IntakeForm;
   uncertain: string[];
   materials: AiMaterialSuggestion[];
+  newTags: string[];
 }
 
+const slotHint = "作答位置需手工录入：AI 不生成空位，请在表单中补录。";
 const textBlock = (text: string): IntakeBlock[] => text.trim() ? [{ kind: "text", text }] : [];
 
 function partSub(part: NonNullable<AiQuestion["parts"]>[number], index: number): IntakeSubQuestion {
@@ -23,11 +25,12 @@ function partSub(part: NonNullable<AiQuestion["parts"]>[number], index: number):
   };
 }
 
-/** AI 结构化题映射到录题表单；不确定项与材料建议单独返回，由界面确认后再写入。 */
+/** AI 结构化题映射到录题表单；不确定项、新材料与新标签单独返回，由教师确认后再写入。 */
 export function aiQuestionToIntake(
   question: AiQuestion,
   classification: Classification,
   section: string,
+  tagCandidates: string[] = [],
 ): AiIntakeResult {
   const parts = question.parts ?? [];
   const legacy = parts.length === 0 && question.subquestions.length > 0;
@@ -45,14 +48,18 @@ export function aiQuestionToIntake(
   } else {
     subs = [{ ...blankSubQuestion(), prompt: textBlock(question.stem) }];
   }
-  const knowledgePoints = [...new Set([
-    ...classification.knowledgePoints,
-    ...question.tags,
-    ...(question.knowledgePoints ?? []),
-  ].map((point) => point.trim()).filter(Boolean))];
+  const candidates = new Set(tagCandidates.map((point) => point.trim()).filter(Boolean));
+  const knowledgePoints = [...new Set(classification.knowledgePoints.map((point) => point.trim()).filter(Boolean))];
+  const newTags: string[] = [];
+  for (const tag of [...question.tags, ...(question.knowledgePoints ?? [])].map((point) => point.trim()).filter(Boolean)) {
+    if (knowledgePoints.includes(tag) || newTags.includes(tag)) continue;
+    if (candidates.has(tag)) knowledgePoints.push(tag);
+    else newTags.push(tag);
+  }
   const uncertain = [
     ...question.uncertain,
     ...parts.flatMap((part) => part.uncertain.map((item) => `第${part.label || "?"}小问：${item}`)),
+    slotHint,
   ];
   return {
     form: {
@@ -73,5 +80,6 @@ export function aiQuestionToIntake(
     },
     uncertain,
     materials: question.materials ?? [],
+    newTags,
   };
 }

@@ -441,6 +441,24 @@ export class QuestionBank {
     return value as Classification;
   }
 
+  /** 本科目已用知识点，按使用频次排序，供 AI 拆题优先复用已有标签。 */
+  knowledgePointCandidates(stage: Stage, subject: string, limit = 20): string[] {
+    const value = subject.trim();
+    if (!value || limit < 1) return [];
+    return this.db.read((sqlite) => {
+      const rows = sqlite.prepare(`
+        SELECT kp.value AS value, COUNT(*) AS uses
+        FROM question_knowledge_points kp
+        JOIN questions q ON q.id = kp.question_id
+        WHERE q.stage = ? AND q.subject = ?
+        GROUP BY kp.value
+        ORDER BY uses DESC, kp.value
+        LIMIT ?
+      `).all(stage, value, limit) as { value: string }[];
+      return rows.map((row) => row.value);
+    });
+  }
+
   private validFilter(value: unknown): QuestionFilter {
     if (value === undefined) return {};
     if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("检索条件无效");

@@ -245,6 +245,17 @@ const classification = {
   knowledgePoints: ["概括", "人物形象"],
 } satisfies Classification;
 
+test("按学段与学科汇总已有知识点候选，按使用次数排序并限量", () => {
+  const { bank } = open();
+  bank.createQuestion(note(), { ...classification, knowledgePoints: ["概括", "人物形象"] });
+  bank.createQuestion(note(), { ...classification, knowledgePoints: ["概括", "表达"] });
+  bank.createQuestion(note(), { ...classification, stage: "初中", knowledgePoints: ["初中专属"] });
+
+  expect(bank.knowledgePointCandidates("小学", "语文", 2)).toEqual(["概括", "人物形象"]);
+  expect(bank.knowledgePointCandidates("小学", "语文")).toEqual(["概括", "人物形象", "表达"]);
+  expect(bank.knowledgePointCandidates("小学", "数学")).toEqual([]);
+});
+
 test("创建题目时写入分类，读取一致；未提供分类时返回 undefined", () => {
   const { bank } = open();
   const categorized = bank.createQuestion(note(), classification);

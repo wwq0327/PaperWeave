@@ -2,9 +2,30 @@ import { test, expect, _electron as electron, type Page } from "@playwright/test
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { Database } from "../../src/main/database";
+import { QuestionBank } from "../../src/main/question-bank";
+import { note } from "../unit/fixtures/questions";
 
 const entry = path.resolve(".vite/build/main.cjs");
 const fixture = path.resolve("tests/fixtures/two-pages.pdf");
+
+/** 预置本科目已有标签，AI 固定响应中的同名词应直接并入知识点。 */
+function seedTagCandidates(dir: string) {
+  const db = new Database(path.join(dir, "paperweave.sqlite"));
+  const bank = new QuestionBank(db);
+  const created = bank.createQuestion(note());
+  bank.setClassification(created.questionId, {
+    stage: "初中",
+    subject: "语文",
+    grade: "九年级",
+    examType: "单元测",
+    year: "2026",
+    sourceName: "自制样题",
+    questionType: "选择题",
+    knowledgePoints: ["词语运用", "阅读理解"],
+  });
+  db.close();
+}
 
 async function closeApp(app: Awaited<ReturnType<typeof electron.launch>>) {
   await app.evaluate(({ app: electronApp }) => { electronApp.exit(0); }).catch(() => undefined);
@@ -27,6 +48,7 @@ async function dragOnPage(page: Page) {
 async function importExam(page: Page, app: Awaited<ReturnType<typeof electron.launch>>) {
   await page.getByRole("button", { name: "考试原卷" }).click();
   await page.getByLabel("考试标题").fill("九年级数学单元卷");
+  await page.getByLabel("学科").fill("语文");
   await page.getByLabel("年份").fill("2026");
   await page.getByLabel("来源").fill("自制样题");
   await app.evaluate(({ dialog }, target) => {
@@ -41,6 +63,7 @@ async function importExam(page: Page, app: Awaited<ReturnType<typeof electron.la
 
 test("录题页读取本卷文字生成结构化 AI 草稿，待核确认后采纳并保存", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "paperweave-intake-ai-text-"));
+  seedTagCandidates(dir);
   const app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`], env: { ...process.env, PAPERWEAVE_AI_FAKE: "ok" } });
   try {
     const page = await app.firstWindow();
@@ -64,10 +87,17 @@ test("录题页读取本卷文字生成结构化 AI 草稿，待核确认后采�
     await expect(page.getByLabel("小问 1 题干 文字 1", { exact: true })).toHaveValue("固定响应小问：选择正确项。");
     await expect(page.getByLabel("小问号")).toHaveValue("(1)");
     await expect(page.getByLabel("原分值")).toHaveValue("3");
-    await expect(page.getByLabel("知识点（逗号分隔）")).toHaveValue("初中语文，词语运用");
+    await expect(page.getByLabel("知识点（逗号分隔）")).toHaveValue("词语运用");
     await expect(page.getByLabel("原题号")).toHaveValue("1");
 
     await expect(page.getByRole("region", { name: "AI 待核项" })).toContainText("固定响应待核点：原卷加点字无法确认");
+    await expect(page.getByRole("region", { name: "AI 待核项" })).toContainText("作答位置需手工录入");
+
+    // 候选标签直接并入；候选外的「初中语文」需教师确认后才写入。
+    const newTags = page.getByRole("region", { name: "AI 建议新标签" });
+    await expect(newTags).toContainText("初中语文");
+    await newTags.getByRole("button", { name: "采用标签" }).click();
+    await expect(page.getByLabel("知识点（逗号分隔）")).toHaveValue("词语运用，初中语文");
     const saveSection = page.getByRole("region", { name: "保存" });
     await saveSection.getByRole("button", { name: "提交待核" }).click();
     await expect(page.getByRole("alert").filter({ hasText: "AI 待核项尚未确认" })).toBeVisible();
