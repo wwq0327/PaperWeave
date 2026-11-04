@@ -163,7 +163,7 @@ export function sha256(file) {
  * 打包应用内完整走查：导入原卷 → 录题（含公式和裁图）→ 审核 → 入篮建卷 →
  * 定稿并打开双卷。返回导出目录与学生／教师 PDF 路径。
  */
-export async function runWorkflow(harness, { fixture, examTitle, paperTitle, exportRoot, stem, answer }) {
+export async function runWorkflow(harness, { fixture, examTitle, paperTitle, exportRoot, stem, answer, confirmFinalize = true }) {
   const { page } = harness;
   await harness.setOpenPath(fixture);
   await page.getByRole("button", { name: "考试原卷" }).click();
@@ -236,7 +236,12 @@ export async function runWorkflow(harness, { fixture, examTitle, paperTitle, exp
 
   await harness.setOpenPath(exportRoot);
   await page.getByRole("button", { name: "生成学生卷与教师答案卷" }).click();
-  await page.getByText(/学生卷与教师答案卷已保存并打开/).waitFor({ timeout: 60_000 });
+  if (confirmFinalize) {
+    const confirm = page.getByRole("dialog", { name: "确认定稿" });
+    await confirm.waitFor({ timeout: 60_000 });
+    await confirm.getByRole("button", { name: "确认保存为定稿" }).click();
+  }
+  await page.getByText(/双卷已保存为定稿|学生卷与教师答案卷已保存并打开/).waitFor({ timeout: 60_000 });
   const directory = readdirSync(exportRoot).filter((name) => name.startsWith("拾题成卷-")).sort().at(-1);
   if (!directory) throw new Error("未找到导出的双卷目录");
   return {
