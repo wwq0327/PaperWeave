@@ -13,20 +13,27 @@ const object = (x: unknown): x is Record<string, unknown> => typeof x === "objec
 const keys = (x: Record<string, unknown>, allowed: string[]) => Object.keys(x).every((k) => allowed.includes(k));
 const str = (x: unknown, max = 20000): x is string => typeof x === "string" && x.length <= max;
 
+/** 内容块是编辑器、题目与材料的共同单位；结构不认识时直接拒绝。 */
+export function isBlock(value: unknown): value is Block {
+  if (!object(value)) return false;
+  if (value.type === "paragraph") return keys(value, ["type", "runs"]) && Array.isArray(value.runs) && value.runs.length <= 500 && value.runs.every((r: unknown) => object(r) && ((r.type === "text" && keys(r, ["type", "text", "style"]) && str(r.text) && typeof r.style === "string" && styles.has(r.style)) || (r.type === "formula" && keys(r, ["type", "latex"]) && str(r.latex, 4000))));
+  if (value.type === "formula") return keys(value, ["type", "latex"]) && str(value.latex, 4000);
+  if (value.type === "image") return keys(value, ["type", "id", "alt"]) && typeof value.id === "string" && /^[a-f0-9]{64}$/.test(value.id) && str(value.alt, 1000);
+  if (value.type === "table") return keys(value, ["type", "rows"]) && Array.isArray(value.rows) && value.rows.length > 0 && value.rows.length <= 30 && value.rows.every((row: unknown) => Array.isArray(row) && row.length > 0 && row.length <= 10 && row.every((cell: unknown) => str(cell, 4000))) && value.rows.every((row: string[]) => row.length === (value.rows as string[][])[0].length);
+  return false;
+}
+
+export function isBlockList(value: unknown): value is Block[] {
+  return Array.isArray(value) && value.length <= 500 && value.every(isBlock);
+}
+
 /** 不认识的结构直接拒绝，避免读取或保存时静默丢失内容。 */
 export function isDraft(x: unknown): x is StoredDraft {
-  if (!object(x) || !Array.isArray(x.blocks) || x.blocks.length > 500) return false;
+  if (!object(x) || !isBlockList(x.blocks)) return false;
   if (x.version === 1) { if (!keys(x, ["version", "blocks"])) return false; }
   else if (x.version === 2) { if (!keys(x, ["version", "blocks", "teacherAnswer"]) || !str(x.teacherAnswer)) return false; }
   else return false;
-  return x.blocks.every((b: unknown) => {
-    if (!object(b)) return false;
-    if (b.type === "paragraph") return keys(b, ["type", "runs"]) && Array.isArray(b.runs) && b.runs.length <= 500 && b.runs.every((r: unknown) => object(r) && ((r.type === "text" && keys(r, ["type", "text", "style"]) && str(r.text) && typeof r.style === "string" && styles.has(r.style)) || (r.type === "formula" && keys(r, ["type", "latex"]) && str(r.latex, 4000))));
-    if (b.type === "formula") return keys(b, ["type", "latex"]) && str(b.latex, 4000);
-    if (b.type === "image") return keys(b, ["type", "id", "alt"]) && typeof b.id === "string" && /^[a-f0-9]{64}$/.test(b.id) && str(b.alt, 1000);
-    if (b.type === "table") return keys(b, ["type", "rows"]) && Array.isArray(b.rows) && b.rows.length > 0 && b.rows.length <= 30 && b.rows.every((row: unknown) => Array.isArray(row) && row.length > 0 && row.length <= 10 && row.every((cell: unknown) => str(cell, 4000))) && b.rows.every((row: string[]) => row.length === (b.rows as string[][])[0].length);
-    return false;
-  });
+  return true;
 }
 
 /** 旧草稿只在读取时转换，直到用户保存才写回。 */
