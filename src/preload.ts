@@ -8,4 +8,8 @@ contextBridge.exposeInMainWorld("paperweave", {
   chooseImage: () => ipcRenderer.invoke("editor:chooseImage"),
   getImage: (id: string) => ipcRenderer.invoke("editor:image", id),
   exportPdf: () => ipcRenderer.invoke("pdf:export"),
+  beginPdfPair: () => ipcRenderer.invoke("pdf:beginPair"),
+  captureStudentPdf: (id: string) => ipcRenderer.invoke("pdf:captureStudent", id),
+  finishPdfPair: (id: string) => ipcRenderer.invoke("pdf:finishPair", id),
+  cancelPdfPair: (id: string) => ipcRenderer.invoke("pdf:cancelPair", id),
 });

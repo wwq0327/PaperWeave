@@ -12,6 +12,10 @@ declare global {
       chooseImage(): Promise<{ id: string; url: string } | null>;
       getImage(id: string): Promise<string>;
       exportPdf(): Promise<{ canceled: true } | { canceled: false; path: string; openError: string }>;
+      beginPdfPair(): Promise<string | null>;
+      captureStudentPdf(id: string): Promise<void>;
+      finishPdfPair(id: string): Promise<{ directory: string; studentPath: string; teacherPath: string; openErrors: string[] }>;
+      cancelPdfPair(id: string): Promise<void>;
     };
   }
 }

@@ -1,0 +1,73 @@
+import { test, expect, _electron as electron } from "@playwright/test";
+import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+// 覆盖双 PDF IPC 接线（begin/capture/finish/cancel）与原子落盘；
+// 注意：两份内容当前相同，真实学生/教师内容隔离属后续 Issue #5 工作，不能据此关闭 Issue。
+test("双 PDF IPC：生成、校验、打开并在取消后失效", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-pair-"));
+  const outDir = mkdtempSync(path.join(tmpdir(), "paperweave-pair-out-"));
+  const app = await electron.launch({ args: [path.resolve(".vite/build/main.cjs"), `--user-data-dir=${dir}`] });
+  try {
+    await app.evaluate(({ dialog, shell }, target) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] });
+      shell.openPath = async (file) => {
+        const opened = (globalThis as typeof globalThis & { openedPdfs?: string[] }).openedPdfs ?? [];
+        opened.push(file);
+        (globalThis as typeof globalThis & { openedPdfs?: string[] }).openedPdfs = opened;
+        return "";
+      };
+    }, outDir);
+    const page = await app.firstWindow();
+    const result = await page.evaluate(async () => {
+      type Bridge = {
+        beginPdfPair(): Promise<string | null>;
+        captureStudentPdf(id: string): Promise<void>;
+        finishPdfPair(id: string): Promise<{ directory: string; studentPath: string; teacherPath: string; openErrors: string[] }>;
+        cancelPdfPair(id: string): Promise<void>;
+      };
+      const bridge = (window as unknown as { paperweave: Bridge }).paperweave;
+      const id = await bridge.beginPdfPair();
+      if (!id) throw new Error("未取得操作标识");
+      await bridge.captureStudentPdf(id);
+      return bridge.finishPdfPair(id);
+    });
+    expect(existsSync(result.studentPath)).toBe(true);
+    expect(existsSync(result.teacherPath)).toBe(true);
+    for (const file of [result.studentPath, result.teacherPath]) {
+      expect(readFileSync(file).subarray(0, 5).toString()).toBe("%PDF-");
+    }
+    const opened = await app.evaluate(() => (globalThis as typeof globalThis & { openedPdfs?: string[] }).openedPdfs);
+    expect(opened).toEqual([result.studentPath, result.teacherPath]);
+    // 已结束的操作标识不能复用
+    await expect(page.evaluate(() => {
+      type Bridge = { captureStudentPdf(id: string): Promise<void> };
+      return (window as unknown as { paperweave: Bridge }).paperweave.captureStudentPdf("00000000-0000-0000-0000-000000000000");
+    })).rejects.toThrow(/无效或已结束/);
+    // 取消后操作失效
+    const canceled = await page.evaluate(async () => {
+      type Bridge = {
+        beginPdfPair(): Promise<string | null>;
+        captureStudentPdf(id: string): Promise<void>;
+        cancelPdfPair(id: string): Promise<void>;
+      };
+      const bridge = (window as unknown as { paperweave: Bridge }).paperweave;
+      const id = await bridge.beginPdfPair();
+      if (!id) throw new Error("未取得操作标识");
+      await bridge.cancelPdfPair(id);
+      try {
+        await bridge.captureStudentPdf(id);
+        return "captured";
+      } catch {
+        return "rejected";
+      }
+    });
+    expect(canceled).toBe("rejected");
+  } finally {
+    await app.evaluate(({ app: electronApp }) => { electronApp.exit(0); }).catch(() => undefined);
+    await app.close().catch(() => undefined);
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});
