@@ -4,6 +4,7 @@ import { getRuntimeVersions } from "./shared/versions";
 import { Database } from "./main/database";
 import { registerAi } from "./main/ai";
 import { registerEditor } from "./main/editor";
+import { registerExams } from "./main/exam-ipc";
 import { parseJournal } from "./main/pdf-journal";
 import { recoverPaperFinalizations } from "./main/paper-finalization";
 import { recoverPendingOperations } from "./main/pdf-recovery";
@@ -47,6 +48,7 @@ app.whenReady().then(async () => {
   registerAi(db, app.getPath("userData"), () => mainWindow);
   registerPdf(db, () => mainWindow);
   registerPaper(db, () => mainWindow);
+  registerExams(db, app.getPath("userData"), () => mainWindow);
   ipcMain.handle("app:getRuntimeVersions", (event) => {
     if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("无权读取运行信息");
     return getRuntimeVersions({

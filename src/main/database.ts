@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 
-const DATA_VERSION = 5;
+const DATA_VERSION = 6;
 
 /** 主进程持有的唯一数据库写入口；不向渲染进程暴露 SQL。 */
 export class Database {
@@ -142,6 +142,56 @@ export class Database {
         const update = this.db.prepare("UPDATE question_versions SET content = ? WHERE id = ?");
         for (const row of rows) update.run(this.upgradeQuestionContent(row.id, row.content), row.id);
         this.db.exec("PRAGMA user_version = 5");
+      }
+      if (version < 6) {
+        this.db.exec(`
+          CREATE TABLE exams (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            stage TEXT NOT NULL CHECK (stage IN ('小学', '初中', '高中')),
+            subject TEXT NOT NULL,
+            grade TEXT NOT NULL,
+            region TEXT NOT NULL DEFAULT '',
+            exam_type TEXT NOT NULL DEFAULT '',
+            year TEXT NOT NULL DEFAULT '',
+            source_name TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          ) STRICT;
+          CREATE TABLE exam_sections (
+            id TEXT PRIMARY KEY,
+            exam_id TEXT NOT NULL REFERENCES exams(id),
+            title TEXT NOT NULL,
+            subject TEXT NOT NULL DEFAULT '',
+            position INTEGER NOT NULL
+          ) STRICT;
+          CREATE INDEX exam_sections_exam ON exam_sections(exam_id, position);
+          CREATE TABLE original_files (
+            id TEXT PRIMARY KEY,
+            sha256 TEXT NOT NULL UNIQUE,
+            relative_path TEXT NOT NULL UNIQUE,
+            original_name TEXT NOT NULL,
+            size INTEGER NOT NULL,
+            created_at TEXT NOT NULL
+          ) STRICT;
+          CREATE TABLE exam_originals (
+            exam_id TEXT NOT NULL REFERENCES exams(id),
+            file_id TEXT NOT NULL REFERENCES original_files(id),
+            role TEXT NOT NULL CHECK (role IN ('paper', 'answer', 'rubric', 'answer_sheet')),
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (exam_id, file_id, role)
+          ) STRICT;
+          CREATE INDEX exam_originals_file ON exam_originals(file_id, role);
+          CREATE TABLE question_exams (
+            question_id TEXT NOT NULL REFERENCES questions(id),
+            exam_id TEXT NOT NULL REFERENCES exams(id),
+            section_id TEXT REFERENCES exam_sections(id),
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (question_id, exam_id)
+          ) STRICT;
+          CREATE INDEX question_exams_exam ON question_exams(exam_id, section_id);
+          PRAGMA user_version = 6
+        `);
       }
       this.db.exec("COMMIT");
     } catch (error) {

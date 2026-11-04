@@ -4,6 +4,16 @@ import type { AiConfig } from "../shared/ai-config";
 import type { BasketSelection } from "../shared/basket";
 import type { Draft } from "../shared/document";
 import type {
+  ExamAttachment,
+  ExamDetailView,
+  ExamFileRole,
+  ExamImportResult,
+  ExamInput,
+  ExamRecord,
+  ExamSectionRecord,
+  OriginalFileView,
+} from "../shared/exam";
+import type {
   BeginFinalizationView,
   BasketItemView,
   FinalizationCheckView,
@@ -66,6 +76,12 @@ declare global {
       finishPaperFinalize(id: string): Promise<{ record: FinalizationRecordView; openErrors: string[] }>;
       cancelPaperFinalize(id: string): Promise<void>;
       reprintPaper(id: string): Promise<{ studentPath: string; teacherPath: string; openErrors: string[] }>;
+      listExams(): Promise<ExamRecord[]>;
+      getExam(examId: string): Promise<ExamDetailView>;
+      importExam(input: ExamInput): Promise<{ status: "canceled" } | ({ status: "imported" } & ExamImportResult)>;
+      attachExamFile(examId: string, role: ExamFileRole): Promise<{ status: "canceled" } | ({ status: "attached" } & ExamAttachment)>;
+      addExamSection(examId: string, title: string, subject?: string): Promise<ExamSectionRecord>;
+      getExamFile(fileId: string): Promise<{ file: OriginalFileView; data: Uint8Array }>;
     };
   }
 }
