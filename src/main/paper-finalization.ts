@@ -125,14 +125,24 @@ export class PaperFinalizer {
   }
 
   async finalize(paperId: string, parent: string, options: FinalizationOptions = {}): Promise<PaperFinalizationRecord> {
+    const prepared = this.prepare(paperId, parent, options);
+    const student = await this.render("student", paperVolume(prepared.snapshot, "student"));
+    const teacher = await this.render("teacher", paperVolume(prepared.snapshot, "teacher"));
+    return this.complete(prepared.id, paperId, parent, prepared.snapshot, student, teacher);
+  }
+
+  /** 定稿第一步：门槛通过后登记操作并冻结快照；PDF 由调用方分卷渲染后交给 complete。 */
+  prepare(paperId: string, parent: string, options: FinalizationOptions = {}): { id: string; snapshot: PaperSnapshot; check: FinalizationCheck } {
     const check = this.check(paperId, options);
     if (!check.ready) throw new Error(`无法定稿：\n${check.blockers.join("\n")}`);
     const id = randomUUID();
     const journal = parseJournal(this.db.getSetting(PAPER_JOURNAL_KEY));
     this.db.setSetting(PAPER_JOURNAL_KEY, JSON.stringify(addOperation(journal, { id, parent })));
+    return { id, snapshot: check.snapshot, check };
+  }
 
-    const student = await this.render("student", paperVolume(check.snapshot, "student"));
-    const teacher = await this.render("teacher", paperVolume(check.snapshot, "teacher"));
+  /** 定稿第二步：两份 PDF 同时落盘并写入不可变定稿记录。 */
+  async complete(id: string, paperId: string, parent: string, snapshot: PaperSnapshot, student: Buffer, teacher: Buffer): Promise<PaperFinalizationRecord> {
     const directory = await writePdfPair(parent, id, student, teacher);
     const studentPdf = join(directory, "学生卷.pdf");
     const teacherPdf = join(directory, "教师答案卷.pdf");
@@ -141,7 +151,7 @@ export class PaperFinalizer {
       paperId,
       studentPdf,
       teacherPdf,
-      snapshot: check.snapshot,
+      snapshot,
       studentSha256: sha256(student),
       teacherSha256: sha256(teacher),
       createdAt: new Date().toISOString(),
@@ -152,6 +162,12 @@ export class PaperFinalizer {
     });
     this.db.setSetting(PAPER_JOURNAL_KEY, JSON.stringify(removeOperation(parseJournal(this.db.getSetting(PAPER_JOURNAL_KEY)), id)));
     return record;
+  }
+
+  /** 取消尚未落盘的定稿操作；已开始写盘的操作留给启动恢复处理。 */
+  abort(id: string): void {
+    const journal = parseJournal(this.db.getSetting(PAPER_JOURNAL_KEY));
+    this.db.setSetting(PAPER_JOURNAL_KEY, JSON.stringify(removeOperation(journal, id)));
   }
 
   listFinalizations(paperId: string): PaperFinalizationRecord[] {

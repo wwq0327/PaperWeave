@@ -8,6 +8,7 @@ import { parseJournal } from "./main/pdf-journal";
 import { recoverPaperFinalizations } from "./main/paper-finalization";
 import { recoverPendingOperations } from "./main/pdf-recovery";
 import { registerPdf } from "./main/pdf";
+import { registerPaper } from "./main/paper-ipc";
 import { createMainWindow } from "./main/window";
 
 let database: Database | undefined;
@@ -45,6 +46,7 @@ app.whenReady().then(async () => {
   registerEditor(db, app.getPath("userData"), () => mainWindow);
   registerAi(db, app.getPath("userData"), () => mainWindow);
   registerPdf(db, () => mainWindow);
+  registerPaper(db, () => mainWindow);
   ipcMain.handle("app:getRuntimeVersions", (event) => {
     if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("无权读取运行信息");
     return getRuntimeVersions({

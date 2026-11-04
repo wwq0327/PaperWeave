@@ -101,7 +101,7 @@ try {
   ok("CSP connect-src 'none'", probe.csp.includes("connect-src 'none'"));
   ok("CSP script-src 'self'", probe.csp.includes("script-src 'self'"));
   ok("渲染进程无 Node 全局", probe.globals.every((g) => g.endsWith(":undefined")), probe.globals.join(" "));
-  ok("桥接口 19 个", probe.bridgeKeys.length === 19, `实际 ${probe.bridgeKeys.length}`);
+  ok("桥接口 45 个", probe.bridgeKeys.length === 45, `实际 ${probe.bridgeKeys.length}`);
 
   const config = await evaluate(`window.paperweave.getAiConfig()`);
   ok("AI 配置默认值且无密钥", config && config.hasKey === false && config.baseUrl === "https://api.anthropic.com", JSON.stringify(config));
@@ -112,7 +112,7 @@ try {
   await evaluate(`window.paperweave.saveDraft({ version: 2, blocks: [{ type: "paragraph", runs: [{ type: "text", text: "安装包核验草稿", style: "普通" }] }], teacherAnswer: "安装包核验答案" })`);
   const draft = await evaluate(`window.paperweave.loadDraft()`);
   ok("安装包内草稿保存重开一致",
-    draft?.version === 2 && draft.blocks?.[0]?.runs?.[0]?.text === "安装包核验草稿" && draft.teacherAnswer === "安装包核验答案");
+    draft?.version === 3 && draft.blocks?.[0]?.runs?.[0]?.text === "安装包核验草稿" && draft.teacherAnswer === "安装包核验答案");
 
   const httpRequests = networkRequests.filter((url) => url.startsWith("http://") || url.startsWith("https://"));
   ok("零网络请求", httpRequests.length === 0, httpRequests.slice(0, 3).join(" "));
