@@ -54,8 +54,11 @@ test("打包产物从中文路径启动并存活", async () => {
   // ad-hoc 重签：修改过的 bundle 在 Apple Silicon 上签名失效会被终止。
   cpSync(MAC_APP, copiedApp, { recursive: true, verbatimSymlinks: true });
   await execFileAsync("codesign", ["--sign", "-", "--force", "--deep", copiedApp]);
+  // 评审 I-1：进程存活不覆盖「主进程活着但渲染层白屏」，加 CDP 标题断言钉住
+  const debugPort = 9300 + Math.floor(Math.random() * 500);
   const child = spawn(
     path.resolve(path.join(copiedApp, "Contents", "MacOS", "PaperWeave")),
+    [`--remote-debugging-port=${debugPort}`],
     { stdio: ["ignore", "pipe", "pipe"] },
   );
   let stderr = "";
@@ -69,8 +72,26 @@ test("打包产物从中文路径启动并存活", async () => {
       });
     });
     expect(child.exitCode).toBeNull();
+    const title = await pollCdpPageTitle(debugPort);
+    expect(title).toBe("拾题成卷 PaperWeave");
   } finally {
     child.kill("SIGKILL");
     rmSync(path.join("out", "e2e-tmp"), { recursive: true, force: true });
   }
 });
+
+async function pollCdpPageTitle(port: number, timeoutMs = 15000): Promise<string | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/json`);
+      const targets = (await res.json()) as Array<{ type: string; url: string; title: string }>;
+      const page = targets.find((t) => t.type === "page" && t.url.startsWith("file://"));
+      if (page) return page.title;
+    } catch {
+      // CDP 尚未就绪，继续轮询
+    }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return null;
+}
