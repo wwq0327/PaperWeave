@@ -30,6 +30,7 @@ export default function AiImageInput({ selections, onChange, note, onNoteChange,
   const [pageImage, setPageImage] = useState<{ url: string; width: number; height: number } | null>(null);
   const [rendering, setRendering] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadSeq, setLoadSeq] = useState(0);
   const [drag, setDrag] = useState<{ start: Point; current: Point } | null>(null);
   const documentRef = useRef<PDFDocumentProxy | null>(null);
   const loadingTaskRef = useRef<ReturnType<typeof getDocument> | null>(null);
@@ -58,7 +59,7 @@ export default function AiImageInput({ selections, onChange, note, onNoteChange,
       .catch((error: unknown) => { if (!cancelled) onError(`渲染第 ${page} 页失败：${messageOf(error)}`); })
       .finally(() => { if (!cancelled) setRendering(false); });
     return () => { cancelled = true; };
-  }, [page, numPages]);
+  }, [page, numPages, loadSeq]);
 
   async function choosePdf() {
     setLoading(true);
@@ -75,6 +76,7 @@ export default function AiImageInput({ selections, onChange, note, onNoteChange,
       setNumPages(document.numPages);
       setPage(1);
       setPageImage(null);
+      setLoadSeq((value) => value + 1);
       onChange([]);
       if (!picked.hasText) onError("这份 PDF 没有可提取的文字，已按扫描件处理；请在页面上拖选题目区域。");
     } catch (error) {
