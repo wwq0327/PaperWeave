@@ -49,3 +49,22 @@ test("没有原分值的小问不产生旧分值冲突", () => {
   content.subQuestions[0].originalScore = null;
   expect(scoreConflicts(content, ["part-1"], 4)).toEqual([]);
 });
+
+test("扫描解析与图片替代文字中的旧分值", () => {
+  const content = math();
+  content.subQuestions[0].explanation = [paragraph("按 4 分标准给分。")];
+  content.subQuestions[1].prompt = [{ type: "image", id: "img-1", alt: "示意图（6 分）" }];
+  expect(scoreConflicts(content, ["part-1", "part-2"], 8)).toEqual([
+    { subQuestionId: "part-1", value: 4, text: "4 分", key: "part-1|4|4 分" },
+    { subQuestionId: "part-2", value: 6, text: "6 分", key: "part-2|6|6 分" },
+  ]);
+});
+
+test("扫描题组题干中的旧分值，包含整题原总分", () => {
+  const content = math();
+  content.stem = [paragraph("阅读材料，完成各题（10 分）。")];
+  expect(scoreConflicts(content, ["part-1", "part-2"], 8)).toEqual([
+    { subQuestionId: null, value: 10, text: "10 分", key: "item|10|10 分" },
+  ]);
+  expect(scoreConflicts(content, ["part-1"], 8)).toEqual([]);
+});

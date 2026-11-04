@@ -409,7 +409,7 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
               <button onClick={() => void mutate(() => window.paperweave.setPaperItemScore(item.id, item.defaultScore), "已恢复默认分值。")}>恢复默认分 {item.defaultScore} 分</button>
             </div>}
             {item.scoreConflicts.map((conflict) => <p key={conflict.key} className="paper-conflict">
-              题干/答案中仍有「{conflict.text}」（原分值 {conflict.value} 分）{conflict.confirmed ? "，已确认。" : <> <button onClick={() => void confirmConflict(item, conflict.key)}>确认保留</button></>}
+              卷内文字中仍有「{conflict.text}」（原分值 {conflict.value} 分）{conflict.confirmed ? "，已确认。" : <> <button onClick={() => void confirmConflict(item, conflict.key)}>确认保留</button></>}
             </p>)}
             {paper.sections.length > 1 && <div className="paper-inline">
               <label>移动到<select aria-label="目标小节" value={targets[item.id] ?? section.id} onChange={(e) => setTargets({ ...targets, [item.id]: e.target.value })}>{paper.sections.map((entry) => <option key={entry.id} value={entry.id}>{entry.title}</option>)}</select></label>
