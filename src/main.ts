@@ -1,5 +1,6 @@
-import { app, BrowserWindow, dialog } from "electron";
+import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import { join } from "node:path";
+import { getRuntimeVersions } from "./shared/versions";
 import { Database } from "./main/database";
 import { registerAi } from "./main/ai";
 import { registerEditor } from "./main/editor";
@@ -35,6 +36,15 @@ app.whenReady().then(async () => {
   registerEditor(db, app.getPath("userData"), () => mainWindow);
   registerAi(db, app.getPath("userData"), () => mainWindow);
   registerPdf(db, () => mainWindow);
+  ipcMain.handle("app:getRuntimeVersions", (event) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("无权读取运行信息");
+    return getRuntimeVersions({
+      app: `${app.getName()}@${app.getVersion()}`,
+      electron: process.versions.electron,
+      node: process.versions.node,
+      chrome: process.versions.chrome,
+    });
+  });
   mainWindow = createMainWindow();
 
   app.on("activate", () => {
