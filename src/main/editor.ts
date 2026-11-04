@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Database } from "./database";
-import { emptyDraft, isDraft, type Draft } from "../shared/document";
+import { emptyDraft, isDraft, upgradeDraft, type Draft } from "../shared/document";
 
 const maxImageBytes = 5 * 1024 * 1024;
 const hash = (data: Buffer) => createHash("sha256").update(data).digest("hex");
@@ -32,7 +32,7 @@ export function registerEditor(db: Database, root: string, currentWindow: () => 
     const value: unknown = JSON.parse(stored);
     if (!isDraft(value)) throw new Error("草稿格式不受支持，已保留原数据");
     for (const block of value.blocks) if (block.type === "image") readImage(block.id);
-    return value;
+    return upgradeDraft(value);
   });
   ipcMain.handle("editor:save", (event, value: unknown) => {
     permitted(event);

@@ -12,3 +12,19 @@ button:disabled { opacity: .45; cursor: default; } header button { background: #
 .table-scroll { overflow-x: auto; } table { border-collapse: collapse; } td { border: 1px solid #bac8bc; padding: 4px; } td input { min-width: 120px; margin: 0; } .error, [role=alert] { color: #a32727; } .katex-display { overflow-x: auto; overflow-y: hidden; }
 
 .preview { margin-top: 32px; padding: 22px; background: white; border: 1px solid #bdcbbf; border-radius: 10px; } .preview h2 { margin-top: 0; font-size: 19px; } .preview-text { white-space: pre-wrap; } .preview td { padding: 6px 12px; min-width: 60px; }
+.preview { max-width: calc(170mm + 44px); }
+.preview table { width: 100%; table-layout: fixed; overflow-wrap: anywhere; }
+@page { size: A4; margin: 20mm; }
+@media print {
+  :root { background: white; font-size: 12pt; }
+  body, main { margin: 0; padding: 0; max-width: none; }
+  main > :not(.preview) { display: none !important; }
+  .preview { margin: 0; padding: 0; border: 0; border-radius: 0; max-width: none; }
+  .preview h2 { display: none; }
+  .preview-text { overflow-wrap: anywhere; orphans: 2; widows: 2; }
+  .preview img { max-width: none; max-height: none; break-inside: avoid; }
+  .preview .table-scroll { overflow: visible; }
+  .preview tr { break-inside: avoid; }
+  .preview .katex-display { overflow: visible; break-inside: avoid; }
+}
+.editor-controls { border: 0; padding: 0; margin: 0; min-width: 0; }

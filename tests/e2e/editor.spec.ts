@@ -26,6 +26,7 @@ test("界面编辑中文、样式、公式、图片与表格，保存后重开",
     await window.getByRole("button", { name: "添加表格" }).click();
     await window.getByLabel("第 1 行第 1 列").fill("数量");
     await window.getByLabel("第 2 行第 2 列").fill("三");
+    await window.getByLabel("教师参考答案（仅供教师卷样张使用）").fill("参考答案：三");
     await expect(window.getByRole("region", { name: "内容预览" }).locator("strong")).toHaveText("请计算：");
     await window.getByRole("button", { name: "保存草稿" }).click();
     await expect(window.getByText("草稿已保存到本机。", { exact: false })).toBeVisible();
@@ -39,6 +40,7 @@ test("界面编辑中文、样式、公式、图片与表格，保存后重开",
     await expect(window.getByRole("img", { name: "自制图" }).first()).toBeVisible();
     await expect(window.getByLabel("第 1 行第 1 列")).toHaveValue("数量");
     await expect(window.getByLabel("第 2 行第 2 列")).toHaveValue("三");
+    await expect(window.getByLabel("教师参考答案（仅供教师卷样张使用）")).toHaveValue("参考答案：三");
     await window.getByLabel("LaTeX 公式").fill("\\frac{3}{4}");
     await window.getByRole("button", { name: "保存草稿" }).click();
     await expect(window.getByText("草稿已保存到本机。", { exact: false })).toBeVisible();
