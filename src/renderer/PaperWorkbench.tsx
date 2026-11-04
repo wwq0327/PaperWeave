@@ -11,7 +11,7 @@ import type {
   QuestionSearchView,
 } from "../shared/paper-api";
 import type { BlankSpace, PaperScoring } from "../shared/paper";
-import type { QuestionBlock, Stage } from "../shared/question";
+import type { QuestionBlock, ScoringPoint, Stage } from "../shared/question";
 import PaperPrintView from "./PaperPrintView";
 
 const stages: Stage[] = ["小学", "初中", "高中"];
@@ -27,6 +27,12 @@ const scoringLabels: Record<string, string> = {
   adjusted: "已调整",
   answerOnly: "仅答案",
 };
+
+type ScoringDraft = Omit<ScoringPoint, "score"> & { score: string };
+
+function draftTotal(points: ScoringDraft[]): number {
+  return Math.round(points.reduce((sum, point) => sum + (Number(point.score) || 0), 0) * 100) / 100;
+}
 
 function blockText(blocks: QuestionBlock[]): string {
   const out: string[] = [];
@@ -67,6 +73,7 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
   const [creating, setCreating] = useState(false);
   const [scores, setScores] = useState<Record<string, string>>({});
   const [targets, setTargets] = useState<Record<string, string>>({});
+  const [scoringDrafts, setScoringDrafts] = useState<Record<string, ScoringDraft[]>>({});
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -176,11 +183,55 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
       updateItem(item, updated);
     }, "留白已更新。");
   }
-  async function setScoring(item: PaperItemView, scoring: PaperScoring) {
-    await mutate(async () => {
+  async function setScoring(item: PaperItemView, scoring: PaperScoring): Promise<boolean> {
+    setError(""); setMessage("");
+    try {
       const updated = await window.paperweave.setPaperItemScoring(item.id, scoring);
       updateItem(item, updated);
-    }, "评分状态已更新。");
+      await loadPaper();
+      setMessage("评分状态已更新。");
+      return true;
+    } catch (e) { setError(errorText(e)); return false; }
+  }
+  function editScoring(item: PaperItemView) {
+    const base: ScoringPoint[] = item.scoring.mode === "adjusted"
+      ? item.scoring.points
+      : item.content.subQuestions
+          .filter((sub) => item.subQuestionIds.includes(sub.id))
+          .flatMap((sub) => sub.scoring);
+    setScoringDrafts((old) => ({ ...old, [item.id]: base.map((point) => ({ ...point, score: String(point.score) })) }));
+  }
+  function patchDraftPoint(item: PaperItemView, index: number, patch: Partial<ScoringDraft>) {
+    setScoringDrafts((old) => ({ ...old, [item.id]: (old[item.id] ?? []).map((point, i) => i === index ? { ...point, ...patch } : point) }));
+  }
+  function removeDraftPoint(item: PaperItemView, index: number) {
+    setScoringDrafts((old) => ({ ...old, [item.id]: (old[item.id] ?? []).filter((_, i) => i !== index) }));
+  }
+  function addDraftPoint(item: PaperItemView) {
+    const point: ScoringDraft = { id: crypto.randomUUID(), description: "", score: "0", slotIds: [] };
+    setScoringDrafts((old) => ({ ...old, [item.id]: [...(old[item.id] ?? []), point] }));
+  }
+  function closeScoring(item: PaperItemView) {
+    setScoringDrafts((old) => {
+      const next = { ...old };
+      delete next[item.id];
+      return next;
+    });
+  }
+  async function saveScoring(item: PaperItemView) {
+    const draft = scoringDrafts[item.id];
+    if (!draft) return;
+    if (draft.length === 0) { setError("至少保留一个评分点。"); return; }
+    const points: ScoringPoint[] = [];
+    for (const point of draft) {
+      const score = Number(point.score);
+      if (point.description.trim() === "") { setError("评分点说明不能为空。"); return; }
+      if (!Number.isFinite(score) || score < 0 || score > 1000) { setError("评分点分值必须是 0 到 1000 之间的数字。"); return; }
+      points.push({ id: point.id, description: point.description.trim(), score, slotIds: point.slotIds });
+    }
+    const saved = await setScoring(item, { mode: "adjusted", points });
+    const total = draftTotal(draft);
+    if (saved && total !== item.score) setError(`评分点合计 ${total} 分与卷内分值 ${item.score} 分不一致，调整一致后才能定稿。`);
   }
   async function confirmConflict(item: PaperItemView, key: string) {
     await mutate(async () => {
@@ -333,10 +384,25 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
               <label>卷内分值<input aria-label="卷内分值" type="number" min="0" step="0.5" value={scores[item.id] ?? item.score} onChange={(e) => setScores({ ...scores, [item.id]: e.target.value })} /></label>
               <button onClick={() => void setScore(item)}>改分</button>
               <label>留白<select aria-label="答题留白" value={item.blankSpace} onChange={(e) => void setBlankSpace(item, e.target.value as BlankSpace)}>{blankSpaces.map((entry) => <option key={entry.value} value={entry.value}>{entry.label}</option>)}</select></label>
+              <button onClick={() => editScoring(item)}>编辑评分点</button>
               <button disabled={index === 0} onClick={() => void move(item, section.id, index)}>上移</button>
               <button disabled={index === section.items.length - 1} onClick={() => void move(item, section.id, index + 2)}>下移</button>
               <button onClick={() => void mutate(() => window.paperweave.removePaperItem(item.id), "题目已移除。")}>移除</button>
             </div>
+            {scoringDrafts[item.id] && <div className="paper-scoring-edit" aria-label="卷内评分点编辑">
+              <p>评分点合计 {draftTotal(scoringDrafts[item.id])} 分，卷内分值 {item.score} 分{draftTotal(scoringDrafts[item.id]) !== item.score ? "，不一致时不可定稿。" : "。"}</p>
+              {scoringDrafts[item.id].map((point, pointIndex) => <div key={point.id} className="paper-inline">
+                <input aria-label={`评分点 ${pointIndex + 1} 说明`} value={point.description} onChange={(e) => patchDraftPoint(item, pointIndex, { description: e.target.value })} />
+                <input aria-label={`评分点 ${pointIndex + 1} 分值`} type="number" min="0" step="0.5" value={point.score} onChange={(e) => patchDraftPoint(item, pointIndex, { score: e.target.value })} />
+                <button onClick={() => removeDraftPoint(item, pointIndex)}>删除评分点</button>
+              </div>)}
+              {scoringDrafts[item.id].length === 0 && <p className="muted">暂无评分点，请添加。</p>}
+              <div className="paper-inline">
+                <button onClick={() => addDraftPoint(item)}>添加评分点</button>
+                <button className="primary" onClick={() => void saveScoring(item)}>保存评分点</button>
+                <button onClick={() => closeScoring(item)}>收起</button>
+              </div>
+            </div>}
             {item.scoringState === "needsAdjustment" && <div className="paper-adjust">
               <p role="alert">原评分不适用于当前分值，待调整。</p>
               <button onClick={() => void setScoring(item, { mode: "answerOnly", note: "评分标准待补" })}>仅输出参考答案</button>

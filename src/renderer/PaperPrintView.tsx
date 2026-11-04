@@ -143,11 +143,15 @@ export default function PaperPrintView({ paper, onReady, onCancel }: { paper: Vo
                 <h4>解析</h4>
                 <Blocks blocks={sub.explanation} images={images} figureLabel={figureLabel} />
               </section>}
-              {sub.scoring && sub.scoring.length > 0 && <section className="paper-scoring" aria-label={`${sub.label} 评分点`}>
+              {item.scoringState === "original" && sub.scoring && sub.scoring.length > 0 && <section className="paper-scoring" aria-label={`${sub.label} 评分点`}>
                 <h4>评分点</h4>
                 <ul>{sub.scoring.map((point) => <li key={point.id}>{point.description}（{point.score} 分）</li>)}</ul>
               </section>}
             </div>)}
+            {item.scoringState === "adjusted" && item.scoring?.mode === "adjusted" && <section className="paper-scoring" aria-label="本卷评分">
+              <h4>本卷评分</h4>
+              <ul>{item.scoring.points.map((point) => <li key={point.id}>{point.description}（{point.score} 分）</li>)}</ul>
+            </section>}
             {item.scoringState === "answerOnly" && <p className="paper-answer-only">本卷评分待补，仅提供参考答案。</p>}
           </article>;
         })}
