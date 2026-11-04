@@ -89,6 +89,7 @@ declare global {
       attachExamFile(examId: string, role: ExamFileRole): Promise<{ status: "canceled" } | ({ status: "attached" } & ExamAttachment)>;
       addExamSection(examId: string, title: string, subject?: string): Promise<ExamSectionRecord>;
       getExamFile(fileId: string): Promise<{ file: OriginalFileView; data: Uint8Array }>;
+      getExamFileText(fileId: string): Promise<{ pages: { page: number; text: string }[]; hasText: boolean }>;
       listExamQuestions(examId: string): Promise<ExamQuestionSummary[]>;
       scanImports(kind: "tiku" | "mathvault"): Promise<{ status: "canceled" } | { status: "scanned"; scan: ImportScanView }>;
       applyImports(input: { scanId: string; rows: { sourceKey: string; action: "import" | "revise" | "skip"; acknowledgeProofread?: boolean }[] }): Promise<ImportApplyResult>;

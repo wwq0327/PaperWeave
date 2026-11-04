@@ -8,6 +8,22 @@ export const AI_LIMITS = {
   timeoutMs: 120000,
 } as const;
 
+export interface AiPart {
+  label: string;
+  prompt: string;
+  options: string[];
+  answer: string;
+  explanation: string;
+  score: number | null;
+  uncertain: string[];
+}
+
+export interface AiMaterialSuggestion {
+  title: string;
+  content: string;
+  source: string;
+}
+
 export interface AiQuestion {
   stem: string;
   subquestions: string[];
@@ -16,6 +32,11 @@ export interface AiQuestion {
   uncertain: string[];
   page: number;
   answer?: string;
+  parts?: AiPart[];
+  materials?: AiMaterialSuggestion[];
+  questionType?: string;
+  knowledgePoints?: string[];
+  originalNumber?: string;
 }
 
 export interface AiDraft {
@@ -23,10 +44,29 @@ export interface AiDraft {
   notes: string[];
 }
 
-const questionKeys = new Set(["stem", "subquestions", "options", "tags", "uncertain", "page", "answer"]);
+const questionKeys = new Set(["stem", "subquestions", "options", "tags", "uncertain", "page", "answer", "parts", "materials", "questionType", "knowledgePoints", "originalNumber"]);
+const partKeys = new Set(["label", "prompt", "options", "answer", "explanation", "score", "uncertain"]);
+const materialKeys = new Set(["title", "content", "source"]);
 const text = (x: unknown, max = 8000): x is string => typeof x === "string" && x.length <= max;
 const textList = (x: unknown, maxItems = 30, max = 8000): x is string[] =>
   Array.isArray(x) && x.length <= maxItems && x.every((item) => text(item, max));
+
+function isPart(value: unknown): value is AiPart {
+  if (typeof value !== "object" || value === null) return false;
+  const part = value as Record<string, unknown>;
+  if (!Object.keys(part).every((key) => partKeys.has(key))) return false;
+  if (!text(part.label, 20) || !text(part.prompt) || !part.prompt.trim()) return false;
+  if (!textList(part.options, 26) || !text(part.answer) || !text(part.explanation) || !textList(part.uncertain, 30, 2000)) return false;
+  if (part.score !== null && (typeof part.score !== "number" || !Number.isFinite(part.score) || part.score < 0 || part.score > 1000)) return false;
+  return true;
+}
+
+function isMaterialSuggestion(value: unknown): value is AiMaterialSuggestion {
+  if (typeof value !== "object" || value === null) return false;
+  const material = value as Record<string, unknown>;
+  if (!Object.keys(material).every((key) => materialKeys.has(key))) return false;
+  return text(material.title, 200) && material.title.trim() !== "" && text(material.content) && material.content.trim() !== "" && text(material.source, 500);
+}
 
 /** 模型返回只接受约定的纯文本结构；未知字段或不合法分页直接拒绝。 */
 export function isAiDraft(value: unknown): value is AiDraft {
@@ -42,6 +82,11 @@ export function isAiDraft(value: unknown): value is AiDraft {
     if (!textList(q.subquestions) || !textList(q.options) || !textList(q.tags, 30, 200) || !textList(q.uncertain, 30, 2000)) return false;
     if (typeof q.page !== "number" || !Number.isInteger(q.page) || q.page < 1 || q.page > 2000) return false;
     if (q.answer !== undefined && !text(q.answer)) return false;
+    if (q.parts !== undefined && (!Array.isArray(q.parts) || q.parts.length > 30 || !q.parts.every(isPart))) return false;
+    if (q.materials !== undefined && (!Array.isArray(q.materials) || q.materials.length > 10 || !q.materials.every(isMaterialSuggestion))) return false;
+    if (q.questionType !== undefined && !text(q.questionType, 200)) return false;
+    if (q.knowledgePoints !== undefined && !textList(q.knowledgePoints, 30, 100)) return false;
+    if (q.originalNumber !== undefined && !text(q.originalNumber, 20)) return false;
     return true;
   });
 }
@@ -106,7 +151,13 @@ export function questionToBlocks(question: AiQuestion): { blocks: Block[]; answe
     if (value.trim()) blocks.push({ type: "paragraph", runs: [{ type: "text", text: value, style: "普通" }] });
   };
   append(question.stem);
-  for (const sub of question.subquestions) append(sub);
-  question.options.forEach((option, index) => append(`${index < 26 ? String.fromCharCode(65 + index) : index + 1}. ${option}`));
-  return { blocks, answer: question.answer ?? "" };
+  const subquestions = question.subquestions.length > 0
+    ? question.subquestions
+    : (question.parts ?? []).map((part) => `${part.label ? `${part.label} ` : ""}${part.prompt}`);
+  for (const sub of subquestions) append(sub);
+  const options = question.options.length > 0 ? question.options : (question.parts ?? []).flatMap((part) => part.options);
+  options.forEach((option, index) => append(`${index < 26 ? String.fromCharCode(65 + index) : index + 1}. ${option}`));
+  const answer = question.answer
+    ?? (question.parts ?? []).map((part) => part.answer).filter((value) => value.trim()).join("\n");
+  return { blocks, answer };
 }

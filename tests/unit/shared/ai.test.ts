@@ -56,3 +56,33 @@ test("裁图输入只接受 png/jpeg data URL，并按解码后大小计算限�
   expect(normalizeAiInput({ mode: "images", images: [] }).ok).toBe(false);
   expect(normalizeAiInput({ mode: "images", images: [{ dataUrl: png, page: 0 }] }).ok).toBe(false);
 });
+
+test("结构化小问、材料建议与知识点严格校验", () => {
+  const question = {
+    stem: "题干",
+    subquestions: ["(1) 小问"],
+    options: [],
+    tags: ["标签"],
+    uncertain: [],
+    page: 2,
+    parts: [{ label: "(1)", prompt: "求值。", options: ["甲", "乙"], answer: "4", explanation: "代入计算。", score: 4, uncertain: [] }],
+    materials: [{ title: "材料一", content: "材料正文", source: "自制" }],
+    questionType: "解答题",
+    knowledgePoints: ["一元二次方程"],
+  };
+  expect(isAiDraft({ questions: [question], notes: [] })).toBe(true);
+  expect(isAiDraft({ questions: [{ ...question, parts: [{ ...question.parts[0], score: -1 }] }], notes: [] })).toBe(false);
+  expect(isAiDraft({ questions: [{ ...question, parts: [{ ...question.parts[0], extra: 1 }] }], notes: [] })).toBe(false);
+  expect(isAiDraft({ questions: [{ ...question, materials: [{ title: "", content: "正文", source: "" }] }], notes: [] })).toBe(false);
+  expect(isAiDraft({ questions: [{ ...question, knowledgePoints: ["知识点".repeat(60)] }], notes: [] })).toBe(false);
+});
+
+test("旧格式没有结构化小问时仍可采纳为文字草稿", () => {
+  const result = questionToBlocks({ stem: "题干", subquestions: [], options: [], tags: [], uncertain: [], page: 1, parts: [{ label: "(1)", prompt: "求值。", options: ["甲"], answer: "4", explanation: "", score: 4, uncertain: [] }] });
+  expect(result.blocks).toEqual([
+    { type: "paragraph", runs: [{ type: "text", text: "题干", style: "普通" }] },
+    { type: "paragraph", runs: [{ type: "text", text: "(1) 求值。", style: "普通" }] },
+    { type: "paragraph", runs: [{ type: "text", text: "A. 甲", style: "普通" }] },
+  ]);
+  expect(result.answer).toBe("4");
+});
