@@ -328,7 +328,7 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
     await mutate(async () => {
       const updated = await window.paperweave.confirmPaperScoreConflict(item.id, key);
       updateItem(item, updated);
-    }, "分值冲突已确认。");
+    }, "待核项已确认。");
   }
   async function move(item: PaperItemView, sectionId: string, position: number) {
     await mutate(() => window.paperweave.movePaperItem(item.id, sectionId, position), "题目位置已更新。");
@@ -561,6 +561,9 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
             </div>}
             {item.scoreConflicts.map((conflict) => <p key={conflict.key} className="paper-conflict">
               卷内文字中仍有「{conflict.text}」（原分值 {conflict.value} 分）{conflict.confirmed ? "，已确认。" : <> <button onClick={() => void confirmConflict(item, conflict.key)}>确认保留</button></>}
+            </p>)}
+            {item.pendingChecks.map((pending) => <p key={pending.key} className="paper-conflict">
+              {pending.kind === "imageScore" ? "卷内分值已改，图片中的旧分值需人工核对。" : `文字引用「${pending.text}」未结构化，请核对卷内编号。`}{pending.confirmed ? "已确认。" : <> <button onClick={() => void confirmConflict(item, pending.key)}>确认已核对</button></>}
             </p>)}
             {paper.sections.length > 1 && <div className="paper-inline">
               <label>移动到<select aria-label="目标小节" value={targets[item.id] ?? section.id} onChange={(e) => setTargets({ ...targets, [item.id]: e.target.value })}>{paper.sections.map((entry) => <option key={entry.id} value={entry.id}>{entry.title}</option>)}</select></label>

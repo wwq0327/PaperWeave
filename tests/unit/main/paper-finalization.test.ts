@@ -145,8 +145,13 @@ test("定稿门槛：评分待调整、答案待确认、内嵌分值未确认�
   let check = finalizer.check(created.id);
   expect(check.ready).toBe(false);
   expect(check.blockers).toContain("第 1 题：原评分不适用于当前分值，待调整");
+  expect(check.blockers).toContain("第 1 题：卷内分值已改，图片中的旧分值需人工核对");
   await expect(finalizer.finalize(created.id, out)).rejects.toThrow("无法定稿");
   expect(finalizer.listFinalizations(created.id)).toEqual([]);
+  const imageCheck = paper.getPaper(created.id).sections[0].items[0].pendingChecks;
+  expect(imageCheck).toHaveLength(1);
+  expect(imageCheck[0]).toMatchObject({ kind: "imageScore", confirmed: false });
+  paper.confirmScoreConflict(item.id, imageCheck[0].key);
 
   paper.setItemScoring(item.id, {
     mode: "adjusted",
@@ -177,6 +182,24 @@ test("定稿门槛：评分待调整、答案待确认、内嵌分值未确认�
   expect(conflictPaper.item.scoreConflicts).toHaveLength(1);
   paper.confirmScoreConflict(conflictPaper.item.id, conflictPaper.item.scoreConflicts[0].key);
   expect(finalizer.check(conflictPaper.created.id).ready).toBe(true);
+});
+
+test("文字引用未结构化时逐项阻断，确认后才可定稿", () => {
+  const { db, bank, basket, paper } = open();
+  const content = referenceGroup();
+  content.subQuestions[0].prompt.push(paragraph("结合第(1)问与图 1 作答。"));
+  const version = approvedVersion(bank, content);
+  const { created } = addToPaper(paper, basket, version);
+  const finalizer = new PaperFinalizer(db, fakeRenderer([]));
+
+  const check = finalizer.check(created.id);
+  expect(check.ready).toBe(false);
+  expect(check.blockers).toContain("第 1 题：文字引用「第(1)问」未结构化，需确认");
+  expect(check.blockers).toContain("第 1 题：文字引用「图 1」未结构化，需确认");
+
+  const item = paper.getPaper(created.id).sections[0].items[0];
+  for (const pending of item.pendingChecks) paper.confirmScoreConflict(item.id, pending.key);
+  expect(finalizer.check(created.id).ready).toBe(true);
 });
 
 test("引用目标不在本卷时列出题号与原卷页并阻断定稿", () => {

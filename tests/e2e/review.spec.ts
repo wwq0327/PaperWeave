@@ -308,6 +308,8 @@ test("录题提交待核后完整审核公式、题图与标签，再进入新�
     await page.getByRole("button", { name: "添加小节" }).click();
     await page.getByRole("region", { name: "题篮" }).getByRole("button", { name: "加入试卷" }).click();
     await expect(page.getByText("总分 4 分")).toBeVisible();
+    await page.locator("article.paper-item-edit").locator(".paper-conflict", { hasText: "文字引用「下图」" }).getByRole("button", { name: "确认已核对" }).click();
+    await expect(page.getByText("待核项已确认。")).toBeVisible();
     await page.getByRole("button", { name: "检查定稿" }).click();
     await expect(page.getByText("定稿检查通过。", { exact: true })).toBeVisible();
 

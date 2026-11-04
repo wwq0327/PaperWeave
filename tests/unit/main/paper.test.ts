@@ -184,7 +184,7 @@ test("内嵌旧分值列为冲突，逐项确认后才标记已确认", () => {
   const conflict = { subQuestionId: "part-2", value: 6, text: "6 分", key: "part-2|6|6 分", confirmed: false };
   expect(paper.getPaper(created.id).sections[0].items[0].scoreConflicts).toEqual([conflict]);
 
-  expect(() => paper.confirmScoreConflict(item.id, "part-2|6|8 分")).toThrow("分值冲突不存在");
+  expect(() => paper.confirmScoreConflict(item.id, "part-2|6|8 分")).toThrow("待核项不存在");
   const confirmed = paper.confirmScoreConflict(item.id, conflict.key);
   expect(confirmed.scoreConflicts).toEqual([{ ...conflict, confirmed: true }]);
   expect(paper.getPaper(created.id).sections[0].items[0].scoreConflicts).toEqual([{ ...conflict, confirmed: true }]);
