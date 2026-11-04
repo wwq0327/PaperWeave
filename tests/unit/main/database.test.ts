@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, test } from "vitest";
 import { Database } from "../../../src/main/database";
+import type { QuestionContent } from "../../../src/shared/question";
 
 const directories: string[] = [];
 function dbPath(): string {
@@ -12,6 +13,56 @@ function dbPath(): string {
   return join(dir, "题库.sqlite");
 }
 afterEach(() => { for (const dir of directories.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+
+/** 版本 4 及更早的内容格式：小问没有原分值与小问材料。 */
+type LegacyContent = Omit<QuestionContent, "subQuestions"> & {
+  subQuestions: Omit<QuestionContent["subQuestions"][number], "originalScore" | "materialIds">[];
+};
+
+function legacyContent(): LegacyContent {
+  return {
+    stem: [{ type: "paragraph", runs: [{ type: "text", text: "旧题干", style: "普通" }] }],
+    subQuestions: [{
+      id: "s1",
+      originalLabel: "(1)",
+      prompt: [{ type: "paragraph", runs: [{ type: "text", text: "旧小问", style: "普通" }] }],
+      explanation: [],
+      options: [],
+      slots: [],
+      answers: [],
+      scoring: [{ id: "p1", description: "要点", score: 2, slotIds: [] }],
+      dependsOn: [],
+    }],
+    materials: [],
+    selection: { mode: "all" },
+    source: { section: "语文", pdfPage: 1, originalNumber: "1" },
+  };
+}
+
+const questionVersionsV3Schema = `
+  CREATE TABLE questions (id TEXT PRIMARY KEY, created_at TEXT NOT NULL) STRICT;
+  CREATE TABLE question_versions (
+    id TEXT PRIMARY KEY,
+    question_id TEXT NOT NULL REFERENCES questions(id),
+    version INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    content_status TEXT NOT NULL CHECK (content_status IN ('draft', 'pending', 'approved')),
+    answer_status TEXT NOT NULL CHECK (answer_status IN ('missing', 'pending', 'approved')),
+    created_at TEXT NOT NULL,
+    UNIQUE (question_id, version)
+  ) STRICT;
+`;
+
+const questionsV4Columns = `
+  ALTER TABLE questions ADD COLUMN stage TEXT NOT NULL DEFAULT '';
+  ALTER TABLE questions ADD COLUMN subject TEXT NOT NULL DEFAULT '';
+  ALTER TABLE questions ADD COLUMN grade TEXT NOT NULL DEFAULT '';
+  ALTER TABLE questions ADD COLUMN exam_type TEXT NOT NULL DEFAULT '';
+  ALTER TABLE questions ADD COLUMN year TEXT NOT NULL DEFAULT '';
+  ALTER TABLE questions ADD COLUMN source_name TEXT NOT NULL DEFAULT '';
+  ALTER TABLE questions ADD COLUMN question_type TEXT NOT NULL DEFAULT '';
+  ALTER TABLE question_versions ADD COLUMN search_text TEXT NOT NULL DEFAULT '';
+`;
 
 test("首次建库、写入、更新并重开", () => {
   const path = dbPath();
@@ -24,7 +75,7 @@ test("首次建库、写入、更新并重开", () => {
   expect(reopened.getSetting("标题")).toBe("拾题成卷");
   reopened.close();
   const raw = new DatabaseSync(path);
-  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(4);
+  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(5);
   raw.close();
 });
 
@@ -38,7 +89,7 @@ test("版本 2 升级到 3 时保留设置与草稿，并建好题目表", () =>
   expect(db.getDraft()).toBe("旧草稿");
   db.close();
   const raw = new DatabaseSync(path);
-  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(4);
+  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(5);
   const tables = raw.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all().map((row) => (row as { name: string }).name);
   for (const table of ["questions", "question_versions", "materials", "material_versions", "question_material_refs"]) expect(tables).toContain(table);
   raw.close();
@@ -47,28 +98,19 @@ test("版本 2 升级到 3 时保留设置与草稿，并建好题目表", () =>
 test("版本 3 升级到 4 时保留题目与审核状态，并增加分类列", () => {
   const path = dbPath();
   const old = new DatabaseSync(path);
-  old.exec(`
-    CREATE TABLE questions (id TEXT PRIMARY KEY, created_at TEXT NOT NULL) STRICT;
-    CREATE TABLE question_versions (
-      id TEXT PRIMARY KEY,
-      question_id TEXT NOT NULL REFERENCES questions(id),
-      version INTEGER NOT NULL,
-      content TEXT NOT NULL,
-      content_status TEXT NOT NULL CHECK (content_status IN ('draft', 'pending', 'approved')),
-      answer_status TEXT NOT NULL CHECK (answer_status IN ('missing', 'pending', 'approved')),
-      created_at TEXT NOT NULL,
-      UNIQUE (question_id, version)
-    ) STRICT;
+  old.exec(`${questionVersionsV3Schema}
     INSERT INTO questions VALUES ('q1', '2026-11-01T00:00:00Z');
-    INSERT INTO question_versions VALUES ('v1', 'q1', 1, '{}', 'pending', 'approved', '2026-11-01T00:00:00Z');
     PRAGMA user_version = 3
   `);
+  old.prepare("INSERT INTO question_versions VALUES ('v1', 'q1', 1, ?, 'pending', 'approved', '2026-11-01T00:00:00Z')").run(JSON.stringify(legacyContent()));
   old.close();
   const db = new Database(path);
   db.close();
   const raw = new DatabaseSync(path);
-  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(4);
+  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(5);
   expect(raw.prepare("SELECT content_status, answer_status, search_text FROM question_versions WHERE id = 'v1'").get()).toEqual({ content_status: "pending", answer_status: "approved", search_text: "" });
+  const migrated = JSON.parse((raw.prepare("SELECT content FROM question_versions WHERE id = 'v1'").get() as { content: string }).content);
+  expect(migrated.subQuestions[0].originalScore).toBe(2);
   const columns = raw.prepare("PRAGMA table_info(questions)").all().map((row) => (row as { name: string }).name);
   for (const column of ["stage", "subject", "grade", "exam_type", "year", "source_name", "question_type"]) expect(columns).toContain(column);
   const tables = raw.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all().map((row) => (row as { name: string }).name);
@@ -79,8 +121,69 @@ test("版本 3 升级到 4 时保留题目与审核状态，并增加分类列",
   raw.close();
 });
 
-test("事务失败时回滚", () => {
+function v4Database(path: string, contents: string[]): void {
+  const old = new DatabaseSync(path);
+  old.exec(questionVersionsV3Schema);
+  old.exec(questionsV4Columns);
+  old.exec("PRAGMA user_version = 4");
+  old.prepare("INSERT INTO questions (id, created_at) VALUES ('q1', '2026-11-01T00:00:00Z')").run();
+  const insert = old.prepare("INSERT INTO question_versions (id, question_id, version, content, content_status, answer_status, created_at, search_text) VALUES (?, 'q1', ?, ?, 'pending', 'approved', '2026-11-01T00:00:00Z', '')");
+  contents.forEach((content, index) => insert.run(`v${index + 1}`, index + 1, content));
+  old.close();
+}
+
+function legacyGroup(): ReturnType<typeof legacyContent> {
+  const content = legacyContent();
+  content.subQuestions.push({
+    id: "s2",
+    originalLabel: "(2)",
+    prompt: [{ type: "paragraph", runs: [{ type: "text", text: "旧小问二", style: "普通" }] }],
+    explanation: [],
+    options: [],
+    slots: [],
+    answers: [],
+    scoring: [],
+    dependsOn: ["s1"],
+  });
+  content.materials = [{ materialId: "material-a", versionId: "material-a-v1" }];
+  return content;
+}
+
+test("版本 4 升级到 5 时补齐原分值与小问材料，并建好组卷表", () => {
   const path = dbPath();
+  const original = legacyGroup();
+  v4Database(path, [JSON.stringify(original)]);
+  const db = new Database(path);
+  db.close();
+  const raw = new DatabaseSync(path);
+  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(5);
+  const migrated = JSON.parse((raw.prepare("SELECT content FROM question_versions WHERE id = 'v1'").get() as { content: string }).content);
+  expect(migrated.subQuestions[0].originalScore).toBe(2);
+  expect(migrated.subQuestions[1].originalScore).toBeNull();
+  expect(migrated.subQuestions[0].materialIds).toEqual(["material-a"]);
+  expect(migrated.subQuestions[1].materialIds).toEqual(["material-a"]);
+  expect(migrated.stem).toEqual(original.stem);
+  expect(migrated.subQuestions[0].prompt).toEqual(original.subQuestions[0].prompt);
+  const tables = raw.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all().map((row) => (row as { name: string }).name);
+  for (const table of ["basket_items", "papers", "paper_sections", "paper_items", "paper_finalizations"]) expect(tables).toContain(table);
+  const indexes = raw.prepare("SELECT name FROM sqlite_schema WHERE type = 'index'").all().map((row) => (row as { name: string }).name);
+  expect(indexes).toContain("basket_items_position");
+  raw.close();
+});
+
+test("版本 4 内容迁移失败时整次回滚，不留下半升级数据库", () => {
+  const path = dbPath();
+  v4Database(path, ["不是 JSON"]);
+  expect(() => new Database(path)).toThrow();
+  const raw = new DatabaseSync(path);
+  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(4);
+  expect(raw.prepare("SELECT content FROM question_versions WHERE id = 'v1'").get()).toEqual({ content: "不是 JSON" });
+  const tables = raw.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all().map((row) => (row as { name: string }).name);
+  expect(tables).not.toContain("basket_items");
+  raw.close();
+});
+
+test("事务失败时回滚", () => {  const path = dbPath();
   const db = new Database(path);
   expect(() => db.transaction((sqlite) => {
     sqlite.prepare("INSERT INTO app_settings (key, value) VALUES (?, ?)").run("回滚", "不应保留");

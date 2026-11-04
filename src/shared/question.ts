@@ -1,4 +1,4 @@
-import { isBlockList, type Block } from "./document";
+import { isInline, type Inline } from "./document";
 
 /** 内容审核状态：草稿、待核、已审核。 */
 export type ReviewStatus = "draft" | "pending" | "approved";
@@ -23,7 +23,7 @@ export interface AnswerSlot {
 
 export interface AnswerKey {
   slotId: string | null;
-  blocks: Block[];
+  blocks: QuestionBlock[];
   variants: string[];
 }
 
@@ -34,22 +34,44 @@ export interface ScoringPoint {
   slotIds: string[];
 }
 
+export type ReferenceKind = "subQuestion" | "material" | "figure";
+
+/** 引用节点保留可读回退文字；卷内编号在组卷/定稿时解析，不改写题库内容。 */
+export interface ReferenceInline {
+  type: "reference";
+  kind: ReferenceKind;
+  targetId: string;
+  fallback: string;
+}
+
+export type QuestionInline = Inline | ReferenceInline;
+
+export type QuestionBlock =
+  | { type: "paragraph"; runs: QuestionInline[] }
+  | { type: "formula"; latex: string }
+  | { type: "image"; id: string; alt: string; figureId?: string }
+  | { type: "table"; rows: string[][] };
+
 export interface SubQuestion {
   id: string;
   originalLabel: string;
-  prompt: Block[];
-  explanation: Block[];
-  options: { label: string; content: Block[] }[];
+  prompt: QuestionBlock[];
+  explanation: QuestionBlock[];
+  options: { label: string; content: QuestionBlock[] }[];
   slots: AnswerSlot[];
   answers: AnswerKey[];
   scoring: ScoringPoint[];
+  /** 原卷标注分值；null 表示未录入，组卷时要求教师补填。 */
+  originalScore: number | null;
+  /** 本小问使用的题组材料标识；必须在 QuestionContent.materials 中存在。 */
+  materialIds: string[];
   dependsOn: string[];
 }
 
 export type SelectionRule = { mode: "all" } | { mode: "choose"; required: number; candidates: string[] };
 
 export interface QuestionContent {
-  stem: Block[];
+  stem: QuestionBlock[];
   subQuestions: SubQuestion[];
   materials: { materialId: string; versionId: string }[];
   selection: SelectionRule;
@@ -110,17 +132,69 @@ function sourceProblem(value: unknown): string | null {
   return null;
 }
 
-function subQuestionProblem(value: unknown, earlier: Set<string>): string | null {
-  if (!object(value) || !keys(value, ["id", "originalLabel", "prompt", "explanation", "options", "slots", "answers", "scoring", "dependsOn"])) return "小问结构无效";
+const referenceKinds = new Set(["subQuestion", "material", "figure"]);
+
+function referenceInlineProblem(value: unknown): string | null {
+  if (isInline(value)) return null;
+  if (!object(value) || !keys(value, ["type", "kind", "targetId", "fallback"])) return "题目引用格式无效";
+  if (value.type !== "reference") return "题目引用格式无效";
+  if (typeof value.kind !== "string" || !referenceKinds.has(value.kind)) return "题目引用类型无效";
+  if (!id(value.targetId)) return "题目引用目标无效";
+  if (!text(value.fallback, 2000) || !value.fallback.trim()) return "题目引用缺少回退文字";
+  return null;
+}
+
+function questionBlockProblem(value: unknown, references: ReferenceInline[], figures: Set<string>): string | null {
+  if (!object(value)) return "题目内容块格式无效";
+  if (value.type === "paragraph") {
+    if (!keys(value, ["type", "runs"]) || !Array.isArray(value.runs) || value.runs.length > 500) return "段落格式无效";
+    for (const run of value.runs) {
+      const problem = referenceInlineProblem(run);
+      if (problem) return problem;
+      if ((run as { type: string }).type === "reference") references.push(run as ReferenceInline);
+    }
+    return null;
+  }
+  if (value.type === "formula") return keys(value, ["type", "latex"]) && text(value.latex, 4000) ? null : "公式格式无效";
+  if (value.type === "image") {
+    if (!keys(value, ["type", "id", "alt", "figureId"]) || typeof value.id !== "string" || !/^[a-f0-9]{64}$/.test(value.id) || !text(value.alt, 1000)) return "图片格式无效";
+    if (value.figureId === undefined) return null;
+    if (!id(value.figureId)) return "图标识无效";
+    if (figures.has(value.figureId)) return "图标识重复";
+    figures.add(value.figureId);
+    return null;
+  }
+  if (value.type === "table") {
+    const valid = keys(value, ["type", "rows"]) && Array.isArray(value.rows) && value.rows.length > 0 && value.rows.length <= 30 && value.rows.every((row: unknown) => Array.isArray(row) && row.length > 0 && row.length <= 10 && row.every((cell: unknown) => text(cell, 4000))) && value.rows.every((row: string[]) => row.length === (value.rows as string[][])[0].length);
+    return valid ? null : "表格格式无效";
+  }
+  return "题目内容块格式无效";
+}
+
+function questionBlockListProblem(value: unknown, references: ReferenceInline[], figures: Set<string>, label: string): string | null {
+  if (!Array.isArray(value) || value.length > 500) return `${label}格式无效`;
+  for (const block of value) {
+    const problem = questionBlockProblem(block, references, figures);
+    if (problem) return problem;
+  }
+  return null;
+}
+
+function subQuestionProblem(value: unknown, earlier: Set<string>, materialPool: Set<string>, references: ReferenceInline[], figures: Set<string>): string | null {
+  if (!object(value) || !keys(value, ["id", "originalLabel", "prompt", "explanation", "options", "slots", "answers", "scoring", "originalScore", "materialIds", "dependsOn"])) return "小问结构无效";
   if (!id(value.id) || earlier.has(value.id)) return "小问标识无效或重复";
   if (!text(value.originalLabel, 50)) return "小问号格式无效";
-  if (!isBlockList(value.prompt)) return "小问题干格式无效";
-  if (!isBlockList(value.explanation)) return "小问解析格式无效";
+  let problem = questionBlockListProblem(value.prompt, references, figures, "小问题干");
+  if (problem) return problem;
+  problem = questionBlockListProblem(value.explanation, references, figures, "小问解析");
+  if (problem) return problem;
   if (!Array.isArray(value.options) || value.options.length > 26) return "选项格式无效";
   const optionLabels = new Set<string>();
   for (const option of value.options) {
-    if (!object(option) || !keys(option, ["label", "content"]) || !text(option.label, 50) || !option.label.trim() || optionLabels.has(option.label) || !isBlockList(option.content)) return "选项格式无效";
+    if (!object(option) || !keys(option, ["label", "content"]) || !text(option.label, 50) || !option.label.trim() || optionLabels.has(option.label)) return "选项格式无效";
     optionLabels.add(option.label);
+    problem = questionBlockListProblem(option.content, references, figures, "选项内容");
+    if (problem) return problem;
   }
   if (!Array.isArray(value.slots) || value.slots.length > 100) return "作答位置格式无效";
   const slots = new Map<string, AnswerSlot>();
@@ -145,7 +219,9 @@ function subQuestionProblem(value: unknown, earlier: Set<string>): string | null
   for (const answer of value.answers) {
     if (!object(answer) || !keys(answer, ["slotId", "blocks", "variants"])) return "参考答案格式无效";
     if (answer.slotId !== null && (!id(answer.slotId) || !slots.has(answer.slotId))) return "答案引用了不存在的作答位置";
-    if (!isBlockList(answer.blocks) || !stringList(answer.variants, 20, 2000)) return "参考答案格式无效";
+    problem = questionBlockListProblem(answer.blocks, references, figures, "参考答案");
+    if (problem) return problem;
+    if (!stringList(answer.variants, 20, 2000)) return "参考答案格式无效";
   }
   if (!Array.isArray(value.scoring) || value.scoring.length > 100) return "评分点格式无效";
   const scoringIds = new Set<string>();
@@ -158,6 +234,9 @@ function subQuestionProblem(value: unknown, earlier: Set<string>): string | null
     if (point.slotIds.some((slotId) => !slots.has(slotId))) return "评分点引用了不存在的作答位置";
     scoringIds.add(point.id);
   }
+  if (value.originalScore !== null && (typeof value.originalScore !== "number" || !Number.isFinite(value.originalScore) || value.originalScore < 0 || value.originalScore > 1000)) return "原分值无效";
+  if (!stringList(value.materialIds, 100, 64) || !unique(value.materialIds)) return "小问材料引用格式无效";
+  if (value.materialIds.some((materialId) => !materialPool.has(materialId))) return "小问材料引用不存在";
   if (!stringList(value.dependsOn, 100, 64) || !unique(value.dependsOn)) return "依赖格式无效";
   for (const dependency of value.dependsOn) {
     if (dependency === value.id || !earlier.has(dependency)) return "依赖了不存在或未在前的小问";
@@ -168,20 +247,28 @@ function subQuestionProblem(value: unknown, earlier: Set<string>): string | null
 /** 返回第一个结构问题；依赖只能指向同组更早的小问，因此顺序校验天然排除成环。 */
 export function questionContentProblem(value: unknown): string | null {
   if (!object(value) || !keys(value, ["stem", "subQuestions", "materials", "selection", "source"])) return "题目结构无效";
-  if (!isBlockList(value.stem)) return "题组题干格式无效";
+  const references: ReferenceInline[] = [];
+  const figures = new Set<string>();
+  let problem = questionBlockListProblem(value.stem, references, figures, "题组题干");
+  if (problem) return problem;
+  if (!Array.isArray(value.materials) || value.materials.length > 50) return "材料引用格式无效";
+  const materialPool = new Set<string>();
+  for (const ref of value.materials) {
+    if (!object(ref) || !keys(ref, ["materialId", "versionId"]) || !id(ref.materialId) || !id(ref.versionId)) return "材料引用格式无效";
+    if (materialPool.has(ref.materialId)) return "同一材料只能引用一个版本";
+    materialPool.add(ref.materialId);
+  }
   if (!Array.isArray(value.subQuestions) || value.subQuestions.length < 1 || value.subQuestions.length > 99) return "小问数量无效";
   const earlier = new Set<string>();
   for (const sub of value.subQuestions) {
-    const problem = subQuestionProblem(sub, earlier);
+    problem = subQuestionProblem(sub, earlier, materialPool, references, figures);
     if (problem) return problem;
     earlier.add((sub as SubQuestion).id);
   }
-  if (!Array.isArray(value.materials) || value.materials.length > 50) return "材料引用格式无效";
-  const materialIds = new Set<string>();
-  for (const ref of value.materials) {
-    if (!object(ref) || !keys(ref, ["materialId", "versionId"]) || !id(ref.materialId) || !id(ref.versionId)) return "材料引用格式无效";
-    if (materialIds.has(ref.materialId)) return "同一材料只能引用一个版本";
-    materialIds.add(ref.materialId);
+  for (const reference of references) {
+    if (reference.kind === "subQuestion" && !earlier.has(reference.targetId)) return `题目引用的小问不存在：${reference.targetId}`;
+    if (reference.kind === "material" && !materialPool.has(reference.targetId)) return `题目引用的材料不存在：${reference.targetId}`;
+    if (reference.kind === "figure" && !figures.has(reference.targetId)) return `题目引用的图不存在：${reference.targetId}`;
   }
   if (!object(value.selection)) return "组选答规则无效";
   if (value.selection.mode === "all") {
@@ -200,10 +287,10 @@ export function isQuestionContent(value: unknown): value is QuestionContent {
   return questionContentProblem(value) === null;
 }
 
-/** 空白段落、空白公式和全空表格不算已填写，图片视为有内容。 */
-export function hasContent(blocks: Block[]): boolean {
+/** 空白段落、空白公式和全空表格不算已填写；图片与引用视为有内容。 */
+export function hasContent(blocks: QuestionBlock[]): boolean {
   return blocks.some((block) => {
-    if (block.type === "paragraph") return block.runs.some((run) => run.type === "text" ? run.text.trim() !== "" : run.latex.trim() !== "");
+    if (block.type === "paragraph") return block.runs.some((run) => run.type === "text" ? run.text.trim() !== "" : run.type === "formula" ? run.latex.trim() !== "" : true);
     if (block.type === "formula") return block.latex.trim() !== "";
     if (block.type === "image") return true;
     if (block.type === "table") return block.rows.some((row) => row.some((cell) => cell.trim() !== ""));
@@ -211,9 +298,9 @@ export function hasContent(blocks: Block[]): boolean {
   });
 }
 
-function blockText(blocks: Block[]): string {
+function blockText(blocks: QuestionBlock[]): string {
   return blocks.map((block) => {
-    if (block.type === "paragraph") return block.runs.map((run) => run.type === "text" ? run.text : run.latex).join("");
+    if (block.type === "paragraph") return block.runs.map((run) => run.type === "text" ? run.text : run.type === "formula" ? run.latex : run.fallback).join("");
     if (block.type === "formula") return block.latex;
     if (block.type === "image") return block.alt;
     return block.rows.map((row) => row.join(" ")).join(" ");
@@ -255,7 +342,7 @@ export function selectionDependencies(content: QuestionContent, subQuestionId: s
     if (source) stack.push(...source.dependsOn);
   }
   const previous = content.subQuestions.filter((item) => closure.has(item.id)).map((item) => item.id);
-  const materialIds = [...new Set(content.materials.map((ref) => ref.materialId))];
+  const materialIds = [...new Set(sub.materialIds)];
   const groupCandidates = content.selection.mode === "choose" && content.selection.candidates.includes(subQuestionId)
     ? [...content.selection.candidates]
     : [];
@@ -306,7 +393,7 @@ export interface ScoreSummary {
 }
 
 const roundScore = (value: number) => Math.round(value * 100) / 100;
-const subQuestionScore = (sub: SubQuestion) => roundScore(sub.scoring.reduce((sum, point) => sum + point.score, 0));
+const subQuestionScore = (sub: SubQuestion) => roundScore(sub.originalScore !== null ? sub.originalScore : sub.scoring.reduce((sum, point) => sum + point.score, 0));
 
 /** 同分候选按“候选分值 × 必选数”计分；候选分值不同或数量不足时显式报冲突，不擅自相加。 */
 export function selectionScore(content: QuestionContent): ScoreSummary {

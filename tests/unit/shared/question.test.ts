@@ -10,12 +10,22 @@ import {
   selectionDependencies,
   selectionScore,
   type Classification,
+  type QuestionBlock,
+  type QuestionInline,
   type ReadinessInput,
 } from "../../../src/shared/question";
-import { exercise, math, note, paragraph as p, readingGroup } from "../fixtures/questions";
+import { exercise, math, note, paragraph as p, readingGroup, referenceGroup } from "../fixtures/questions";
+
+function firstReference(blocks: QuestionBlock[]): Extract<QuestionInline, { type: "reference" }> {
+  for (const block of blocks) {
+    if (block.type !== "paragraph") continue;
+    for (const run of block.runs) if (run.type === "reference") return run;
+  }
+  throw new Error("没有引用节点");
+}
 
 test("接受二选一习作、分项评分与依赖前问的自制结构", () => {
-  for (const content of [exercise(), note(), math()]) {
+  for (const content of [exercise(), note(), math(), readingGroup(), referenceGroup()]) {
     expect(questionContentProblem(content)).toBeNull();
     expect(isQuestionContent(content)).toBe(true);
   }
@@ -27,9 +37,20 @@ test("二选一按同分候选计组总分 30，留言条计 5", () => {
   expect(selectionScore(math())).toEqual({ total: 10, conflict: null });
 });
 
+test("原分值优先于评分点合计，缺失时回退评分点", () => {
+  const content = math();
+  content.subQuestions[0].originalScore = 5;
+  expect(selectionScore(content).total).toBe(11);
+
+  content.subQuestions[0].originalScore = null;
+  expect(selectionScore(content).total).toBe(10);
+
+  expect(selectionScore(referenceGroup()).total).toBe(10);
+});
+
 test("候选分值不同时返回冲突而不相加", () => {
   const content = exercise();
-  content.subQuestions[1].scoring[0].score = 40;
+  content.subQuestions[1].originalScore = 40;
   const result = selectionScore(content);
   expect(result.total).toBe(0);
   expect(result.conflict).toContain("候选分值不同");
@@ -72,6 +93,76 @@ test("拒绝指向后置或跨组小问的依赖", () => {
   const external = math();
   external.subQuestions[1].dependsOn = ["task-a"];
   expect(isQuestionContent(external)).toBe(false);
+});
+
+test("拒绝悬空的小问、材料与图引用，以及空回退文字", () => {
+  const sub = referenceGroup();
+  firstReference(sub.subQuestions[1].prompt).targetId = "missing";
+  expect(isQuestionContent(sub)).toBe(false);
+
+  const material = referenceGroup();
+  firstReference(material.stem).targetId = "missing-material";
+  expect(isQuestionContent(material)).toBe(false);
+
+  const figure = referenceGroup();
+  firstReference(figure.subQuestions[0].answers[0].blocks).targetId = "missing-figure";
+  expect(isQuestionContent(figure)).toBe(false);
+
+  const fallback = referenceGroup();
+  firstReference(fallback.stem).fallback = " ";
+  expect(isQuestionContent(fallback)).toBe(false);
+
+  const kind = referenceGroup();
+  (firstReference(kind.stem) as { kind: string }).kind = "book";
+  expect(isQuestionContent(kind)).toBe(false);
+
+  const extra = referenceGroup();
+  (firstReference(extra.stem) as unknown as { note: string }).note = "多余字段";
+  expect(isQuestionContent(extra)).toBe(false);
+});
+
+test("图标识在题目内容内必须唯一", () => {
+  const content = referenceGroup();
+  content.subQuestions[1].prompt.push({ type: "image", id: "b".repeat(64), alt: "第二张图", figureId: "figure-1" });
+  expect(questionContentProblem(content)).toBe("图标识重复");
+});
+
+test("旧结构缺少原分值或小问材料时拒绝，不静默补默认值", () => {
+  const score = math() as unknown as { subQuestions: Record<string, unknown>[] };
+  delete score.subQuestions[0].originalScore;
+  expect(questionContentProblem(score)).not.toBeNull();
+
+  const materials = math() as unknown as { subQuestions: Record<string, unknown>[] };
+  delete materials.subQuestions[0].materialIds;
+  expect(questionContentProblem(materials)).not.toBeNull();
+});
+
+test("拒绝非法原分值", () => {
+  for (const originalScore of [-1, 1001, Number.NaN, Number.POSITIVE_INFINITY, "4"]) {
+    const content = math();
+    (content.subQuestions[0] as unknown as { originalScore: unknown }).originalScore = originalScore;
+    expect(questionContentProblem(content)).not.toBeNull();
+  }
+  const zero = math();
+  zero.subQuestions[0].originalScore = 0;
+  expect(questionContentProblem(zero)).toBeNull();
+  const half = math();
+  half.subQuestions[0].originalScore = 0.5;
+  expect(questionContentProblem(half)).toBeNull();
+});
+
+test("小问材料必须非重且存在于题组材料池", () => {
+  const missing = referenceGroup();
+  missing.subQuestions[0].materialIds = ["missing"];
+  expect(questionContentProblem(missing)).not.toBeNull();
+
+  const duplicate = referenceGroup();
+  duplicate.subQuestions[0].materialIds = ["material-a", "material-a"];
+  expect(questionContentProblem(duplicate)).not.toBeNull();
+
+  const empty = referenceGroup();
+  empty.subQuestions[0].materialIds = [];
+  expect(questionContentProblem(empty)).toBeNull();
 });
 
 test("拒绝非法的组选答规则", () => {
@@ -211,6 +302,12 @@ test("可搜索文本只含题组指令、小问题干与选项", () => {
   const long = note();
   long.subQuestions[0].prompt = [p("长".repeat(20000)), p("文".repeat(20000))];
   expect(buildSearchText(long).length).toBeLessThanOrEqual(20000);
+
+  const referenced = referenceGroup();
+  for (const expected of ["材料一", "图 1", "(1)"]) {
+    expect(buildSearchText(referenced)).toContain(expected);
+  }
+  expect(hasContent(referenced.subQuestions[1].prompt)).toBe(true);
 });
 
 test("传递前问按原顺序返回，直接前问单列", () => {
@@ -233,6 +330,17 @@ test("共享材料与组选答候选进入依赖结果", () => {
   const partial = exercise();
   partial.selection = { mode: "choose", required: 1, candidates: ["task-a"] };
   expect(selectionDependencies(partial, "task-b").groupCandidates).toEqual([]);
+});
+
+test("依赖材料只看当前小问，不看题组材料池", () => {
+  const content = referenceGroup();
+  expect(selectionDependencies(content, "ref-1").materialIds).toEqual(["material-a"]);
+  expect(selectionDependencies(content, "ref-2").materialIds).toEqual(["material-b"]);
+
+  content.stem = [];
+  content.subQuestions[0].materialIds = [];
+  content.subQuestions[0].dependsOn = [];
+  expect(selectionDependencies(content, "ref-1").independent).toBe(true);
 });
 
 test("无题组指令、无材料、无前问的小问判定为独立可用", () => {

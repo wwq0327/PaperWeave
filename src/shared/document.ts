@@ -13,10 +13,17 @@ const object = (x: unknown): x is Record<string, unknown> => typeof x === "objec
 const keys = (x: Record<string, unknown>, allowed: string[]) => Object.keys(x).every((k) => allowed.includes(k));
 const str = (x: unknown, max = 20000): x is string => typeof x === "string" && x.length <= max;
 
+/** 行内内容只允许文本与公式；题目引用在题目层扩展。 */
+export function isInline(value: unknown): value is Inline {
+  if (!object(value)) return false;
+  return (value.type === "text" && keys(value, ["type", "text", "style"]) && str(value.text) && typeof value.style === "string" && styles.has(value.style))
+    || (value.type === "formula" && keys(value, ["type", "latex"]) && str(value.latex, 4000));
+}
+
 /** 内容块是编辑器、题目与材料的共同单位；结构不认识时直接拒绝。 */
 export function isBlock(value: unknown): value is Block {
   if (!object(value)) return false;
-  if (value.type === "paragraph") return keys(value, ["type", "runs"]) && Array.isArray(value.runs) && value.runs.length <= 500 && value.runs.every((r: unknown) => object(r) && ((r.type === "text" && keys(r, ["type", "text", "style"]) && str(r.text) && typeof r.style === "string" && styles.has(r.style)) || (r.type === "formula" && keys(r, ["type", "latex"]) && str(r.latex, 4000))));
+  if (value.type === "paragraph") return keys(value, ["type", "runs"]) && Array.isArray(value.runs) && value.runs.length <= 500 && value.runs.every(isInline);
   if (value.type === "formula") return keys(value, ["type", "latex"]) && str(value.latex, 4000);
   if (value.type === "image") return keys(value, ["type", "id", "alt"]) && typeof value.id === "string" && /^[a-f0-9]{64}$/.test(value.id) && str(value.alt, 1000);
   if (value.type === "table") return keys(value, ["type", "rows"]) && Array.isArray(value.rows) && value.rows.length > 0 && value.rows.length <= 30 && value.rows.every((row: unknown) => Array.isArray(row) && row.length > 0 && row.length <= 10 && row.every((cell: unknown) => str(cell, 4000))) && value.rows.every((row: string[]) => row.length === (value.rows as string[][])[0].length);
