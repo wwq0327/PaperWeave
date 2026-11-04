@@ -9,6 +9,7 @@ import {
   type QuestionInline,
   type ReviewStatus,
   type SelectionRule,
+  type SourcePosition,
 } from "./question";
 
 /** 录题表单的内容块；文字块内可用 $…$ 写行内公式，单独一行 $$…$$ 为独立公式。 */
@@ -58,13 +59,26 @@ export interface IntakeBuildResult {
   problems: string[];
 }
 
-export interface SaveIntakeResult {
+export interface IntakeDuplicateSummary {
   questionId: string;
   versionId: string;
   version: number;
   contentStatus: ReviewStatus;
   answerStatus: AnswerStatus;
+  preview: string;
+  source: SourcePosition;
 }
+
+export type SaveIntakeResult =
+  | {
+      saved: true;
+      questionId: string;
+      versionId: string;
+      version: number;
+      contentStatus: ReviewStatus;
+      answerStatus: AnswerStatus;
+    }
+  | { saved: false; duplicate: IntakeDuplicateSummary };
 
 export interface IntakeQuestion {
   questionId: string;

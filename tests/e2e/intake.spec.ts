@@ -39,6 +39,52 @@ async function importExam(page: Page, app: Awaited<ReturnType<typeof electron.la
   await expect(page.getByAltText("原卷第 1 页")).toBeVisible({ timeout: 15000 });
 }
 
+test("同卷同号再次保存提示重复，可继续编辑已有题或建立修订版", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-intake-duplicate-"));
+  let app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`] });
+  try {
+    const page = await app.firstWindow();
+    await importExam(page, app);
+
+    async function fill(number: string, stem: string) {
+      await page.getByLabel("原题号").fill(number);
+      await page.getByLabel("题干 文字 1", { exact: true }).fill(stem);
+      await page.getByLabel("小问 1 题干 文字 1", { exact: true }).fill("求值。");
+    }
+
+    await fill("1", "合成题：重复检查。");
+    await page.getByRole("button", { name: "保存草稿" }).click();
+    await expect(page.getByText("草稿已保存（版本 1）。", { exact: true })).toBeVisible();
+    await expect(page.locator("section[aria-label='本卷题目']")).toContainText("草稿");
+
+    await page.getByRole("button", { name: "新建题目" }).click();
+    await fill("1", "合成题：第二次输入。");
+    await page.getByRole("button", { name: "保存草稿" }).click();
+    const prompt = page.getByRole("alertdialog", { name: "重复题提示" });
+    await expect(prompt).toBeVisible();
+    await expect(prompt).toContainText("原题号「1」");
+    await expect(prompt).toContainText("合成题：重复检查。");
+
+    await prompt.getByRole("button", { name: "继续编辑已有题" }).click();
+    await expect(page.getByText("已打开题目（版本 1）。", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("题干 文字 1", { exact: true })).toHaveValue("合成题：重复检查。");
+    await expect(page.locator("section[aria-label='本卷题目'] h2")).toHaveText("本卷题目（1）");
+
+    await page.getByRole("button", { name: "新建题目" }).click();
+    await fill("1", "合成题：修订输入。");
+    await page.getByRole("button", { name: "提交待核" }).click();
+    await page.getByRole("alertdialog", { name: "重复题提示" }).getByRole("button", { name: "建立修订版" }).click();
+    await expect(page.getByText("已提交待核（版本 2）。", { exact: true })).toBeVisible();
+    const list = page.locator("section[aria-label='本卷题目']");
+    await expect(list.locator("h2")).toHaveText("本卷题目（1）");
+    await expect(list).toContainText("合成题：修订输入。");
+    await expect(list).toContainText("待核");
+  } finally {
+    await closeApp(app);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("导入原卷、裁图录题、保存草稿并在重开后继续编辑与定位原页", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "paperweave-intake-"));
   let app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`] });
