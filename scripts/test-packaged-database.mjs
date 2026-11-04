@@ -6,6 +6,8 @@ import { join, resolve } from "node:path";
 
 if (process.platform !== "darwin") throw new Error("此检查目前仅支持 macOS");
 const executable = resolve("out/PaperWeave-darwin-arm64/PaperWeave.app/Contents/MacOS/PaperWeave");
+const dataVersion = Number(/const DATA_VERSION = (\d+);/.exec(readFileSync("src/main/database.ts", "utf8"))?.[1]);
+if (!Number.isInteger(dataVersion)) throw new Error("无法从 src/main/database.ts 读取 DATA_VERSION");
 const dir = mkdtempSync(join(tmpdir(), "paperweave-packaged-"));
 const file = join(dir, "paperweave.sqlite");
 const probe = (script) => {
@@ -30,13 +32,13 @@ async function startAndWait() {
         const port = Number(readFileSync(portFile, "utf8").split("\n")[0]);
         const pages = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
         if (pages.some((page) => page.type === "page" && page.title === "拾题成卷 PaperWeave") &&
-            probe("const d=new (require('node:sqlite').DatabaseSync)(process.argv[1]); console.log(d.prepare('PRAGMA user_version').get().user_version); d.close()") === "2") return child;
+            probe("const d=new (require('node:sqlite').DatabaseSync)(process.argv[1]); console.log(d.prepare('PRAGMA user_version').get().user_version); d.close()") === String(dataVersion)) return child;
       } catch { /* 应用尚未就绪 */ }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     throw new Error("建库迁移未完成");
   } catch (error) {
-    child.kill();
+    await stop(child);
     throw error;
   }
 }
@@ -56,5 +58,5 @@ try {
   if (value !== "保留") throw new Error("重开后数据不一致");
   console.log(`打包应用建库、写入和重开通过；SQLite ${version}`);
 } finally {
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }
