@@ -5,6 +5,7 @@ import { Database } from "./main/database";
 import { registerAi } from "./main/ai";
 import { registerEditor } from "./main/editor";
 import { parseJournal } from "./main/pdf-journal";
+import { recoverPaperFinalizations } from "./main/paper-finalization";
 import { recoverPendingOperations } from "./main/pdf-recovery";
 import { registerPdf } from "./main/pdf";
 import { createMainWindow } from "./main/window";
@@ -32,6 +33,14 @@ app.whenReady().then(async () => {
     }
   } catch (error) {
     dialog.showErrorBox("清理未完成的 PDF 操作失败", `原文件未被删除，可稍后重试。\n${String(error)}`);
+  }
+  try {
+    const { kept } = await recoverPaperFinalizations(db);
+    if (kept.length) {
+      dialog.showErrorBox("发现未完成的组卷定稿", `以下暂存目录含非预期文件，未自动删除：\n${kept.map((item) => `${item.parent}（${item.id}）`).join("\n")}`);
+    }
+  } catch (error) {
+    dialog.showErrorBox("清理未完成的组卷定稿失败", `原文件未被删除，可稍后重试。\n${String(error)}`);
   }
   registerEditor(db, app.getPath("userData"), () => mainWindow);
   registerAi(db, app.getPath("userData"), () => mainWindow);
