@@ -15,8 +15,10 @@ function launch(dir: string, fake: string) {
 function tempDir() { return mkdtempSync(path.join(tmpdir(), "paperweave-ai-")); }
 
 async function closeApp(app: Awaited<ReturnType<typeof electron.launch>>) {
-  await Promise.race([app.close(), new Promise((resolve) => setTimeout(resolve, 2000))]);
+  const process = app.process();
+  const exited = new Promise<void>((resolve) => process.once("exit", () => resolve()));
   await app.evaluate(({ app: electronApp }) => electronApp.exit(0)).catch(() => undefined);
+  await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 3000))]);
 }
 
 async function send(window: Page, text: string, page = "3") {

@@ -19,4 +19,5 @@ contextBridge.exposeInMainWorld("paperweave", {
   generateAiDraft: (requestId: string, input: unknown) => ipcRenderer.invoke("ai:draft", requestId, input),
   cancelAiDraft: (requestId: string) => ipcRenderer.invoke("ai:cancel", requestId),
   extractPdfText: () => ipcRenderer.invoke("ai:extractPdf"),
+  loadPdfForImages: () => ipcRenderer.invoke("ai:loadPdf"),
 });

@@ -48,4 +48,20 @@ button.primary { background: #225c3d; color: #fff; border-color: #225c3d; }
 .ai-result { margin-top: 16px; } .ai-result-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .ai-question { border-top: 1px solid #dbe4db; padding: 10px 0; } .ai-question header { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
 .ai-question p { margin: 4px 0; } .uncertain { color: #9a5b00; background: #fff4e0; padding: 6px 8px; border-radius: 5px; }
+.ai-modes { display: flex; gap: 8px; margin: 12px 0; }
+.ai-modes button[aria-selected="true"] { background: #225c3d; color: #fff; border-color: #225c3d; }
+.ai-page-nav { align-items: center; }
+.ai-page-nav label.inline { display: flex; align-items: center; gap: 6px; width: auto; }
+.ai-page-nav input { width: 70px; margin: 0; }
+.ai-page-view { position: relative; display: block; width: 100%; max-height: 75vh; overflow: auto; margin: 10px 0; border: 1px solid #bdcbbf; background: #f8f8f5; cursor: crosshair; touch-action: none; user-select: none; }
+.ai-page-view img { display: block; width: 100%; max-height: none; height: auto; }
+.ai-selection { position: absolute; border: 2px solid #225c3d; background: rgba(34, 92, 61, .18); pointer-events: none; }
+.ai-selection-list { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 10px; }
+.ai-selection-list li { border: 1px solid #dbe4db; border-radius: 8px; padding: 8px; width: 200px; background: #fbfcfb; }
+.ai-selection-list img { width: 100%; max-height: 140px; object-fit: contain; border: 1px solid #e3e9e3; background: #fff; }
+.ai-selection-list span { display: block; font-size: 13px; color: #536158; margin: 4px 0; }
+.ai-input-images { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0; }
+.ai-input-images figure { margin: 0; border: 1px solid #e2d7bb; background: #fff; padding: 6px; width: 180px; }
+.ai-input-images img { width: 100%; max-height: 160px; object-fit: contain; display: block; }
+.ai-input-images figcaption { font-size: 12px; color: #536158; margin-top: 4px; }
 @media (max-width: 700px) { .ai-grid { grid-template-columns: 1fr; } }
