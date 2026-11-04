@@ -134,10 +134,22 @@ export default function PaperPrintView({ paper, onReady, onCancel }: { paper: Vo
               <p className="paper-sub-label">{sub.label}</p>
               <Blocks blocks={sub.prompt} images={images} figureLabel={figureLabel} />
               {sub.options.length > 0 && <ol className="paper-options">{sub.options.map((option) => <li key={option.label}><span>{option.label}. </span><Blocks blocks={option.content} images={images} figureLabel={figureLabel} /></li>)}</ol>}
+              {sub.slots.length > 0 && <p className="paper-slots" aria-label={`${sub.label} 作答位置`}>
+                <span className="paper-slots-title">作答位置：</span>
+                {sub.slots.map((slot) => <span key={slot.id} className="paper-slot">
+                  {slot.label}：{slot.kind === "choice" ? "（选择）" : slot.kind === "blank" ? "______" : "____________"}
+                </span>)}
+              </p>}
               {item.blankSpace !== "none" && <div className={`paper-blank paper-blank-${item.blankSpace}`} aria-label="答题留白" />}
               {sub.answers && sub.answers.length > 0 && <section className="paper-answer" aria-label={`${sub.label} 参考答案`}>
                 <h4>参考答案</h4>
-                {sub.answers.map((answer, index) => <Blocks key={index} blocks={answer.blocks} images={images} figureLabel={figureLabel} />)}
+                {sub.answers.map((answer, index) => {
+                  const slot = answer.slotId === null ? undefined : sub.slots.find((entry) => entry.id === answer.slotId);
+                  return <div key={index} className="paper-answer-entry">
+                    {slot !== undefined && <strong>{slot.label}：</strong>}
+                    <Blocks blocks={answer.blocks} images={images} figureLabel={figureLabel} />
+                  </div>;
+                })}
               </section>}
               {sub.explanation && sub.explanation.length > 0 && <section className="paper-explanation" aria-label={`${sub.label} 解析`}>
                 <h4>解析</h4>

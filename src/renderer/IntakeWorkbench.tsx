@@ -5,7 +5,7 @@ import type { AiConfig } from "../shared/ai-config";
 import { aiQuestionToIntake, type AiIntakeResult } from "../shared/ai-intake";
 import type { ExamDetailView, ExamQuestionSummary } from "../shared/exam";
 import type { Block } from "../shared/document";
-import { blankSubQuestion, buildContent, contentToForm, newIntakeForm, type IntakeBlock, type IntakeDuplicateSummary, type IntakeForm, type IntakeMaterial, type IntakeSubQuestion } from "../shared/intake";
+import { blankSubQuestion, buildContent, contentToForm, newIntakeForm, type IntakeBlock, type IntakeDuplicateSummary, type IntakeForm, type IntakeMaterial, type IntakeSlot, type IntakeSubQuestion } from "../shared/intake";
 import type { Classification, QuestionBlock, QuestionContent, ReviewStatus, Stage } from "../shared/question";
 import BlockListEditor from "./BlockListEditor";
 import ExamPdfPanel from "./ExamPdfPanel";
@@ -171,6 +171,56 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
   };
   const setSubBlocks = (key: string, field: SubField, blocks: IntakeBlock[]) => {
     setForm((current) => current && ({ ...current, subQuestions: current.subQuestions.map((sub) => sub.key === key ? { ...sub, [field]: blocks } : sub) }));
+  };
+  const setSlotAnswer = (key: string, slotId: string, blocks: IntakeBlock[]) => {
+    setForm((current) => current && ({
+      ...current,
+      subQuestions: current.subQuestions.map((sub) => {
+        if (sub.key !== key) return sub;
+        const existing = sub.slotAnswers.some((entry) => entry.slotId === slotId);
+        const slotAnswers = existing
+          ? sub.slotAnswers.map((entry) => entry.slotId === slotId ? { ...entry, blocks } : entry)
+          : [...sub.slotAnswers, { slotId, blocks }];
+        return { ...sub, slotAnswers };
+      }),
+    }));
+  };
+  const updateSlot = (key: string, slotId: string, patch: Partial<IntakeSlot>) => {
+    updateSub(key, {
+      slots: form?.subQuestions.find((sub) => sub.key === key)?.slots.map((slot) => slot.id === slotId ? { ...slot, ...patch } : slot) ?? [],
+    });
+  };
+  const addSlot = (key: string) => {
+    const sub = form?.subQuestions.find((entry) => entry.key === key);
+    if (!sub) return;
+    updateSub(key, {
+      slots: [...sub.slots, { id: globalThis.crypto.randomUUID(), label: `空位 ${sub.slots.length + 1}`, kind: "text", required: true, interchangeableWith: [] }],
+    });
+  };
+  const removeSlot = (key: string, slotId: string) => {
+    const sub = form?.subQuestions.find((entry) => entry.key === key);
+    if (!sub) return;
+    updateSub(key, {
+      slots: sub.slots.filter((slot) => slot.id !== slotId).map((slot) => ({ ...slot, interchangeableWith: slot.interchangeableWith.filter((id) => id !== slotId) })),
+      slotAnswers: sub.slotAnswers.filter((entry) => entry.slotId !== slotId),
+      scoring: sub.scoring.map((point) => ({ ...point, slotIds: point.slotIds.filter((id) => id !== slotId) })),
+    });
+  };
+  const toggleInterchange = (key: string, slotId: string, otherId: string, checked: boolean) => {
+    const sub = form?.subQuestions.find((entry) => entry.key === key);
+    if (!sub) return;
+    updateSub(key, {
+      slots: sub.slots.map((slot) => {
+        if (slot.id !== slotId && slot.id !== otherId) return slot;
+        const linked = slot.id === slotId ? otherId : slotId;
+        return {
+          ...slot,
+          interchangeableWith: checked
+            ? [...new Set([...slot.interchangeableWith, linked])]
+            : slot.interchangeableWith.filter((id) => id !== linked),
+        };
+      }),
+    });
   };
 
   function addSub() {
@@ -602,6 +652,38 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
               </div>
               <BlockListEditor label={`小问 ${index + 1} 题干`} blocks={sub.prompt} disabled={busy} onChange={(blocks) => setSubBlocks(sub.key, "prompt", blocks)} onCrop={() => requestCrop({ field: "prompt", subKey: sub.key })} />
               <label>选项（每行一个）<textarea value={sub.options} onChange={(event) => updateSub(sub.key, { options: event.target.value })} placeholder="选项甲&#10;选项乙" /></label>
+              <fieldset className="intake-slots" aria-label={`小问 ${index + 1} 作答位置`}>
+                <legend>作答位置</legend>
+                {sub.slots.length === 0 && <p className="muted">未设置作答位置；答案按整题记录。</p>}
+                {sub.slots.map((slot, slotIndex) => <div className="intake-slot" key={slot.id}>
+                  <div className="paper-inline">
+                    <label>标签<input aria-label={`小问 ${index + 1} 空位 ${slotIndex + 1} 标签`} value={slot.label} onChange={(event) => updateSlot(sub.key, slot.id, { label: event.target.value })} /></label>
+                    <label>类型<select aria-label={`小问 ${index + 1} 空位 ${slotIndex + 1} 类型`} value={slot.kind} onChange={(event) => updateSlot(sub.key, slot.id, { kind: event.target.value as IntakeSlot["kind"] })}>
+                      <option value="text">文字</option>
+                      <option value="choice">选择</option>
+                      <option value="blank">填空</option>
+                    </select></label>
+                    <label className="inline"><input type="checkbox" aria-label={`小问 ${index + 1} 空位 ${slotIndex + 1} 必答`} checked={slot.required} onChange={(event) => updateSlot(sub.key, slot.id, { required: event.target.checked })} />必答</label>
+                    <button aria-label={`小问 ${index + 1} 删除空位 ${slotIndex + 1}`} onClick={() => removeSlot(sub.key, slot.id)} disabled={busy}>删除空位</button>
+                  </div>
+                  {sub.slots.slice(slotIndex + 1).map((other) => <label key={other.id} className="inline">
+                    <input
+                      type="checkbox"
+                      aria-label={`小问 ${index + 1} 空位 ${slotIndex + 1} 与空位 ${sub.slots.indexOf(other) + 1} 互换`}
+                      checked={slot.interchangeableWith.includes(other.id)}
+                      onChange={(event) => toggleInterchange(sub.key, slot.id, other.id, event.target.checked)}
+                    />
+                    空位 {slotIndex + 1} 与空位 {sub.slots.indexOf(other) + 1} 可互换
+                  </label>)}
+                  <BlockListEditor
+                    label={`小问 ${index + 1} 空位 ${slotIndex + 1} 答案`}
+                    blocks={sub.slotAnswers.find((entry) => entry.slotId === slot.id)?.blocks ?? []}
+                    disabled={busy}
+                    onChange={(blocks) => setSlotAnswer(sub.key, slot.id, blocks)}
+                  />
+                </div>)}
+                <button onClick={() => addSlot(sub.key)} disabled={busy}>添加空位</button>
+              </fieldset>
               <BlockListEditor label={`小问 ${index + 1} 答案`} blocks={sub.answer} disabled={busy} onChange={(blocks) => setSubBlocks(sub.key, "answer", blocks)} onCrop={() => requestCrop({ field: "answer", subKey: sub.key })} />
               <BlockListEditor label={`小问 ${index + 1} 解析`} blocks={sub.explanation} disabled={busy} onChange={(blocks) => setSubBlocks(sub.key, "explanation", blocks)} onCrop={() => requestCrop({ field: "explanation", subKey: sub.key })} />
               <fieldset className="intake-scoring" aria-label={`小问 ${index + 1} 评分点`}>
@@ -609,9 +691,18 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
                 {sub.scoring.map((point, pointIndex) => <div className="paper-inline" key={pointIndex}>
                   <label>说明<input value={point.description} onChange={(event) => updateSub(sub.key, { scoring: sub.scoring.map((entry, i) => i === pointIndex ? { ...entry, description: event.target.value } : entry) })} /></label>
                   <label>分值<input type="number" min={0} max={1000} step={0.5} value={point.score} onChange={(event) => updateSub(sub.key, { scoring: sub.scoring.map((entry, i) => i === pointIndex ? { ...entry, score: event.target.value } : entry) })} /></label>
-                  <button onClick={() => updateSub(sub.key, { scoring: sub.scoring.filter((_, i) => i !== pointIndex) })} disabled={busy}>删除</button>
+                  {sub.slots.map((slot, slotIndex) => <label key={slot.id} className="inline">
+                    <input
+                      type="checkbox"
+                      aria-label={`小问 ${index + 1} 评分点 ${pointIndex + 1} 关联空位 ${slotIndex + 1}`}
+                      checked={point.slotIds.includes(slot.id)}
+                      onChange={(event) => updateSub(sub.key, { scoring: sub.scoring.map((entry, i) => i === pointIndex ? { ...entry, slotIds: event.target.checked ? [...entry.slotIds, slot.id] : entry.slotIds.filter((id) => id !== slot.id) } : entry) })}
+                    />
+                    {slot.label || `空位 ${slotIndex + 1}`}
+                  </label>)}
+                  <button aria-label={`删除评分点 ${pointIndex + 1}`} onClick={() => updateSub(sub.key, { scoring: sub.scoring.filter((_, i) => i !== pointIndex) })} disabled={busy}>删除</button>
                 </div>)}
-                <button onClick={() => updateSub(sub.key, { scoring: [...sub.scoring, { description: "", score: "" }] })} disabled={busy}>添加评分点</button>
+                <button onClick={() => updateSub(sub.key, { scoring: [...sub.scoring, { description: "", score: "", slotIds: [] }] })} disabled={busy}>添加评分点</button>
               </fieldset>
               {index > 0 && <fieldset className="intake-dependencies" aria-label={`小问 ${index + 1} 依赖`}>
                 <legend>依赖小问</legend>

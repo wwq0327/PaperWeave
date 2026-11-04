@@ -91,6 +91,35 @@ test("学生卷不包含仅出现在答案中的图，教师卷保留", () => {
   expect(JSON.stringify(paperVolume(built, "teacher"))).toContain("答案示意图");
 });
 
+test("作答位置进入双卷：学生卷保留位置标签但无答案，教师卷答案仍关联空位", () => {
+  const content = referenceGroup();
+  const sub = content.subQuestions[0];
+  sub.slots = [
+    { id: "slot-a", label: "空位甲", kind: "text", required: true, interchangeableWith: ["slot-b"] },
+    { id: "slot-b", label: "空位乙", kind: "choice", required: false, interchangeableWith: ["slot-a"] },
+  ];
+  sub.answers = [
+    { slotId: "slot-a", blocks: [paragraph("答案甲")], variants: [] },
+    { slotId: "slot-b", blocks: [paragraph("答案乙")], variants: [] },
+  ];
+  const built = snapshot([
+    { title: "阅读材料", items: [item("item-1", content, ["ref-1"])] },
+  ]);
+  expect(built.sections[0].items[0].subQuestions[0].slots).toEqual(sub.slots);
+
+  const student = paperVolume(built, "student");
+  expect(student.sections[0].items[0].subQuestions[0].slots).toEqual(sub.slots);
+  const studentText = JSON.stringify(student);
+  expect(studentText).toContain("空位甲");
+  expect(studentText).not.toContain("答案甲");
+  expect(studentText).not.toContain("答案乙");
+
+  const teacher = paperVolume(built, "teacher");
+  expect(teacher.sections[0].items[0].subQuestions[0].slots).toEqual(sub.slots);
+  expect(teacher.sections[0].items[0].subQuestions[0].answers?.map((answer) => answer.slotId)).toEqual(["slot-a", "slot-b"]);
+  expect(JSON.stringify(teacher)).toContain("答案甲");
+});
+
 test("学生卷结构中没有答案、解析与评分点，教师卷保留；引用已替换为卷内编号", () => {
   const built = snapshot([
     { title: "阅读材料", items: [item("item-1", referenceGroup(), ["ref-1", "ref-2"])] },

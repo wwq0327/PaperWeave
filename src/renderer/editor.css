@@ -119,6 +119,9 @@ button.primary { background: #225c3d; color: #fff; border-color: #225c3d; }
 .paper-blank-small { height: 18px; } .paper-blank-medium { height: 48px; } .paper-blank-large { height: 96px; }
 .paper-answer, .paper-explanation, .paper-scoring { margin: 8px 0; padding: 6px 10px; background: #f7f9f7; border-left: 3px solid #9db6a3; }
 .paper-answer h4, .paper-explanation h4, .paper-scoring h4 { margin: 2px 0 4px; font-size: 12pt; }
+.paper-answer-entry + .paper-answer-entry { margin-top: 4px; }
+.paper-slots { margin: 4px 0; }
+.paper-slot + .paper-slot { margin-left: 1.5em; }
 .paper-answer-only { color: #7a4700; }
 .paper-status { padding: 10px; text-align: center; }
 @media print {
@@ -142,6 +145,9 @@ button.primary { background: #225c3d; color: #fff; border-color: #225c3d; }
 .intake-blocks { border: 1px solid #dbe4db; border-radius: 8px; padding: 10px; margin: 10px 0; }
 .intake-blocks legend { font-weight: 600; padding: 0 6px; }
 .intake-sub { border: 1px solid #dbe4db; border-radius: 8px; padding: 12px; margin: 12px 0; }
+.intake-slots { border: 1px dashed #dbe4db; border-radius: 8px; padding: 10px; margin: 10px 0; }
+.intake-slot { border-top: 1px solid #edf2ed; padding-top: 8px; margin-top: 8px; }
+.intake-slot:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
 .intake-figure { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
 .intake-figure img { max-width: 220px; max-height: 160px; object-fit: contain; border: 1px solid #e3e9e3; background: #fff; }
 .intake-table table { width: 100%; }
