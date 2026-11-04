@@ -37,6 +37,7 @@ Electron + Node.js + TypeScript + React + Vite；SQLite + 本地文件目录；P
 - 按 M0–M4 阶段推进；每阶段先写会失败的测试或验收步骤，再实现（详见开发与验收流程）
 - 验收分项记录：程序检查 / macOS 实测 / Windows 实测 / 学科复核 / 纸样复核；不以单一"测试通过"代替
 - 需求走 GitHub Issue，分支与 PR 关联 Issue，逐条验收后关闭
+- 多 agent 并行规则（认领、分支隔离、接口先行、提交即 push）见 [GitHub 协作与开源发布方案](docs/GitHub协作与开源发布方案.md) 第 6 节
 - 关键依赖（Electron、数据库驱动、PDF.js、KaTeX 等）版本在 M0 固定，目标值与实测值分开记录
 - 学科内容判断（题意、标签、答案、评分、纸样效果）交给用户，agent 提供具体题号和原卷页供判断
 
