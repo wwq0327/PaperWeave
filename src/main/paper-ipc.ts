@@ -14,7 +14,7 @@ export function registerPaper(db: Database, currentWindow: () => BrowserWindow |
   const basket = new Basket(db);
   const papers = new Paper(db);
   const finalizer = new PaperFinalizer(db, async () => { throw new Error("组卷 PDF 由界面渲染"); });
-  let pending: { id: string; paperId: string; parent: string; snapshot: PaperSnapshot; owner: number; student?: Buffer } | undefined;
+  let pending: { id: string; paperId: string; parent: string; snapshot: PaperSnapshot; owner: number; student?: Buffer; teacher?: Buffer } | undefined;
   let busy = false;
 
   const permitted = (event: Electron.IpcMainInvokeEvent) => {
@@ -175,21 +175,31 @@ export function registerPaper(db: Database, currentWindow: () => BrowserWindow |
     if (!operation.student) throw new Error("请先生成学生卷");
     return paperVolume(operation.snapshot, "teacher");
   });
-  ipcMain.handle("paper:finishFinalize", async (event, id: unknown) => {
+  ipcMain.handle("paper:captureTeacher", async (event, id: unknown) => {
     const { win, operation } = requirePending(event, id);
     if (!operation.student) throw new Error("请先生成学生卷");
+    if (operation.teacher) throw new Error("教师卷已生成");
+    const teacher = await pdf(win);
+    const paths = await finalizer.stagePreview(operation.id, operation.parent, operation.student, teacher);
+    operation.teacher = teacher;
+    const openErrors = await Promise.all([shell.openPath(paths.studentPath), shell.openPath(paths.teacherPath)]);
+    return { ...paths, openErrors };
+  });
+  ipcMain.handle("paper:confirmFinalize", async (event, id: unknown) => {
+    const { operation } = requirePending(event, id);
+    if (!operation.student || !operation.teacher) throw new Error("请先生成双卷预览");
     try {
-      const teacher = await pdf(win);
-      const record = await finalizer.complete(operation.id, operation.paperId, operation.parent, operation.snapshot, operation.student, teacher);
-      const openErrors = await Promise.all([shell.openPath(record.studentPdf), shell.openPath(record.teacherPdf)]);
-      return { record, openErrors };
+      const record = await finalizer.complete(operation.id, operation.paperId, operation.parent, operation.snapshot, operation.student, operation.teacher);
+      await finalizer.clearPreview(operation.id, operation.parent).catch(() => undefined);
+      return { record };
     } finally {
       finish();
     }
   });
-  ipcMain.handle("paper:cancelFinalize", (event, id: unknown) => {
+  ipcMain.handle("paper:cancelFinalize", async (event, id: unknown) => {
     const { operation } = requirePending(event, id);
     finalizer.abort(operation.id);
+    await finalizer.clearPreview(operation.id, operation.parent).catch(() => undefined);
     finish();
   });
   ipcMain.handle("paper:reprint", async (event, id: unknown) => {

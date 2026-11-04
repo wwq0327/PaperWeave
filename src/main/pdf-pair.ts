@@ -4,14 +4,18 @@ import { join } from "node:path";
 export function pdfPairPaths(parent: string, operationId: string) {
   return {
     pending: join(parent, `.paperweave-${operationId}.pending`),
+    preview: join(parent, `.paperweave-${operationId}.preview`),
     result: join(parent, `拾题成卷-样张-${operationId}`),
   };
 }
 
+export function isValidPdf(data: Buffer): boolean {
+  return data.length >= 100 && data.subarray(0, 5).equals(Buffer.from("%PDF-")) && data.subarray(-1024).includes(Buffer.from("%%EOF"));
+}
+
 /** 两份样张作为一个目录发布：任一写入或校验失败时，不出现完整目录。 */
 export async function writePdfPair(parent: string, operationId: string, student: Buffer, teacher: Buffer, io = { mkdir, readFile, rename, rm, writeFile }): Promise<string> {
-  const validPdf = (data: Buffer) => data.length >= 100 && data.subarray(0, 5).equals(Buffer.from("%PDF-")) && data.subarray(-1024).includes(Buffer.from("%%EOF"));
-  if (!validPdf(student) || !validPdf(teacher)) throw new Error("双份 PDF 必须都生成并校验成功");
+  if (!isValidPdf(student) || !isValidPdf(teacher)) throw new Error("双份 PDF 必须都生成并校验成功");
   if (!/^[a-f0-9-]{36}$/.test(operationId)) throw new Error("操作标识无效");
   const { pending, result } = pdfPairPaths(parent, operationId);
   try {

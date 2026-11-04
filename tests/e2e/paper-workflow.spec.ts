@@ -1,6 +1,6 @@
 import { test, expect, _electron as electron } from "@playwright/test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Database } from "../../src/main/database";
@@ -230,10 +230,31 @@ test("题库检索到双卷定稿：依赖确认、改分、阻断、学生卷�
     await page.getByRole("button", { name: "检查定稿" }).click();
     await expect(page.getByText("定稿检查通过。")).toBeVisible();
 
-    // 生成双卷。
+    // 生成双卷：先打开两份预览；取消不产生定稿记录与正式目录。
     await page.getByRole("button", { name: "生成学生卷与教师答案卷" }).click();
-    await expect(page.getByText(/学生卷与教师答案卷已保存并打开/)).toBeVisible({ timeout: 30000 });
-    const directories = readdirSync(outDir);
+    const confirmDialog = page.getByRole("dialog", { name: "确认定稿" });
+    await expect(confirmDialog).toBeVisible({ timeout: 30000 });
+    const previewDirs = readdirSync(outDir).filter((name) => name.startsWith(".paperweave-"));
+    expect(previewDirs).toHaveLength(1);
+    const openedPreview = await app.evaluate(() => (globalThis as typeof globalThis & { openedPaperPdfs?: string[] }).openedPaperPdfs ?? []);
+    expect(openedPreview.slice(-2)).toEqual([
+      path.join(outDir, previewDirs[0], "学生卷.pdf"),
+      path.join(outDir, previewDirs[0], "教师答案卷.pdf"),
+    ]);
+    for (const file of openedPreview.slice(-2)) expect(existsSync(file)).toBe(true);
+    await confirmDialog.getByRole("button", { name: "取消并丢弃" }).click();
+    await expect(page.getByText("已取消定稿。")).toBeVisible();
+    expect(readdirSync(outDir).filter((name) => name.startsWith(".paperweave-"))).toHaveLength(0);
+    expect(readdirSync(outDir).filter((name) => name.startsWith("拾题成卷-样张-"))).toHaveLength(0);
+    await expect(page.getByText("暂无定稿记录。")).toBeVisible();
+
+    // 重新生成并确认后才落盘定稿。
+    await page.getByRole("button", { name: "生成学生卷与教师答案卷" }).click();
+    const confirmAgain = page.getByRole("dialog", { name: "确认定稿" });
+    await expect(confirmAgain).toBeVisible({ timeout: 30000 });
+    await confirmAgain.getByRole("button", { name: "确认保存为定稿" }).click();
+    await expect(page.getByText(/双卷已保存为定稿/)).toBeVisible({ timeout: 30000 });
+    const directories = readdirSync(outDir).filter((name) => name.startsWith("拾题成卷-样张-"));
     expect(directories).toHaveLength(1);
     const student = readFileSync(path.join(outDir, directories[0], "学生卷.pdf"));
     const teacher = readFileSync(path.join(outDir, directories[0], "教师答案卷.pdf"));
@@ -318,10 +339,13 @@ test("题库检索到双卷定稿：依赖确认、改分、阻断、学生卷�
     await page.getByRole("button", { name: "检查定稿" }).click();
     await expect(page.getByText("定稿检查通过。")).toBeVisible();
 
-    const beforeAdjusted = readdirSync(outDir);
+    const resultsBefore = readdirSync(outDir).filter((name) => name.startsWith("拾题成卷-样张-"));
     await page.getByRole("button", { name: "生成学生卷与教师答案卷" }).click();
-    await expect.poll(() => readdirSync(outDir).length, { timeout: 30000 }).toBe(beforeAdjusted.length + 1);
-    const adjustedDir = readdirSync(outDir).find((name) => !beforeAdjusted.includes(name)) as string;
+    const adjustedConfirm = page.getByRole("dialog", { name: "确认定稿" });
+    await expect(adjustedConfirm).toBeVisible({ timeout: 30000 });
+    await adjustedConfirm.getByRole("button", { name: "确认保存为定稿" }).click();
+    await expect.poll(() => readdirSync(outDir).filter((name) => name.startsWith("拾题成卷-样张-")).length, { timeout: 30000 }).toBe(resultsBefore.length + 1);
+    const adjustedDir = readdirSync(outDir).filter((name) => name.startsWith("拾题成卷-样张-") && !resultsBefore.includes(name))[0];
     const adjustedTeacher = readFileSync(path.join(outDir, adjustedDir, "教师答案卷.pdf"));
     const adjustedTeacherText = (await extractPdfText(new Uint8Array(adjustedTeacher))).pages.map((entry) => entry.text).join("\n").normalize("NFKC");
     expect(adjustedTeacherText).toContain("本卷评分");
