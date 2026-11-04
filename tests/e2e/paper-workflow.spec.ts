@@ -250,10 +250,10 @@ test("题库检索到双卷定稿：依赖确认、改分、阻断、学生卷�
     expect(studentText).not.toContain("结论正确");
     expect(studentText).not.toContain("评分点");
     expect(studentText).not.toContain("本卷评分待补");
-    // 教师卷：含答案、评分点与仅答案说明。
+    // 教师卷：含答案与仅答案说明；选择仅答案后不打印原评分点。
     expect(teacherText).toContain("在 x=1 处取得最小值");
     expect(teacherText).toContain("参考答案");
-    expect(teacherText).toContain("结论正确");
+    expect(teacherText).not.toContain("结论正确");
     expect(teacherText).toContain("本卷评分待补,仅提供参考答案。");
 
     // 重印只打开已冻结 PDF，不重新生成目录。
@@ -289,6 +289,39 @@ test("题库检索到双卷定稿：依赖确认、改分、阻断、学生卷�
     await page.getByLabel("标题", { exact: true }).fill("第二份数学卷");
     await page.getByRole("button", { name: "创建试卷" }).click();
     await expect(page.getByRole("heading", { name: "第二份数学卷　总分 0 分" })).toBeVisible();
+
+    // 第二份卷：改分后编辑评分点，教师卷打印「本卷评分」。
+    await page.getByRole("button", { name: "添加小节" }).click();
+    await expect(page.getByRole("region", { name: "解答题" })).toBeVisible();
+    await page.getByRole("region", { name: "题篮" }).locator(".paper-card", { hasText: "的结论是否成立。" }).getByRole("button", { name: "加入试卷" }).click();
+    await expect(page.getByText("已加入试卷。")).toBeVisible();
+    const adjustedItem = page.locator("article.paper-item-edit", { hasText: "的结论是否成立。" });
+    await expect(page.getByText("总分 10 分")).toBeVisible();
+    await adjustedItem.locator(".paper-conflict").getByRole("button", { name: "确认保留" }).click();
+    await adjustedItem.getByLabel("卷内分值").fill("8");
+    await adjustedItem.getByRole("button", { name: "改分" }).click();
+    await expect(page.getByText("卷内分值已更新。")).toBeVisible();
+    await expect(adjustedItem.locator(".paper-state")).toHaveText("待调整");
+
+    await adjustedItem.getByRole("button", { name: "编辑评分点" }).click();
+    await adjustedItem.getByLabel("评分点 1 分值").fill("3");
+    await adjustedItem.getByLabel("评分点 2 分值").fill("5");
+    await expect(adjustedItem.locator(".paper-scoring-edit")).toContainText("评分点合计 8 分，卷内分值 8 分");
+    await adjustedItem.getByRole("button", { name: "保存评分点" }).click();
+    await expect(page.getByText("评分状态已更新。")).toBeVisible();
+    await expect(adjustedItem.locator(".paper-state")).toHaveText("已调整");
+    await page.getByRole("button", { name: "检查定稿" }).click();
+    await expect(page.getByText("定稿检查通过。")).toBeVisible();
+
+    const beforeAdjusted = readdirSync(outDir);
+    await page.getByRole("button", { name: "生成学生卷与教师答案卷" }).click();
+    await expect.poll(() => readdirSync(outDir).length, { timeout: 30000 }).toBe(beforeAdjusted.length + 1);
+    const adjustedDir = readdirSync(outDir).find((name) => !beforeAdjusted.includes(name)) as string;
+    const adjustedTeacher = readFileSync(path.join(outDir, adjustedDir, "教师答案卷.pdf"));
+    const adjustedTeacherText = (await extractPdfText(new Uint8Array(adjustedTeacher))).pages.map((entry) => entry.text).join("\n").normalize("NFKC");
+    expect(adjustedTeacherText).toContain("本卷评分");
+    expect(adjustedTeacherText).toContain("结论正确(3 分)");
+    expect(adjustedTeacherText).toContain("判断正确(5 分)");
   } finally {
     await closeApp(app);
     rmSync(dir, { recursive: true, force: true });
