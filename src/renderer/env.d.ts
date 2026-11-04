@@ -2,17 +2,19 @@
 import type { AiDraft, AiInput } from "../shared/ai";
 import type { AiConfig } from "../shared/ai-config";
 import type { BasketSelection } from "../shared/basket";
-import type { Draft } from "../shared/document";
+import type { Block, Draft } from "../shared/document";
 import type {
   ExamAttachment,
   ExamDetailView,
   ExamFileRole,
   ExamImportResult,
   ExamInput,
+  ExamQuestionSummary,
   ExamRecord,
   ExamSectionRecord,
   OriginalFileView,
 } from "../shared/exam";
+import type { SaveIntakeResult } from "../shared/intake";
 import type {
   BeginFinalizationView,
   BasketItemView,
@@ -26,6 +28,7 @@ import type {
 } from "../shared/paper-api";
 import type { BlankSpace, PaperScoring } from "../shared/paper";
 import type { VolumePaper } from "../shared/paper-layout";
+import type { Classification, QuestionContent, ReviewStatus } from "../shared/question";
 import type { RuntimeVersions } from "../shared/versions";
 
 declare global {
@@ -82,6 +85,11 @@ declare global {
       attachExamFile(examId: string, role: ExamFileRole): Promise<{ status: "canceled" } | ({ status: "attached" } & ExamAttachment)>;
       addExamSection(examId: string, title: string, subject?: string): Promise<ExamSectionRecord>;
       getExamFile(fileId: string): Promise<{ file: OriginalFileView; data: Uint8Array }>;
+      listExamQuestions(examId: string): Promise<ExamQuestionSummary[]>;
+      saveIntake(input: { examId: string; sectionId: string; questionId?: string; content: QuestionContent; classification: Classification; submit?: boolean }): Promise<SaveIntakeResult>;
+      saveIntakeFigure(dataUrl: string): Promise<{ id: string; url: string }>;
+      createMaterial(input: { title: string; content: Block[]; source: string }): Promise<{ id: string; materialId: string; version: number; title: string; content: Block[]; source: string; status: ReviewStatus; createdAt: string }>;
+      setMaterialStatus(versionId: string, status: ReviewStatus): Promise<void>;
     };
   }
 }

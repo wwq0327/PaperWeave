@@ -1,4 +1,4 @@
-import type { Stage } from "./question";
+import type { AnswerStatus, ReviewStatus, SourcePosition, Stage } from "./question";
 
 /** 原卷文件角色：原卷、答案、评分细则、答题卡。 */
 export type ExamFileRole = "paper" | "answer" | "rubric" | "answer_sheet";
@@ -65,6 +65,17 @@ export interface ExamImportResult {
 export interface ExamAttachment {
   file: ExamFileView;
   existing: boolean;
+}
+
+export interface ExamQuestionSummary {
+  questionId: string;
+  versionId: string;
+  version: number;
+  sectionId: string | null;
+  contentStatus: ReviewStatus;
+  answerStatus: AnswerStatus;
+  preview: string;
+  source: SourcePosition;
 }
 
 const stages = new Set(["小学", "初中", "高中"]);

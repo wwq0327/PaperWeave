@@ -1,7 +1,10 @@
 import { BrowserWindow, dialog, ipcMain } from "electron";
 import { isExamFileRole, type ExamDetailView, type ExamFileRecord, type ExamFileView, type OriginalFileRecord, type OriginalFileView } from "../shared/exam";
 import type { Database } from "./database";
+import { AttachmentStore } from "./attachments";
 import { ExamStore } from "./exams";
+import { Intake } from "./intake";
+import { QuestionBank } from "./question-bank";
 
 const fileView = (file: OriginalFileRecord): OriginalFileView => ({
   id: file.id,
@@ -15,6 +18,9 @@ const examFileView = (file: ExamFileRecord): ExamFileView => ({ ...fileView(file
 /** 考试原件 IPC：文件选择与读取都在主进程完成，渲染进程只拿标识与字节。 */
 export function registerExams(db: Database, root: string, currentWindow: () => BrowserWindow | undefined): void {
   const store = new ExamStore(db, root);
+  const bank = new QuestionBank(db);
+  const intake = new Intake(store, bank);
+  const attachments = new AttachmentStore(root);
   const permitted = (event: Electron.IpcMainInvokeEvent) => {
     const win = currentWindow();
     if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) throw new Error("无权访问考试资料");
@@ -62,5 +68,25 @@ export function registerExams(db: Database, root: string, currentWindow: () => B
     permitted(event);
     const { file, data } = store.readFile(text(fileId, "原卷文件"));
     return { file: fileView(file), data: new Uint8Array(data) };
+  });
+  ipcMain.handle("exam:questions", (event, examId: unknown) => {
+    permitted(event);
+    return store.listQuestions(text(examId, "考试标识"));
+  });
+  ipcMain.handle("intake:save", (event, input: unknown) => {
+    permitted(event);
+    return intake.save(input);
+  });
+  ipcMain.handle("intake:saveFigure", (event, dataUrl: unknown) => {
+    permitted(event);
+    return attachments.saveDataUrl(dataUrl);
+  });
+  ipcMain.handle("question:createMaterial", (event, input: unknown) => {
+    permitted(event);
+    return bank.createMaterial(input);
+  });
+  ipcMain.handle("question:setMaterialStatus", (event, versionId: unknown, status: unknown) => {
+    permitted(event);
+    bank.setMaterialStatus(text(versionId, "材料版本"), status as never);
   });
 }
