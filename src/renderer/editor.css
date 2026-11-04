@@ -148,3 +148,8 @@ button.primary { background: #225c3d; color: #fff; border-color: #225c3d; }
 .intake-table td { padding: 2px; }
 .intake-actions { position: sticky; bottom: 0; }
 @media (max-width: 1000px) { .intake-grid { grid-template-columns: 1fr; } .intake-left { position: static; } .intake-page-view { max-height: 60vh; } }
+.review-sub, .review-material { border-top: 1px solid #dbe4db; margin-top: 12px; padding-top: 12px; }
+.review-sub > header, .review-material > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.review-blocks img { max-width: 100%; }
+.review-problems { color: #8a4b00; }
+.review-actions { border-top: 2px solid #dbe4db; margin-top: 16px; padding-top: 12px; }

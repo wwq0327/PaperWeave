@@ -29,6 +29,8 @@ export interface QuestionDetailView {
   questionId: string;
   versionId: string;
   version: number;
+  contentStatus: ReviewStatus;
+  answerStatus: AnswerStatus;
   content: QuestionContent;
   classification: Classification | undefined;
   materials: MaterialView[];

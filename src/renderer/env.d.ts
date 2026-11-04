@@ -29,7 +29,7 @@ import type {
 } from "../shared/paper-api";
 import type { BlankSpace, PaperScoring } from "../shared/paper";
 import type { VolumePaper } from "../shared/paper-layout";
-import type { Classification, QuestionContent, ReviewStatus } from "../shared/question";
+import type { AnswerStatus, Classification, QuestionContent, ReviewStatus } from "../shared/question";
 import type { RuntimeVersions } from "../shared/versions";
 
 declare global {
@@ -56,6 +56,9 @@ declare global {
       loadPdfForImages(): Promise<{ name: string; data: Uint8Array; pages: { page: number; text: string }[]; hasText: boolean } | null>;
       searchQuestions(filter: unknown): Promise<QuestionSearchView[]>;
       getQuestionDetail(versionId: string): Promise<QuestionDetailView>;
+      setQuestionContentStatus(versionId: string, status: ReviewStatus): Promise<void>;
+      setQuestionAnswerStatus(versionId: string, status: AnswerStatus): Promise<void>;
+      setQuestionClassification(questionId: string, classification: Classification): Promise<Classification>;
       listBasket(): Promise<BasketItemView[]>;
       addToBasket(questionId: string, versionId: string, subQuestionId: string | null, confirm?: boolean): Promise<{ status: "confirmation_required"; selection: BasketSelection } | { status: "added"; item: BasketItemView }>;
       removeBasketItem(id: string): Promise<void>;
