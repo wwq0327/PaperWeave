@@ -38,6 +38,7 @@ export interface SubQuestion {
   id: string;
   originalLabel: string;
   prompt: Block[];
+  explanation: Block[];
   options: { label: string; content: Block[] }[];
   slots: AnswerSlot[];
   answers: AnswerKey[];
@@ -71,10 +72,11 @@ function sourceProblem(value: unknown): string | null {
 }
 
 function subQuestionProblem(value: unknown, earlier: Set<string>): string | null {
-  if (!object(value) || !keys(value, ["id", "originalLabel", "prompt", "options", "slots", "answers", "scoring", "dependsOn"])) return "小问结构无效";
+  if (!object(value) || !keys(value, ["id", "originalLabel", "prompt", "explanation", "options", "slots", "answers", "scoring", "dependsOn"])) return "小问结构无效";
   if (!id(value.id) || earlier.has(value.id)) return "小问标识无效或重复";
   if (!text(value.originalLabel, 50)) return "小问号格式无效";
   if (!isBlockList(value.prompt)) return "小问题干格式无效";
+  if (!isBlockList(value.explanation)) return "小问解析格式无效";
   if (!Array.isArray(value.options) || value.options.length > 26) return "选项格式无效";
   const optionLabels = new Set<string>();
   for (const option of value.options) {

@@ -26,6 +26,10 @@ test("候选分值不同时返回冲突而不相加", () => {
 test("拒绝未知字段、重复标识、悬空引用和悬空依赖", () => {
   expect(isQuestionContent({ ...note(), extra: true })).toBe(false);
 
+  const missingExplanation = note();
+  delete (missingExplanation.subQuestions[0] as { explanation?: unknown }).explanation;
+  expect(questionContentProblem(missingExplanation)).not.toBeNull();
+
   const duplicateSub = math();
   duplicateSub.subQuestions[1].id = "part-1";
   expect(questionContentProblem(duplicateSub)).not.toBeNull();

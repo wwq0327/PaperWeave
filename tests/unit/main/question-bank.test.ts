@@ -27,6 +27,7 @@ test("新建题目为草稿、版本 1、答案待补，重开后内容一致", 
   const reopened = new Database(path);
   const reread = new QuestionBank(reopened).getQuestionVersion(created.id);
   expect(reread).toEqual(created);
+  expect(reread?.content.subQuestions[0].explanation).toEqual([paragraph("留言条应写明时间、地点和事情。")]);
   reopened.close();
 });
 
