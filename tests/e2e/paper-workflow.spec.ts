@@ -6,7 +6,7 @@ import path from "node:path";
 import { Database } from "../../src/main/database";
 import { extractPdfText } from "../../src/main/pdf-text";
 import { QuestionBank } from "../../src/main/question-bank";
-import type { QuestionBlock, QuestionContent, QuestionInline } from "../../src/shared/question";
+import type { Classification, QuestionBlock, QuestionContent, QuestionInline } from "../../src/shared/question";
 import { paragraph, readingGroup, referenceGroup } from "../unit/fixtures/questions";
 
 // 一张 A4 大小的透明 PNG，作为自制题图的附件，不包含任何真实题目内容。
@@ -53,6 +53,29 @@ function danglingReference(imageId: string): QuestionContent {
   };
 }
 
+/** 无题干、只有共享材料依赖的阅读题，用于检索筛选与材料依赖提示。 */
+function materialOnly(): QuestionContent {
+  return {
+    stem: [],
+    subQuestions: [{
+      id: "material-only-1",
+      originalLabel: "(1)",
+      prompt: [paragraph("阅读下面的材料，概括作者的观点。")],
+      explanation: [],
+      options: [],
+      slots: [],
+      answers: [],
+      scoring: [{ id: "material-only-score", description: "概括准确", score: 5, slotIds: [] }],
+      originalScore: 5,
+      materialIds: ["material-c"],
+      dependsOn: [],
+    }],
+    materials: [{ materialId: "material-c", versionId: "material-c-v1" }],
+    selection: { mode: "all" },
+    source: { section: "语文·阅读", pdfPage: 2, originalNumber: "5" },
+  };
+}
+
 function remapContent(bank: QuestionBank, content: QuestionContent, imageId: string) {
   const materialVersions = new Map<string, string>();
   const materialIds = new Map<string, string>();
@@ -94,10 +117,10 @@ function seed(dir: string): void {
 
   const db = new Database(path.join(dir, "paperweave.sqlite"));
   const bank = new QuestionBank(db);
-  const approve = (content: QuestionContent) => {
+  const approve = (content: QuestionContent, classification?: Classification) => {
     remapContent(bank, content, imageId);
     const version = bank.createQuestion(content);
-    bank.setClassification(version.questionId, {
+    bank.setClassification(version.questionId, classification ?? {
       stage: "初中",
       subject: "数学",
       grade: "九年级",
@@ -122,6 +145,17 @@ function seed(dir: string): void {
   math.subQuestions[1].explanation.push(paragraph("评分说明：第二问 6 分。"));
   approve(math);
   approve(danglingReference(imageId));
+  // 独立分类的共享材料题，只由组合筛选命中。
+  approve(materialOnly(), {
+    stage: "初中",
+    subject: "语文",
+    grade: "九年级",
+    examType: "期末",
+    year: "2026",
+    sourceName: "区统测",
+    questionType: "阅读题",
+    knowledgePoints: ["概括"],
+  });
   db.close();
 }
 
@@ -178,8 +212,8 @@ test("题库检索到双卷定稿：依赖确认、改分、阻断、学生卷�
     await part2.getByRole("button", { name: "加入此小问" }).click();
     const dialog = page.getByRole("dialog", { name: "依赖确认" });
     await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText("ref-1");
-    await expect(dialog).toContainText("ref-2");
+    await expect(dialog).toContainText("本项：(2) 说明(1)的结论是否成立。");
+    await expect(dialog).toContainText("追加小问：(1)");
     await expect(dialog).toContainText("题组共用题干");
     await dialog.getByRole("button", { name: "确认加入" }).click();
     await expect(page.getByText("已加入题篮。")).toBeVisible();
@@ -355,5 +389,57 @@ test("题库检索到双卷定稿：依赖确认、改分、阻断、学生卷�
     await closeApp(app);
     rmSync(dir, { recursive: true, force: true });
     rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test("组合筛选命中目标题，详情与入篮确认展示共享材料依赖", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-search-"));
+  seed(dir);
+  const app = await electron.launch({ args: [path.resolve(".vite/build/main.cjs"), `--user-data-dir=${dir}`] });
+  try {
+    const page = await app.firstWindow();
+    await page.getByRole("button", { name: "题库与组卷" }).click();
+    await expect(page.getByRole("heading", { name: "题库与组卷" })).toBeVisible();
+    const search = page.getByRole("region", { name: "题库检索" });
+    await search.getByLabel("学科").fill("语文");
+    await search.getByLabel("考试类型").fill("期末");
+    await search.getByLabel("学年").fill("2026");
+    await search.getByLabel("来源").fill("区统测");
+    await search.getByLabel("题型").fill("阅读题");
+    await search.getByLabel("知识点").fill("概括");
+    await search.getByLabel("内容状态").selectOption("approved");
+    await search.getByLabel("答案状态").selectOption("approved");
+    await search.getByRole("button", { name: "检索" }).click();
+
+    // 组合字段只命中目标题，不混入数学样题。
+    await expect(search.locator(".paper-card")).toHaveCount(1);
+    const card = search.locator(".paper-card");
+    await expect(card).toContainText("概括作者的观点");
+    await card.getByRole("button", { name: "查看小问/答案" }).click();
+
+    // 详情用材料标题显示共享材料依赖，并预告入篮范围。
+    const detail = page.getByRole("region", { name: "题目详情" });
+    await expect(detail).toContainText("共享材料：材料 material-c");
+    await expect(detail).toContainText("入篮将带入：(1)；材料：材料 material-c");
+
+    // 入篮确认展示本项、追加项与材料，且只有本项，不扩大小问范围。
+    await detail.getByRole("button", { name: "加入此小问" }).click();
+    const dialog = page.getByRole("dialog", { name: "依赖确认" });
+    await expect(dialog).toContainText("本项：(1) 阅读下面的材料，概括作者的观点。");
+    await expect(dialog).toContainText("追加小问：无（仅本项）");
+    await expect(dialog).toContainText("依赖材料：材料 material-c");
+    await expect(dialog).toContainText("共享材料");
+    await expect(dialog).not.toContainText("独立小问");
+    await dialog.getByRole("button", { name: "确认加入" }).click();
+    await expect(page.getByText("已加入题篮。")).toBeVisible();
+
+    // 题篮只含本项，依赖原因保留共享材料提示。
+    const basketCard = page.getByRole("region", { name: "题篮" }).locator(".paper-card");
+    await expect(basketCard).toHaveCount(1);
+    await expect(basketCard).toContainText("概括作者的观点");
+    await expect(basketCard).toContainText("共享材料");
+  } finally {
+    await closeApp(app);
+    rmSync(dir, { recursive: true, force: true });
   }
 });

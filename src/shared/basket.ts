@@ -27,6 +27,7 @@ export function basketSelection(content: QuestionContent, subQuestionId: string 
   if (dependencies.directPrevious.length > 0) reasons.push(`直接前问：${dependencies.directPrevious.join("、")}`);
   const transitive = dependencies.previous.filter((id) => !dependencies.directPrevious.includes(id));
   if (transitive.length > 0) reasons.push(`传递前问：${transitive.join("、")}`);
+  if (dependencies.materialIds.length > 0) reasons.push(`共享材料：${dependencies.materialIds.join("、")}`);
   if (reasons.length === 0) reasons.push("独立小问");
   const selected = new Set([...dependencies.previous, subQuestionId]);
   return {

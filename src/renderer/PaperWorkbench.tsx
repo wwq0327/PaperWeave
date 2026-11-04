@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import type { BasketSelection } from "../shared/basket";
+import { basketSelection, type BasketSelection } from "../shared/basket";
 import type {
   BasketItemView,
   FinalizationCheckView,
   FinalizationRecordView,
+  MaterialView,
   PaperDetailView,
   PaperItemView,
   PaperRecordView,
@@ -11,10 +12,40 @@ import type {
   QuestionSearchView,
 } from "../shared/paper-api";
 import type { BlankSpace, PaperScoring } from "../shared/paper";
-import type { QuestionBlock, ScoringPoint, Stage } from "../shared/question";
+import { selectionDependencies, type AnswerStatus, type QuestionBlock, type QuestionContent, type ReviewStatus, type ScoringPoint, type Stage } from "../shared/question";
 import PaperPrintView from "./PaperPrintView";
 
 const stages: Stage[] = ["小学", "初中", "高中"];
+const contentStatuses: { value: ReviewStatus; label: string }[] = [
+  { value: "draft", label: "草稿" },
+  { value: "pending", label: "待核" },
+  { value: "approved", label: "已审核" },
+];
+const answerStatuses: { value: AnswerStatus; label: string }[] = [
+  { value: "missing", label: "待补" },
+  { value: "pending", label: "待核" },
+  { value: "approved", label: "已审核" },
+];
+
+type SearchFilter = {
+  stage: Stage | "";
+  subject: string;
+  grade: string;
+  examType: string;
+  year: string;
+  sourceName: string;
+  questionType: string;
+  knowledgePoint: string;
+  contentStatus: ReviewStatus | "";
+  answerStatus: AnswerStatus | "";
+  keyword: string;
+};
+
+function searchPayload(filter: SearchFilter): Record<string, string | number> {
+  const payload: Record<string, string | number> = { limit: 30 };
+  for (const [key, value] of Object.entries(filter)) if (value !== "") payload[key] = value;
+  return payload;
+}
 const blankSpaces: { value: BlankSpace; label: string }[] = [
   { value: "none", label: "不留白" },
   { value: "small", label: "小留白" },
@@ -53,6 +84,36 @@ function basketText(item: BasketItemView): string {
   return item.content.subQuestions.filter((sub) => item.subQuestionIds.includes(sub.id)).map((sub) => `${sub.originalLabel || sub.id} ${blockText(sub.prompt)}`).join("；");
 }
 
+function subLabel(content: QuestionContent, id: string): string {
+  return content.subQuestions.find((sub) => sub.id === id)?.originalLabel || id;
+}
+
+function confirmSubText(detail: QuestionDetailView | null, id: string): string {
+  const sub = detail?.content.subQuestions.find((item) => item.id === id);
+  if (!sub) return id;
+  const prompt = blockText(sub.prompt);
+  return `${sub.originalLabel || sub.id}${prompt ? ` ${prompt}` : ""}`;
+}
+
+function confirmMaterialText(detail: QuestionDetailView | null, id: string): string {
+  return detail?.materials.find((material) => material.materialId === id)?.title ?? id;
+}
+
+/** 题目详情中的依赖说明：前问用卷内题号，材料用标题；与入篮确认的原因一一对应。 */
+function dependencyLines(content: QuestionContent, materials: MaterialView[], subId: string): string[] {
+  const dependencies = selectionDependencies(content, subId);
+  const label = (id: string) => subLabel(content, id);
+  const lines: string[] = [];
+  if (dependencies.usesGroupStem) lines.push("题组共用题干");
+  if (dependencies.directPrevious.length > 0) lines.push(`直接前问：${dependencies.directPrevious.map(label).join("、")}`);
+  const transitive = dependencies.previous.filter((id) => !dependencies.directPrevious.includes(id));
+  if (transitive.length > 0) lines.push(`传递前问：${transitive.map(label).join("、")}`);
+  if (dependencies.materialIds.length > 0) lines.push(`共享材料：${dependencies.materialIds.map((id) => materials.find((material) => material.materialId === id)?.title ?? id).join("、")}`);
+  if (dependencies.groupCandidates.length > 0) lines.push(`组选答候选：${dependencies.groupCandidates.map(label).join("、")}`);
+  if (dependencies.independent) lines.push("独立小问");
+  return lines;
+}
+
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -67,7 +128,19 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
   const [confirmAdd, setConfirmAdd] = useState<{ questionId: string; versionId: string; subQuestionId: string | null; selection: BasketSelection } | null>(null);
   const [finalizations, setFinalizations] = useState<FinalizationRecordView[]>([]);
   const [check, setCheck] = useState<FinalizationCheckView | null>(null);
-  const [filter, setFilter] = useState({ stage: "初中" as Stage, subject: "数学", grade: "九年级", keyword: "" });
+  const [filter, setFilter] = useState<SearchFilter>({
+    stage: "初中",
+    subject: "数学",
+    grade: "九年级",
+    examType: "",
+    year: "",
+    sourceName: "",
+    questionType: "",
+    knowledgePoint: "",
+    contentStatus: "",
+    answerStatus: "",
+    keyword: "",
+  });
   const [form, setForm] = useState({ title: "九年级数学试卷", stage: "初中" as Stage, subject: "数学", grade: "九年级" });
   const [sectionTitle, setSectionTitle] = useState("解答题");
   const [creating, setCreating] = useState(false);
@@ -106,7 +179,7 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
   }
   async function search() {
     setBusy(true); setError(""); setMessage("");
-    try { setResults(await window.paperweave.searchQuestions({ ...filter, limit: 30 })); }
+    try { setResults(await window.paperweave.searchQuestions(searchPayload(filter))); }
     catch (e) { setError(`检索失败：${errorText(e)}`); }
     finally { setBusy(false); }
   }
@@ -308,6 +381,10 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
   </main>;
   if (printJob) return <PaperPrintView paper={printJob.paper} onReady={() => void printReady()} onCancel={() => void cancelPrint(printJob.id)} />;
 
+  const confirmSource = confirmAdd && detail?.versionId === confirmAdd.versionId ? detail : null;
+  const confirmPrimary = confirmAdd?.subQuestionId ?? null;
+  const confirmAppended = confirmAdd && confirmPrimary ? confirmAdd.selection.subQuestionIds.filter((id) => id !== confirmPrimary) : [];
+
   return <main className="paper-app">
     <header className="paper-top">
       <div><h1>题库与组卷</h1><p>检索选题 → 题篮 → 组卷 → 双卷定稿</p></div>
@@ -317,8 +394,12 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
     {error && <p role="alert" className="error">{error} <button onClick={() => setError("")}>关闭</button></p>}
     {confirmAdd && <section className="paper-confirm" role="dialog" aria-label="依赖确认">
       <h2>加入题篮需要确认依赖</h2>
-      <p>将一并加入：{confirmAdd.selection.subQuestionIds.join("、")}</p>
+      <p><strong>本项：</strong>{confirmSubText(confirmSource, confirmPrimary ?? "")}</p>
+      <p><strong>追加小问：</strong>{confirmAppended.length > 0 ? confirmAppended.map((id) => confirmSubText(confirmSource, id)).join("；") : "无（仅本项）"}</p>
+      <p><strong>依赖材料：</strong>{confirmAdd.selection.materialIds.length > 0 ? confirmAdd.selection.materialIds.map((id) => confirmMaterialText(confirmSource, id)).join("、") : "无"}</p>
+      <p><strong>依赖原因：</strong></p>
       <ul>{confirmAdd.selection.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+      <p className="muted">确认后只加入以上范围，不会额外扩大选择。</p>
       <button className="primary" onClick={() => void addToBasket(confirmAdd.questionId, confirmAdd.versionId, confirmAdd.subQuestionId, true)}>确认加入</button>
       <button onClick={() => setConfirmAdd(null)}>取消</button>
     </section>}
@@ -326,9 +407,16 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
     <section className="paper-panel" aria-label="题库检索">
       <h2>题库检索</h2>
       <div className="paper-grid">
-        <label>学段<select value={filter.stage} onChange={(e) => setFilter({ ...filter, stage: e.target.value as Stage })}>{stages.map((stage) => <option key={stage}>{stage}</option>)}</select></label>
+        <label>学段<select value={filter.stage} onChange={(e) => setFilter({ ...filter, stage: e.target.value as Stage | "" })}><option value="">全部</option>{stages.map((stage) => <option key={stage}>{stage}</option>)}</select></label>
         <label>学科<input value={filter.subject} onChange={(e) => setFilter({ ...filter, subject: e.target.value })} /></label>
         <label>年级<input value={filter.grade} onChange={(e) => setFilter({ ...filter, grade: e.target.value })} /></label>
+        <label>考试类型<input value={filter.examType} onChange={(e) => setFilter({ ...filter, examType: e.target.value })} /></label>
+        <label>学年<input value={filter.year} onChange={(e) => setFilter({ ...filter, year: e.target.value })} /></label>
+        <label>来源<input value={filter.sourceName} onChange={(e) => setFilter({ ...filter, sourceName: e.target.value })} /></label>
+        <label>题型<input value={filter.questionType} onChange={(e) => setFilter({ ...filter, questionType: e.target.value })} /></label>
+        <label>知识点<input value={filter.knowledgePoint} onChange={(e) => setFilter({ ...filter, knowledgePoint: e.target.value })} /></label>
+        <label>内容状态<select value={filter.contentStatus} onChange={(e) => setFilter({ ...filter, contentStatus: e.target.value as ReviewStatus | "" })}><option value="">全部</option>{contentStatuses.map((entry) => <option key={entry.value} value={entry.value}>{entry.label}</option>)}</select></label>
+        <label>答案状态<select value={filter.answerStatus} onChange={(e) => setFilter({ ...filter, answerStatus: e.target.value as AnswerStatus | "" })}><option value="">全部</option>{answerStatuses.map((entry) => <option key={entry.value} value={entry.value}>{entry.label}</option>)}</select></label>
         <label>关键词<input value={filter.keyword} onChange={(e) => setFilter({ ...filter, keyword: e.target.value })} /></label>
       </div>
       <button onClick={() => void search()} disabled={busy}>检索</button>
@@ -347,15 +435,20 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
         <p className="muted">{detail.classification?.subject} · {detail.classification?.grade} · 题库第 {detail.version} 版</p>
         {detail.content.stem.length > 0 && <p><strong>题组指令：</strong>{blockText(detail.content.stem)}</p>}
         {detail.materials.map((material) => <p key={material.versionId}><strong>{material.title}：</strong>{blockText(material.content as QuestionBlock[])}</p>)}
-        <ul>{detail.content.subQuestions.map((sub) => <li key={sub.id}>
-          <p><strong>{sub.originalLabel || sub.id}</strong> {blockText(sub.prompt)}　<span className="muted">原分值 {sub.originalScore ?? "未录入"}</span></p>
-          <button onClick={() => void addToBasket(detail.questionId, detail.versionId, sub.id)}>加入此小问</button>
-          <details><summary>查看答案与评分</summary>
-            {sub.answers.map((answer, index) => <p key={index}>答案：{blockText(answer.blocks)}</p>)}
-            {sub.explanation.length > 0 && <p>解析：{blockText(sub.explanation)}</p>}
-            {sub.scoring.length > 0 && <p>评分：{sub.scoring.map((point) => `${point.description} ${point.score} 分`).join("；")}</p>}
-          </details>
-        </li>)}</ul>
+        <ul>{detail.content.subQuestions.map((sub) => {
+          const selection = basketSelection(detail.content, sub.id);
+          return <li key={sub.id}>
+            <p><strong>{sub.originalLabel || sub.id}</strong> {blockText(sub.prompt)}　<span className="muted">原分值 {sub.originalScore ?? "未录入"}</span></p>
+            <p className="muted">依赖提示：{dependencyLines(detail.content, detail.materials, sub.id).join("；")}</p>
+            <p className="muted">入篮将带入：{selection.subQuestionIds.map((id) => subLabel(detail.content, id)).join("、")}{selection.materialIds.length > 0 ? `；材料：${selection.materialIds.map((id) => confirmMaterialText(detail, id)).join("、")}` : ""}</p>
+            <button onClick={() => void addToBasket(detail.questionId, detail.versionId, sub.id)}>加入此小问</button>
+            <details><summary>查看答案与评分</summary>
+              {sub.answers.map((answer, index) => <p key={index}>答案：{blockText(answer.blocks)}</p>)}
+              {sub.explanation.length > 0 && <p>解析：{blockText(sub.explanation)}</p>}
+              {sub.scoring.length > 0 && <p>评分：{sub.scoring.map((point) => `${point.description} ${point.score} 分`).join("；")}</p>}
+            </details>
+          </li>;
+        })}</ul>
         <p className="muted">完整题干：{questionText(detail)}</p>
       </section>}
     </section>
