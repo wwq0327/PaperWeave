@@ -44,3 +44,26 @@ test("从实际编辑内容生成并打开同一份 A4 PDF；错误公式不生�
     await expect(page.getByText(/图片超过 A4 可打印区域/)).toBeVisible();
   } finally { await app.evaluate(({ app: electronApp }) => { electronApp.exit(0); }).catch(() => undefined); await app.close().catch(() => undefined); rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("长文和表格生成多页样张", async ({}, testInfo) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-pages-"));
+  const output = testInfo.outputPath("多页样张.pdf");
+  const app = await electron.launch({ args: [path.resolve(".vite/build/main.cjs"), `--user-data-dir=${dir}`] });
+  try {
+    await app.evaluate(({ dialog, shell }, target) => {
+      dialog.showSaveDialog = async () => ({ canceled: false, filePath: target });
+      shell.openPath = async () => "";
+    }, output);
+    const page = await app.firstWindow();
+    const longText = Array.from({ length: 80 }, (_, i) => `第 ${i + 1} 行：这是用于检查长文分页的自制内容。`).join("\n");
+    await page.getByLabel("文本 1").fill(longText);
+    await page.getByRole("button", { name: "添加表格" }).click();
+    for (let i = 0; i < 28; i++) await page.getByRole("button", { name: "添加行", exact: true }).click();
+    for (let i = 1; i <= 30; i++) await page.getByLabel(`第 ${i} 行第 1 列`).fill(`表格第 ${i} 行`);
+    await page.getByRole("button", { name: "生成并预览草稿 PDF" }).click();
+    await expect(page.getByText(/PDF 已保存并打开/)).toBeVisible();
+    const pdf = readFileSync(output);
+    expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
+    expect((pdf.toString("latin1").match(/\/Type\s*\/Page\b/g) || []).length).toBeGreaterThan(1);
+  } finally { await app.evaluate(({ app: electronApp }) => { electronApp.exit(0); }).catch(() => undefined); await app.close().catch(() => undefined); rmSync(dir, { recursive: true, force: true }); }
+});

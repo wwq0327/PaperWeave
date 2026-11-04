@@ -81,7 +81,7 @@ export default function App() {
         if (rect.width > width + 1 || rect.height > height + 1 || element.scrollWidth > width + 1) throw Error("公式或表格超出 A4 可打印区域，请调整后重试");
       }
       const result = await window.paperweave.exportPdf();
-      if (!result.canceled) setMessage(result.openError ? `PDF 已保存，但无法自动打开：${result.openError}` : "PDF 已保存并打开，可在预览程序中打印。");
+      if (!result.canceled) setMessage(result.openError ? `PDF 已保存，但无法自动打开：${result.openError}` : "PDF 已保存并打开。打印时请选择 A4 和 100% 缩放，避免自动缩放。");
     } catch (e) { setError(`无法生成 PDF：${String(e)}。草稿仍在。`); }
     finally { setExporting(false); }
   }
