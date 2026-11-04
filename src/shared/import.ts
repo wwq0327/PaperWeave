@@ -1,3 +1,4 @@
+import type { ImportFieldDiff } from "./import-diff";
 import type { Classification, QuestionContent, ReviewStatus } from "./question";
 
 export type ImportKind = "tiku" | "mathvault";
@@ -23,11 +24,13 @@ export interface ImportRow {
   classification: Classification;
   preview: string;
   reasons: string[];
+  problems?: string[];
   target?: ImportTarget;
   incoming?: QuestionContent;
   canRevise: boolean;
   needsProofread?: boolean;
   legacyStatus?: string;
+  diff?: ImportFieldDiff[];
 }
 
 export interface ImportSummary {
@@ -56,6 +59,19 @@ export interface ImportApplyResult {
   imported: number;
   revised: number;
   skipped: number;
+}
+
+export type ImportCorrectionAction = "attachImage" | "dropProblem";
+
+export type ImportCorrectionResult = { status: "canceled" } | { status: "corrected"; row: ImportRow };
+
+export type ImportProblemKind = "image" | "material" | "other";
+
+/** 可在应用内修正的阻断项：图片可补入或确认不带，失链材料可确认移除。 */
+export function importProblemKind(problem: string): ImportProblemKind {
+  if (/^(缺图|远程图片|图片|配图)/.test(problem)) return "image";
+  if (problem.startsWith("材料失链")) return "material";
+  return "other";
 }
 
 export interface ImportBatchView {

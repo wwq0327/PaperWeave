@@ -1,5 +1,16 @@
 import { useEffect, useState } from "react";
-import type { ImportApplyResult, ImportBatchView, ImportDecision, ImportRow, ImportScanView, ImportStatus } from "../shared/import";
+import {
+  emptyImportSummary,
+  importProblemKind,
+  type ImportApplyResult,
+  type ImportBatchView,
+  type ImportCorrectionAction,
+  type ImportDecision,
+  type ImportRow,
+  type ImportScanView,
+  type ImportStatus,
+} from "../shared/import";
+import type { ImportDiffChange } from "../shared/import-diff";
 
 const statusLabels: Record<ImportStatus, string> = {
   importable: "可导入",
@@ -9,8 +20,27 @@ const statusLabels: Record<ImportStatus, string> = {
   blocked: "阻断",
 };
 
+const diffLabels: Record<ImportDiffChange, string> = {
+  added: "新增",
+  removed: "删除",
+  modified: "修改",
+};
+
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** 阻断项已单独列出，提示行只保留页码、分值等非阻断说明。 */
+function notesOf(row: ImportRow): string[] {
+  const problems = new Set(row.problems ?? []);
+  return row.reasons.filter((reason) => !problems.has(reason));
+}
+
+function replaceRow(scan: ImportScanView, row: ImportRow): ImportScanView {
+  const rows = scan.rows.map((entry) => entry.sourceKey === row.sourceKey ? row : entry);
+  const summary = emptyImportSummary();
+  for (const entry of rows) summary[entry.status] += 1;
+  return { ...scan, rows, summary };
 }
 
 export default function ImportWorkbench({ onBack }: { onBack: () => void }) {
@@ -69,6 +99,28 @@ export default function ImportWorkbench({ onBack }: { onBack: () => void }) {
     } finally { setBusy(false); }
   }
 
+  async function correct(row: ImportRow, action: ImportCorrectionAction, problem: string) {
+    if (!scan) return;
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const result = await window.paperweave.correctImport({ scanId: scan.scanId, sourceKey: row.sourceKey, action, problem });
+      if (result.status === "canceled") return;
+      setScan((current) => current ? replaceRow(current, result.row) : current);
+      setChoices((current) => {
+        const next = { ...current };
+        delete next[row.sourceKey];
+        if (result.row.status === "importable") next[row.sourceKey] = "import";
+        if (result.row.status === "changed") next[row.sourceKey] = "skip";
+        return next;
+      });
+      setMessage(result.row.status === "blocked"
+        ? `已处理「${problem}」，仍有阻断项需要继续处理。`
+        : `已处理「${problem}」，该条已重新校验为${statusLabels[result.row.status]}。`);
+    } catch (e) {
+      setError(`修正失败：${errorText(e)}`);
+    } finally { setBusy(false); }
+  }
+
   function setChoice(row: ImportRow, action: ImportDecision) {
     setChoices((current) => ({ ...current, [row.sourceKey]: action }));
   }
@@ -105,24 +157,45 @@ export default function ImportWorkbench({ onBack }: { onBack: () => void }) {
     {scan && <section className="paper-panel" aria-label="迁入预览">
       <h2>迁入预览（{scan.rows.length}）</h2>
       {scan.rows.length === 0 ? <p className="muted">没有找到题目。</p> : <ul className="paper-list">
-        {scan.rows.map((row) => <li key={row.sourceKey} className="paper-card import-row">
-          <div className="import-row-main">
-            <strong>{row.title || row.sourceKey}</strong>
-            <p className="muted">{statusLabels[row.status]} · {row.section} · 原卷第 {row.pdfPage} 页 · 题 {row.originalNumber || "待补"} · {row.sourceKey}</p>
-            {row.preview && <p className="muted">新来源：{row.preview}</p>}
-            {row.status === "changed" && row.target && <p className="muted">当前题库：{row.target.preview || "（无预览）"}（版本 {row.target.version}）</p>}
-            {row.reasons.length > 0 && <p className="muted">提示：{row.reasons.join("；")}</p>}
-          </div>
-          <div className="paper-actions">
-            {row.status === "importable" && <label className="inline"><input type="checkbox" checked={choices[row.sourceKey] === "import"} onChange={(event) => setImportChecked(row, event.target.checked)} />导入</label>}
-            {row.needsProofread && <label className="inline"><input type="checkbox" checked={proofread[row.sourceKey] === true} onChange={(event) => setProofread((current) => ({ ...current, [row.sourceKey]: event.target.checked }))} />我已核对校勘说明</label>}
-            {row.status === "changed" && <>
-              <label className="inline"><input type="radio" name={`action-${row.sourceKey}`} checked={choices[row.sourceKey] === "revise"} onChange={() => setChoice(row, "revise")} />建立修订版</label>
-              <label className="inline"><input type="radio" name={`action-${row.sourceKey}`} checked={choices[row.sourceKey] === "skip"} onChange={() => setChoice(row, "skip")} />保留当前</label>
-            </>}
-            {row.status === "target_modified" && <span className="muted">目标题已被人工修改，本次保留当前。</span>}
-          </div>
-        </li>)}
+        {scan.rows.map((row) => {
+          const notes = notesOf(row);
+          return <li key={row.sourceKey} className="paper-card import-row">
+            <div className="import-row-main">
+              <strong>{row.title || row.sourceKey}</strong>
+              <p className="muted">{statusLabels[row.status]} · {row.section} · 原卷第 {row.pdfPage} 页 · 题 {row.originalNumber || "待补"} · {row.sourceKey}</p>
+              {row.preview && <p className="muted">新来源：{row.preview}</p>}
+              {row.status === "changed" && row.target && <p className="muted">当前题库：{row.target.preview || "（无预览）"}（版本 {row.target.version}）</p>}
+              {row.status === "changed" && row.diff && (row.diff.length > 0
+                ? <div className="import-diff">
+                  <p className="muted">字段差异：</p>
+                  <ul>{row.diff.map((item) => <li key={item.field} className="muted">
+                    <strong>{item.field}（{diffLabels[item.change]}）</strong>：{item.before} → {item.after}
+                  </li>)}</ul>
+                </div>
+                : <p className="muted">字段差异：未检测到文字内容变化（可能仅为源文件空白或格式变化）。</p>)}
+              {row.problems && row.problems.length > 0 && <ul className="import-problems">
+                {row.problems.map((problem) => {
+                  const kind = importProblemKind(problem);
+                  return <li key={problem} className="paper-inline">
+                    <span>{problem}</span>
+                    {kind === "image" && <button onClick={() => void correct(row, "attachImage", problem)} disabled={busy}>选择图片补入</button>}
+                    {kind !== "other" && <button onClick={() => void correct(row, "dropProblem", problem)} disabled={busy}>{kind === "image" ? "不带此图导入" : "不带此材料导入"}</button>}
+                  </li>;
+                })}
+              </ul>}
+              {notes.length > 0 && <p className="muted">提示：{notes.join("；")}</p>}
+            </div>
+            <div className="paper-actions">
+              {row.status === "importable" && <label className="inline"><input type="checkbox" checked={choices[row.sourceKey] === "import"} onChange={(event) => setImportChecked(row, event.target.checked)} />导入</label>}
+              {row.needsProofread && <label className="inline"><input type="checkbox" checked={proofread[row.sourceKey] === true} onChange={(event) => setProofread((current) => ({ ...current, [row.sourceKey]: event.target.checked }))} />我已核对校勘说明</label>}
+              {row.status === "changed" && <>
+                <label className="inline"><input type="radio" name={`action-${row.sourceKey}`} checked={choices[row.sourceKey] === "revise"} onChange={() => setChoice(row, "revise")} />建立修订版</label>
+                <label className="inline"><input type="radio" name={`action-${row.sourceKey}`} checked={choices[row.sourceKey] === "skip"} onChange={() => setChoice(row, "skip")} />保留当前</label>
+              </>}
+              {row.status === "target_modified" && <span className="muted">目标题已被人工修改，本次保留当前。</span>}
+            </div>
+          </li>;
+        })}
       </ul>}
     </section>}
 

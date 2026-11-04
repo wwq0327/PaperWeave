@@ -78,6 +78,9 @@ button.primary { background: #225c3d; color: #fff; border-color: #225c3d; }
 .paper-list { list-style: none; padding: 0; margin: 12px 0; }
 .paper-card { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 10px 0; border-top: 1px solid #edf1ec; flex-wrap: wrap; }
 .paper-card p { margin: 4px 0; }
+.import-problems { list-style: none; padding: 0; margin: 6px 0; }
+.import-problems li { margin: 4px 0; }
+.import-diff ul { margin: 4px 0 4px 18px; padding: 0; }
 .paper-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .paper-actions select, .paper-inline select, .paper-inline input { width: auto; margin: 0; }
 .paper-inline { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin: 8px 0; }
