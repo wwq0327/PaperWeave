@@ -5,7 +5,7 @@ import type { AiConfig } from "../shared/ai-config";
 import { aiQuestionToIntake, type AiIntakeResult } from "../shared/ai-intake";
 import type { ExamDetailView, ExamQuestionSummary } from "../shared/exam";
 import type { Block } from "../shared/document";
-import { blankSubQuestion, buildContent, contentToForm, newIntakeForm, type IntakeBlock, type IntakeDuplicateSummary, type IntakeForm, type IntakeMaterial, type IntakeSlot, type IntakeSubQuestion } from "../shared/intake";
+import { blankSubQuestion, buildContent, contentToForm, newIntakeForm, type IntakeBlock, type IntakeDuplicateSummary, type IntakeForm, type IntakeMaterial, type IntakeReferenceOption, type IntakeSlot, type IntakeSubQuestion } from "../shared/intake";
 import type { Classification, QuestionBlock, QuestionContent, ReviewStatus, Stage } from "../shared/question";
 import BlockListEditor from "./BlockListEditor";
 import ExamPdfPanel from "./ExamPdfPanel";
@@ -221,6 +221,32 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
         };
       }),
     });
+  };
+  /** 当前题目中可引用的目标：其他小问、本题材料与带图标识的图片。 */
+  const referenceOptionsFor = (subKey: string | null): IntakeReferenceOption[] => {
+    if (!form) return [];
+    const options: IntakeReferenceOption[] = [];
+    form.subQuestions.forEach((sub, index) => {
+      if (sub.key === subKey) return;
+      options.push({ kind: "subQuestion", targetId: sub.id, label: sub.originalLabel.trim() || `第 ${index + 1} 小问` });
+    });
+    for (const material of form.materials) options.push({ kind: "material", targetId: material.materialId, label: material.title || material.materialId });
+    const seen = new Set<string>();
+    const scan = (blocks: IntakeBlock[]) => {
+      for (const block of blocks) {
+        if (block.kind !== "image" || block.figureId === undefined || block.figureId.trim() === "" || seen.has(block.figureId)) continue;
+        seen.add(block.figureId);
+        options.push({ kind: "figure", targetId: block.figureId, label: block.alt.trim() || block.figureId });
+      }
+    };
+    scan(form.stem);
+    for (const sub of form.subQuestions) {
+      scan(sub.prompt);
+      scan(sub.answer);
+      scan(sub.explanation);
+      for (const entry of sub.slotAnswers) scan(entry.blocks);
+    }
+    return options;
   };
 
   function addSub() {
@@ -642,7 +668,7 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
 
           <section className="paper-panel" aria-label="题组内容">
             <h2>题组内容</h2>
-            <BlockListEditor label="题干" blocks={form.stem} disabled={busy} onChange={(blocks) => setForm({ ...form, stem: blocks })} onCrop={() => requestCrop({ field: "stem" })} />
+            <BlockListEditor label="题干" blocks={form.stem} disabled={busy} referenceOptions={referenceOptionsFor(null)} onChange={(blocks) => setForm({ ...form, stem: blocks })} onCrop={() => requestCrop({ field: "stem" })} />
             {form.subQuestions.map((sub, index) => <fieldset className="intake-sub" key={sub.key} aria-label={`小问 ${index + 1}`}>
               <legend>小问 {index + 1}</legend>
               <div className="paper-inline">
@@ -650,7 +676,7 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
                 <label>原分值<input type="number" min={0} max={1000} step={0.5} value={sub.originalScore} onChange={(event) => updateSub(sub.key, { originalScore: event.target.value })} /></label>
                 <button onClick={() => removeSub(sub.key)} disabled={busy || form.subQuestions.length <= 1}>删除小问</button>
               </div>
-              <BlockListEditor label={`小问 ${index + 1} 题干`} blocks={sub.prompt} disabled={busy} onChange={(blocks) => setSubBlocks(sub.key, "prompt", blocks)} onCrop={() => requestCrop({ field: "prompt", subKey: sub.key })} />
+              <BlockListEditor label={`小问 ${index + 1} 题干`} blocks={sub.prompt} disabled={busy} referenceOptions={referenceOptionsFor(sub.key)} onChange={(blocks) => setSubBlocks(sub.key, "prompt", blocks)} onCrop={() => requestCrop({ field: "prompt", subKey: sub.key })} />
               <label>选项（每行一个）<textarea value={sub.options} onChange={(event) => updateSub(sub.key, { options: event.target.value })} placeholder="选项甲&#10;选项乙" /></label>
               <fieldset className="intake-slots" aria-label={`小问 ${index + 1} 作答位置`}>
                 <legend>作答位置</legend>
@@ -679,13 +705,14 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
                     label={`小问 ${index + 1} 空位 ${slotIndex + 1} 答案`}
                     blocks={sub.slotAnswers.find((entry) => entry.slotId === slot.id)?.blocks ?? []}
                     disabled={busy}
+                    referenceOptions={referenceOptionsFor(sub.key)}
                     onChange={(blocks) => setSlotAnswer(sub.key, slot.id, blocks)}
                   />
                 </div>)}
                 <button onClick={() => addSlot(sub.key)} disabled={busy}>添加空位</button>
               </fieldset>
-              <BlockListEditor label={`小问 ${index + 1} 答案`} blocks={sub.answer} disabled={busy} onChange={(blocks) => setSubBlocks(sub.key, "answer", blocks)} onCrop={() => requestCrop({ field: "answer", subKey: sub.key })} />
-              <BlockListEditor label={`小问 ${index + 1} 解析`} blocks={sub.explanation} disabled={busy} onChange={(blocks) => setSubBlocks(sub.key, "explanation", blocks)} onCrop={() => requestCrop({ field: "explanation", subKey: sub.key })} />
+              <BlockListEditor label={`小问 ${index + 1} 答案`} blocks={sub.answer} disabled={busy} referenceOptions={referenceOptionsFor(sub.key)} onChange={(blocks) => setSubBlocks(sub.key, "answer", blocks)} onCrop={() => requestCrop({ field: "answer", subKey: sub.key })} />
+              <BlockListEditor label={`小问 ${index + 1} 解析`} blocks={sub.explanation} disabled={busy} referenceOptions={referenceOptionsFor(sub.key)} onChange={(blocks) => setSubBlocks(sub.key, "explanation", blocks)} onCrop={() => requestCrop({ field: "explanation", subKey: sub.key })} />
               <fieldset className="intake-scoring" aria-label={`小问 ${index + 1} 评分点`}>
                 <legend>评分点</legend>
                 {sub.scoring.map((point, pointIndex) => <div className="paper-inline" key={pointIndex}>

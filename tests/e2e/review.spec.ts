@@ -127,6 +127,103 @@ test("材料改版列出受影响题并逐题采用新版", async () => {
   }
 });
 
+test("录入小问与图引用，组卷后按卷内编号解析且学生卷无答案", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-reference-"));
+  const outDir = mkdtempSync(path.join(tmpdir(), "paperweave-reference-out-"));
+  const app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`] });
+  try {
+    const page = await app.firstWindow();
+    await importExam(page, app);
+    await app.evaluate(({ dialog, shell }, target) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] });
+      shell.openPath = async () => "";
+    }, outDir);
+
+    await page.getByLabel("原卷页码", { exact: true }).fill("2");
+    await page.getByLabel("原题号").fill("2");
+    await page.getByLabel("知识点（逗号分隔）").fill("阅读理解");
+    await page.getByLabel("题干 文字 1", { exact: true }).fill("合成题：引用检查。");
+    const firstPrompt = page.getByRole("group", { name: "小问 1 题干" });
+    await firstPrompt.getByLabel("小问 1 题干 文字 1", { exact: true }).fill("观察图形。");
+    await firstPrompt.getByRole("button", { name: "插入裁图" }).click();
+    await dragOnPage(page);
+    await expect(page.getByText("裁图已插入当前编辑目标。", { exact: true })).toBeVisible();
+    await firstPrompt.getByLabel("小问 1 题干 图标识 2").fill("fig-a");
+    await page.getByRole("group", { name: "小问 1 答案" }).getByRole("button", { name: "添加文字" }).click();
+    await page.getByLabel("小问 1 答案 文字 1", { exact: true }).fill("答案一");
+
+    await page.getByRole("button", { name: "添加小问" }).click();
+    const secondSub = page.getByRole("group", { name: "小问 2", exact: true });
+    await secondSub.getByLabel("小问号").fill("(2)");
+    await secondSub.getByLabel("原分值").fill("6");
+    await secondSub.getByRole("group", { name: "小问 2 答案" }).getByRole("button", { name: "添加文字" }).click();
+    await page.getByLabel("小问 2 答案 文字 1", { exact: true }).fill("答案二");
+
+    const secondPrompt = page.getByRole("group", { name: "小问 2 题干" });
+    await secondPrompt.getByLabel("小问 2 题干 文字 1", { exact: true }).fill("结合");
+    await secondPrompt.getByLabel("小问 2 题干 引用目标").selectOption({ label: "小问：(1)" });
+    await secondPrompt.getByRole("button", { name: "插入引用" }).click();
+    await secondPrompt.getByLabel("小问 2 题干 引用回退 2").fill("旧小问号");
+    await secondPrompt.getByLabel("小问 2 题干 引用目标").selectOption({ value: "figure:fig-a" });
+    await secondPrompt.getByRole("button", { name: "插入引用" }).click();
+    await secondPrompt.getByLabel("小问 2 题干 引用回退 3").fill("旧图号");
+    await secondPrompt.getByRole("button", { name: "添加文字" }).click();
+    await secondPrompt.getByLabel("小问 2 题干 文字 4", { exact: true }).fill("作答。");
+
+    await page.getByRole("button", { name: "提交待核" }).click();
+    await expect(page.getByText("已提交待核（版本 1）。", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "返回考试原卷" }).click();
+    await page.getByRole("button", { name: "返回录题草稿" }).click();
+    await page.getByRole("button", { name: "题目审核" }).click();
+    const card = page.locator(".paper-card", { hasText: "合成题：引用检查。" });
+    await card.getByRole("button", { name: "查看并审核" }).click();
+    const detail = page.getByRole("region", { name: "题目审核详情" });
+    await detail.getByRole("button", { name: "通过内容审核" }).click();
+    await expect(page.getByText("内容已通过审核。", { exact: true })).toBeVisible();
+    await detail.getByRole("button", { name: "通过答案审核" }).click();
+    await expect(page.getByText("答案与评分已通过审核。", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "去题库与组卷" }).click();
+    const result = page.locator(".paper-card", { hasText: "合成题：引用检查。" });
+    await result.getByRole("button", { name: "整题入篮" }).click();
+    await page.getByLabel("标题", { exact: true }).fill("引用解析卷");
+    await page.getByRole("button", { name: "创建试卷" }).click();
+    await page.getByRole("button", { name: "添加小节" }).click();
+    await page.getByRole("region", { name: "题篮" }).getByRole("button", { name: "加入试卷" }).click();
+    await page.getByRole("button", { name: "检查定稿" }).click();
+    await expect(page.getByText("定稿检查通过。", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "生成学生卷与教师答案卷" }).click();
+    const confirm = page.getByRole("dialog", { name: "确认定稿" });
+    await expect(confirm).toBeVisible({ timeout: 30000 });
+    await confirm.getByRole("button", { name: "确认保存为定稿" }).click();
+    await expect(page.getByText(/双卷已保存为定稿/)).toBeVisible({ timeout: 30000 });
+
+    const directories = readdirSync(outDir).filter((name) => name.startsWith("拾题成卷-样张-"));
+    expect(directories).toHaveLength(1);
+    const student = readFileSync(path.join(outDir, directories[0], "学生卷.pdf"));
+    const teacher = readFileSync(path.join(outDir, directories[0], "教师答案卷.pdf"));
+    const studentText = (await extractPdfText(new Uint8Array(student))).pages.map((entry) => entry.text).join("\n").normalize("NFKC");
+    const teacherText = (await extractPdfText(new Uint8Array(teacher))).pages.map((entry) => entry.text).join("\n").normalize("NFKC");
+
+    expect(studentText).toContain("结合");
+    expect(studentText).toContain("图 1");
+    expect(studentText).not.toContain("旧小问号");
+    expect(studentText).not.toContain("旧图号");
+    expect(studentText).not.toContain("答案一");
+    expect(studentText).not.toContain("答案二");
+    expect(teacherText).toContain("答案一");
+    expect(teacherText).toContain("答案二");
+    expect(teacherText).not.toContain("旧小问号");
+    expect(teacherText).not.toContain("旧图号");
+  } finally {
+    await closeApp(app);
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
 test("录题提交待核后完整审核公式、题图与标签，再进入新卷", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "paperweave-review-"));
   const outDir = mkdtempSync(path.join(tmpdir(), "paperweave-review-out-"));
