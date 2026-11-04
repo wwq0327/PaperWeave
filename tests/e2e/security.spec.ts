@@ -84,7 +84,7 @@ test("渲染进程无 Node、隔离与沙箱生效，跨窗口调用被拒绝", 
     });
     expect(probe.globals).toEqual(["process:undefined", "require:undefined", "module:undefined", "ipcRenderer:undefined", "Buffer:undefined", "electron:undefined"]);
     expect(probe.keys).toEqual([
-      "addBasketItemToPaper", "addPaperSection", "addToBasket", "beginPaperFinalize", "beginPdfPair", "cancelAiDraft", "cancelPaperFinalize", "cancelPdfPair", "capturePaperStudent", "captureStudentPdf", "checkPaperFinalize", "chooseImage", "clearAiKey", "clearBasket", "confirmPaperScoreConflict", "createPaper", "exportPdf", "extractPdfText", "finishPaperFinalize", "finishPdfPair", "generateAiDraft", "getAiConfig", "getImage", "getPaper", "getPaperTeacherVolume", "getQuestionDetail", "getRuntimeVersions", "listBasket", "listPaperFinalizations", "listPapers", "loadDraft", "loadPdfForImages", "movePaperItem", "platform", "removeBasketItem", "removePaperItem", "removePaperSection", "reprintPaper", "saveAiConfig", "saveAiKey", "saveDraft", "searchQuestions", "setPaperItemBlankSpace", "setPaperItemScore", "setPaperItemScoring",
+      "addBasketItemToPaper", "addExamSection", "addPaperSection", "addToBasket", "attachExamFile", "beginPaperFinalize", "beginPdfPair", "cancelAiDraft", "cancelPaperFinalize", "cancelPdfPair", "capturePaperStudent", "captureStudentPdf", "checkPaperFinalize", "chooseImage", "clearAiKey", "clearBasket", "confirmPaperScoreConflict", "createPaper", "exportPdf", "extractPdfText", "finishPaperFinalize", "finishPdfPair", "generateAiDraft", "getAiConfig", "getExam", "getExamFile", "getImage", "getPaper", "getPaperTeacherVolume", "getQuestionDetail", "getRuntimeVersions", "importExam", "listBasket", "listExams", "listPaperFinalizations", "listPapers", "loadDraft", "loadPdfForImages", "movePaperItem", "platform", "removeBasketItem", "removePaperItem", "removePaperSection", "reprintPaper", "saveAiConfig", "saveAiKey", "saveDraft", "searchQuestions", "setPaperItemBlankSpace", "setPaperItemScore", "setPaperItemScoring",
     ]);
 
     const denied = await app.evaluate(async ({ BrowserWindow }, preloadPath) => {
@@ -105,6 +105,8 @@ test("渲染进程无 Node、隔离与沙箱生效，跨窗口调用被拒绝", 
             await attempt(() => bridge.listBasket()),
             await attempt(() => bridge.getPaper("00000000-0000-0000-0000-000000000000")),
             await attempt(() => bridge.beginPaperFinalize("00000000-0000-0000-0000-000000000000")),
+            await attempt(() => bridge.listExams()),
+            await attempt(() => bridge.importExam({})),
           ];
         })()`);
       } finally {
@@ -118,6 +120,8 @@ test("渲染进程无 Node、隔离与沙箱生效，跨窗口调用被拒绝", 
     expect(denied[4]).toContain("无权访问组卷功能");
     expect(denied[5]).toContain("无权访问组卷功能");
     expect(denied[6]).toContain("无权访问组卷功能");
+    expect(denied[7]).toContain("无权访问考试资料");
+    expect(denied[8]).toContain("无权访问考试资料");
   } finally {
     await closeApp(app);
     rmSync(dir, { recursive: true, force: true });

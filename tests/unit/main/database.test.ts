@@ -75,7 +75,7 @@ test("首次建库、写入、更新并重开", () => {
   expect(reopened.getSetting("标题")).toBe("拾题成卷");
   reopened.close();
   const raw = new DatabaseSync(path);
-  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(5);
+  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(6);
   raw.close();
 });
 
@@ -89,7 +89,7 @@ test("版本 2 升级到 3 时保留设置与草稿，并建好题目表", () =>
   expect(db.getDraft()).toBe("旧草稿");
   db.close();
   const raw = new DatabaseSync(path);
-  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(5);
+  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(6);
   const tables = raw.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all().map((row) => (row as { name: string }).name);
   for (const table of ["questions", "question_versions", "materials", "material_versions", "question_material_refs"]) expect(tables).toContain(table);
   raw.close();
@@ -107,7 +107,7 @@ test("版本 3 升级到 4 时保留题目与审核状态，并增加分类列",
   const db = new Database(path);
   db.close();
   const raw = new DatabaseSync(path);
-  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(5);
+  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(6);
   expect(raw.prepare("SELECT content_status, answer_status, search_text FROM question_versions WHERE id = 'v1'").get()).toEqual({ content_status: "pending", answer_status: "approved", search_text: "" });
   const migrated = JSON.parse((raw.prepare("SELECT content FROM question_versions WHERE id = 'v1'").get() as { content: string }).content);
   expect(migrated.subQuestions[0].originalScore).toBe(2);
@@ -149,14 +149,14 @@ function legacyGroup(): ReturnType<typeof legacyContent> {
   return content;
 }
 
-test("版本 4 升级到 5 时补齐原分值与小问材料，并建好组卷表", () => {
+test("版本 4 升级到 6 时补齐原分值与小问材料，并建好组卷与考试表", () => {
   const path = dbPath();
   const original = legacyGroup();
   v4Database(path, [JSON.stringify(original)]);
   const db = new Database(path);
   db.close();
   const raw = new DatabaseSync(path);
-  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(5);
+  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(6);
   const migrated = JSON.parse((raw.prepare("SELECT content FROM question_versions WHERE id = 'v1'").get() as { content: string }).content);
   expect(migrated.subQuestions[0].originalScore).toBe(2);
   expect(migrated.subQuestions[1].originalScore).toBeNull();
@@ -165,7 +165,7 @@ test("版本 4 升级到 5 时补齐原分值与小问材料，并建好组卷�
   expect(migrated.stem).toEqual(original.stem);
   expect(migrated.subQuestions[0].prompt).toEqual(original.subQuestions[0].prompt);
   const tables = raw.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all().map((row) => (row as { name: string }).name);
-  for (const table of ["basket_items", "papers", "paper_sections", "paper_items", "paper_finalizations"]) expect(tables).toContain(table);
+  for (const table of ["basket_items", "papers", "paper_sections", "paper_items", "paper_finalizations", "exams", "exam_sections", "original_files", "exam_originals", "question_exams"]) expect(tables).toContain(table);
   const indexes = raw.prepare("SELECT name FROM sqlite_schema WHERE type = 'index'").all().map((row) => (row as { name: string }).name);
   expect(indexes).toContain("basket_items_position");
   raw.close();
