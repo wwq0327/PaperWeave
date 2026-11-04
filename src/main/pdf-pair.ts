@@ -1,5 +1,7 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+import "pdfjs-dist/legacy/build/pdf.worker.mjs";
 
 export function pdfPairPaths(parent: string, operationId: string) {
   return {
@@ -11,6 +13,20 @@ export function pdfPairPaths(parent: string, operationId: string) {
 
 export function isValidPdf(data: Buffer): boolean {
   return data.length >= 100 && data.subarray(0, 5).equals(Buffer.from("%PDF-")) && data.subarray(-1024).includes(Buffer.from("%%EOF"));
+}
+
+/** 头尾检查之外用 PDF.js 实际解析，要求至少一页；损坏文件不得记为定稿。 */
+export async function assertReadablePdf(data: Buffer, label: string): Promise<void> {
+  if (!isValidPdf(data)) throw new Error(`${label}无效`);
+  const loading = getDocument({ data: new Uint8Array(data), useSystemFonts: true, disableFontFace: true });
+  try {
+    const document = await loading.promise;
+    if (document.numPages < 1) throw new Error("没有页面");
+  } catch (error) {
+    throw new Error(`${label}无法打开：${error instanceof Error ? error.message : "文件损坏"}`);
+  } finally {
+    await loading.destroy().catch(() => undefined);
+  }
 }
 
 /** 两份样张作为一个目录发布：任一写入或校验失败时，不出现完整目录。 */

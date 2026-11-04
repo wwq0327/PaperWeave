@@ -82,6 +82,7 @@ declare global {
       capturePaperStudent(id: string): Promise<void>;
       getPaperTeacherVolume(id: string): Promise<VolumePaper>;
       capturePaperTeacher(id: string): Promise<{ studentPath: string; teacherPath: string; openErrors: string[] }>;
+      reopenPaperPreview(id: string): Promise<string[]>;
       confirmPaperFinalize(id: string): Promise<{ record: FinalizationRecordView }>;
       cancelPaperFinalize(id: string): Promise<void>;
       reprintPaper(id: string): Promise<{ studentPath: string; teacherPath: string; openErrors: string[] }>;

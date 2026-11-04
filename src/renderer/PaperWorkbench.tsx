@@ -154,6 +154,7 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [printJob, setPrintJob] = useState<{ id: string; paper: import("../shared/paper-layout").VolumePaper; phase: "student" | "teacher" } | { id: string; phase: "confirm" } | null>(null);
+  const [previewErrors, setPreviewErrors] = useState<string[]>([]);
 
   async function loadBasket() {
     try { setBasket(await window.paperweave.listBasket()); } catch (e) { setError(`读取题篮失败：${errorText(e)}`); }
@@ -344,7 +345,8 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
         const preview = await window.paperweave.capturePaperTeacher(job.id);
         setPrintJob({ id: job.id, phase: "confirm" });
         const failed = preview.openErrors.filter(Boolean);
-        if (failed.length) setError(`双卷预览无法自动打开，请检查后重试：${failed.join("；")}`);
+        setPreviewErrors(failed);
+        if (failed.length) setError(`双卷预览无法自动打开，请重新打开预览后再确认：${failed.join("；")}`);
       }
     } catch (e) {
       await window.paperweave.cancelPaperFinalize(job.id).catch(() => undefined);
@@ -353,6 +355,7 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
     }
   }
   async function confirmFinalize(id: string) {
+    if (previewErrors.length > 0) { setError("双卷预览尚未成功打开，请重新打开预览后再确认定稿。"); return; }
     try {
       await window.paperweave.confirmPaperFinalize(id);
       setPrintJob(null);
@@ -367,7 +370,16 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
   async function cancelPrint(id: string) {
     await window.paperweave.cancelPaperFinalize(id).catch(() => undefined);
     setPrintJob(null);
+    setPreviewErrors([]);
     setMessage("已取消定稿。");
+  }
+  async function reopenPreview(id: string) {
+    try {
+      const errors = (await window.paperweave.reopenPaperPreview(id)).filter(Boolean);
+      setPreviewErrors(errors);
+      if (errors.length > 0) setError(`双卷预览仍无法打开：${errors.join("；")}`);
+      else { setError(""); setMessage("双卷预览已重新打开，确认无误后可保存为定稿。"); }
+    } catch (e) { setError(`重新打开预览失败：${errorText(e)}`); }
   }
   async function beginFinalize() {
     if (!paper) return;
@@ -377,6 +389,7 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
       if (result.status === "canceled") return;
       if (result.status === "blocked") { setCheck(result.check); setMessage("定稿被阻断，请先处理下列问题。"); return; }
       setCheck(null);
+      setPreviewErrors([]);
       setPrintJob({ id: result.id, paper: result.student, phase: "student" });
     } catch (e) { setError(`无法开始定稿：${errorText(e)}`); }
     finally { setBusy(false); }
@@ -392,7 +405,10 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
       <h1>检查双卷预览</h1>
       <p>学生卷与教师答案卷已在系统程序中打开。确认页码、排版与答案无误后保存为定稿；取消不会产生定稿记录。</p>
       {error && <p role="alert" className="error">{error} <button onClick={() => setError("")}>关闭</button></p>}
-      <button className="primary" onClick={() => void confirmFinalize(printJob.id)}>确认保存为定稿</button>
+      {message && <p role="status">{message}</p>}
+      {previewErrors.length > 0 && <p role="alert" className="error">预览未能自动打开：{previewErrors.filter(Boolean).join("；")}</p>}
+      <button className="primary" onClick={() => void confirmFinalize(printJob.id)} disabled={previewErrors.length > 0}>确认保存为定稿</button>
+      {previewErrors.length > 0 && <button onClick={() => void reopenPreview(printJob.id)}>重新打开预览</button>}
       <button onClick={() => void cancelPrint(printJob.id)}>取消并丢弃</button>
     </section>
   </main>;

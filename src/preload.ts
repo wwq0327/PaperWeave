@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld("paperweave", {
   capturePaperStudent: (id: string) => ipcRenderer.invoke("paper:captureStudent", id),
   getPaperTeacherVolume: (id: string) => ipcRenderer.invoke("paper:teacherVolume", id),
   capturePaperTeacher: (id: string) => ipcRenderer.invoke("paper:captureTeacher", id),
+  reopenPaperPreview: (id: string) => ipcRenderer.invoke("paper:reopenPreview", id),
   confirmPaperFinalize: (id: string) => ipcRenderer.invoke("paper:confirmFinalize", id),
   cancelPaperFinalize: (id: string) => ipcRenderer.invoke("paper:cancelFinalize", id),
   reprintPaper: (id: string) => ipcRenderer.invoke("paper:reprint", id),

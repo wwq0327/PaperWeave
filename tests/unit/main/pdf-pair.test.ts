@@ -4,7 +4,8 @@ import * as io from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
-import { writePdfPair } from "../../../src/main/pdf-pair";
+import { writePdfPair, assertReadablePdf } from "../../../src/main/pdf-pair";
+import { minimalPdf } from "../fixtures/pdf";
 
 const dirs: string[] = [];
 const createDir = () => { const dir = mkdtempSync(join(tmpdir(), "paperweave-pair-")); dirs.push(dir); return dir; };
@@ -40,4 +41,11 @@ test("一份无效时拒绝开始写入", async () => {
   const dir = createDir();
   await expect(writePdfPair(dir, randomUUID(), pdf("学生"), Buffer.from("不是 PDF"))).rejects.toThrow("必须都生成并校验成功");
   expect(readdirSync(dir)).toEqual([]);
+});
+
+test("头尾完整但无法解析的 PDF 被拒绝，可解析的单页 PDF 通过", async () => {
+  const broken = Buffer.from(`%PDF-1.7\n1 0 obj << /Type /Catalog /Pages 99 0 R >> endobj\n${" ".repeat(120)}\n%%EOF\n`);
+  await expect(assertReadablePdf(broken, "学生卷")).rejects.toThrow("学生卷无法打开");
+  await expect(assertReadablePdf(Buffer.from("不是 PDF"), "教师答案卷")).rejects.toThrow("教师答案卷无效");
+  await expect(assertReadablePdf(minimalPdf("测试"), "学生卷")).resolves.toBeUndefined();
 });

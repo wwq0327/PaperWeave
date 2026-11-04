@@ -15,7 +15,7 @@ import type { Database } from "./database";
 import { Paper, type PaperDetail, type PaperItemRecord } from "./paper";
 import { QuestionBank } from "./question-bank";
 import { addOperation, parseJournal, removeOperation, type PendingOperation } from "./pdf-journal";
-import { isValidPdf, pdfPairPaths, writePdfPair } from "./pdf-pair";
+import { assertReadablePdf, pdfPairPaths, writePdfPair } from "./pdf-pair";
 
 export const PAPER_JOURNAL_KEY = "paper.pending";
 
@@ -143,6 +143,8 @@ export class PaperFinalizer {
 
   /** 定稿第二步：两份 PDF 同时落盘并写入不可变定稿记录。 */
   async complete(id: string, paperId: string, parent: string, snapshot: PaperSnapshot, student: Buffer, teacher: Buffer): Promise<PaperFinalizationRecord> {
+    await assertReadablePdf(student, "学生卷");
+    await assertReadablePdf(teacher, "教师答案卷");
     const directory = await writePdfPair(parent, id, student, teacher);
     const studentPdf = join(directory, "学生卷.pdf");
     const teacherPdf = join(directory, "教师答案卷.pdf");
@@ -167,7 +169,8 @@ export class PaperFinalizer {
   /** 写入预览暂存并用路径交给界面打开；确认前不产生正式目录或记录。 */
   async stagePreview(id: string, parent: string, student: Buffer, teacher: Buffer): Promise<{ studentPath: string; teacherPath: string }> {
     if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error("操作标识无效");
-    if (!isValidPdf(student) || !isValidPdf(teacher)) throw new Error("双份 PDF 必须都生成并校验成功");
+    await assertReadablePdf(student, "学生卷");
+    await assertReadablePdf(teacher, "教师答案卷");
     const { preview } = pdfPairPaths(parent, id);
     const studentPath = join(preview, "学生卷.pdf");
     const teacherPath = join(preview, "教师答案卷.pdf");

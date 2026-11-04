@@ -625,3 +625,87 @@ test("缺少原分值时提示补填，填写后按教师分值入卷并标记�
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/** 一道已审核、可正常定稿的题，用于验证预览打开失败的定稿门槛。 */
+function seedReadyQuestion(dir: string): void {
+  const db = new Database(path.join(dir, "paperweave.sqlite"));
+  const bank = new QuestionBank(db);
+  const content: QuestionContent = {
+    stem: [],
+    subQuestions: [{
+      id: "ready-1",
+      originalLabel: "(1)",
+      prompt: [paragraph("预览打开失败校验题。")],
+      explanation: [],
+      options: [],
+      slots: [],
+      answers: [{ slotId: null, blocks: [paragraph("参考答案")], variants: [] }],
+      scoring: [{ id: "ready-score", description: "答案正确", score: 5, slotIds: [] }],
+      originalScore: 5,
+      materialIds: [],
+      dependsOn: [],
+    }],
+    materials: [],
+    selection: { mode: "all" },
+    source: { section: "数学·解答题", pdfPage: 4, originalNumber: "16" },
+  };
+  const version = bank.createQuestion(content);
+  bank.setClassification(version.questionId, {
+    stage: "初中",
+    subject: "数学",
+    grade: "九年级",
+    examType: "单元测",
+    year: "2026",
+    sourceName: "自制样题",
+    questionType: "解答题",
+    knowledgePoints: ["综合"],
+  });
+  bank.setContentStatus(version.id, "pending");
+  bank.setContentStatus(version.id, "approved");
+  bank.setAnswerStatus(version.id, "pending");
+  bank.setAnswerStatus(version.id, "approved");
+  db.close();
+}
+
+test("双卷预览打不开时禁止确认定稿，重新打开成功后才可保存", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-preview-fail-"));
+  const outDir = mkdtempSync(path.join(tmpdir(), "paperweave-preview-fail-out-"));
+  seedReadyQuestion(dir);
+  const app = await electron.launch({ args: [path.resolve(".vite/build/main.cjs"), `--user-data-dir=${dir}`] });
+  try {
+    await app.evaluate(({ dialog, shell }, target) => {
+      const state = globalThis as typeof globalThis & { previewOpenCalls?: number };
+      state.previewOpenCalls = 0;
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] });
+      shell.openPath = async () => {
+        state.previewOpenCalls = (state.previewOpenCalls ?? 0) + 1;
+        return state.previewOpenCalls <= 2 ? "模拟打开失败" : "";
+      };
+    }, outDir);
+    const page = await app.firstWindow();
+    await page.getByRole("button", { name: "题库与组卷" }).click();
+    await page.locator(".paper-card", { hasText: "预览打开失败校验题。" }).getByRole("button", { name: "整题入篮" }).click();
+    await expect(page.getByText("已加入题篮。")).toBeVisible();
+    await page.getByLabel("标题", { exact: true }).fill("预览失败数学卷");
+    await page.getByRole("button", { name: "创建试卷" }).click();
+    await page.getByRole("button", { name: "添加小节" }).click();
+    await page.getByRole("region", { name: "题篮" }).getByRole("button", { name: "加入试卷" }).click();
+    await expect(page.getByText("总分 5 分")).toBeVisible();
+
+    await page.getByRole("button", { name: "生成学生卷与教师答案卷" }).click();
+    const dialog = page.getByRole("dialog", { name: "确认定稿" });
+    await expect(dialog).toBeVisible({ timeout: 30000 });
+    await expect(dialog).toContainText("预览未能自动打开");
+    await expect(dialog.getByRole("button", { name: "确认保存为定稿" })).toBeDisabled();
+
+    await dialog.getByRole("button", { name: "重新打开预览" }).click();
+    await expect(page.getByText("双卷预览已重新打开，确认无误后可保存为定稿。")).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "确认保存为定稿" })).toBeEnabled();
+    await dialog.getByRole("button", { name: "确认保存为定稿" }).click();
+    await expect(page.getByText(/双卷已保存为定稿/)).toBeVisible({ timeout: 30000 });
+  } finally {
+    await closeApp(app);
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});

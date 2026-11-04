@@ -12,6 +12,7 @@ import { QuestionBank, type QuestionVersionRecord } from "../../../src/main/ques
 import { paperVolume, type VolumePaper } from "../../../src/shared/paper-layout";
 import type { QuestionContent } from "../../../src/shared/question";
 import { paragraph, referenceGroup } from "../fixtures/questions";
+import { minimalPdf } from "../fixtures/pdf";
 
 const directories: string[] = [];
 function open() {
@@ -87,7 +88,8 @@ function fakeRenderer(calls: string[], onStudent?: (paper: VolumePaper) => void)
   return async (volume: "student" | "teacher", paper: VolumePaper) => {
     calls.push(volume);
     if (volume === "student") onStudent?.(paper);
-    return Buffer.from(`%PDF-1.4\n${JSON.stringify({ volume, paper })}\n%%EOF`);
+    const marker = volume === "teacher" ? "在 x=1 处取得最小值 结论正确" : "图 1";
+    return minimalPdf(`${marker}\n${JSON.stringify({ volume, paper })}`);
   };
 }
 
