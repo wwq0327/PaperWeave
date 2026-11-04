@@ -157,3 +157,9 @@ button.primary { background: #225c3d; color: #fff; border-color: #225c3d; }
 .ai-confirm { border: 1px solid #c8d8c8; background: #f6faf6; margin: 10px 0; padding: 10px; }
 .ai-question { margin-top: 10px; }
 .ai-part { border-left: 2px solid #dbe4db; margin: 6px 0; padding-left: 10px; }
+.backup-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+.backup-summary { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 10px 0; }
+.backup-summary dt { color: #5b6b5e; }
+.backup-summary dd { margin: 0; overflow-wrap: anywhere; }
+.backup-confirm { border: 1px solid #d9b38c; background: #fff8ef; padding: 12px; margin-top: 12px; }
+@media (max-width: 900px) { .backup-grid { grid-template-columns: 1fr; } }

@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import type { AiDraft, AiInput } from "../shared/ai";
 import type { AiConfig } from "../shared/ai-config";
+import type { BackupSummary } from "../shared/backup";
 import type { BasketSelection } from "../shared/basket";
 import type { Block, Draft } from "../shared/document";
 import type {
@@ -98,6 +99,10 @@ declare global {
       saveIntakeFigure(dataUrl: string): Promise<{ id: string; url: string }>;
       createMaterial(input: { title: string; content: Block[]; source: string }): Promise<{ id: string; materialId: string; version: number; title: string; content: Block[]; source: string; status: ReviewStatus; createdAt: string }>;
       setMaterialStatus(versionId: string, status: ReviewStatus): Promise<void>;
+      chooseBackupDestination(): Promise<{ folder: string } | null>;
+      createBackup(): Promise<BackupSummary>;
+      chooseBackupSource(): Promise<BackupSummary | null>;
+      restoreBackup(): Promise<{ summary: BackupSummary; restarting: true }>;
     };
   }
 }
