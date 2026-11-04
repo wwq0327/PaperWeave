@@ -101,7 +101,7 @@ try {
   ok("CSP connect-src 'none'", probe.csp.includes("connect-src 'none'"));
   ok("CSP script-src 'self'", probe.csp.includes("script-src 'self'"));
   ok("渲染进程无 Node 全局", probe.globals.every((g) => g.endsWith(":undefined")), probe.globals.join(" "));
-  ok("桥接口 68 个", probe.bridgeKeys.length === 68, `实际 ${probe.bridgeKeys.length}`);
+  ok("桥接口 71 个", probe.bridgeKeys.length === 71, `实际 ${probe.bridgeKeys.length}`);
 
   const config = await evaluate(`window.paperweave.getAiConfig()`);
   ok("AI 配置默认值且无密钥", config && config.hasKey === false && config.baseUrl === "https://api.anthropic.com", JSON.stringify(config));

@@ -2,6 +2,10 @@ import { test, expect, _electron as electron, type Page } from "@playwright/test
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { Database } from "../../src/main/database";
+import { QuestionBank } from "../../src/main/question-bank";
+import type { QuestionContent } from "../../src/shared/question";
+import { paragraph } from "../unit/fixtures/questions";
 
 const entry = path.resolve(".vite/build/main.cjs");
 const fixture = path.resolve("tests/fixtures/two-pages.pdf");
@@ -38,6 +42,89 @@ async function importExam(page: Page, app: Awaited<ReturnType<typeof electron.la
   await expect(page.getByRole("region", { name: "原卷预览" })).toBeVisible();
   await expect(page.getByAltText("原卷第 1 页")).toBeVisible({ timeout: 15000 });
 }
+
+function sharedMaterialContent(materialId: string, versionId: string, stem: string, originalNumber: string): QuestionContent {
+  return {
+    stem: [paragraph(stem)],
+    subQuestions: [{
+      id: "sub-1",
+      originalLabel: "(1)",
+      prompt: [paragraph("结合材料作答。")],
+      explanation: [],
+      options: [],
+      slots: [{ id: "slot-1", label: "答案", kind: "text", required: true, interchangeableWith: [] }],
+      answers: [{ slotId: "slot-1", blocks: [paragraph("参考答案")], variants: [] }],
+      scoring: [{ id: "score-1", description: "回答正确", score: 4, slotIds: ["slot-1"] }],
+      originalScore: 4,
+      materialIds: [materialId],
+      dependsOn: [],
+    }],
+    materials: [{ materialId, versionId }],
+    selection: { mode: "all" },
+    source: { section: "语文·阅读", pdfPage: 3, originalNumber },
+  };
+}
+
+/** 一份已审核材料被三道题引用；甲题待核，乙、丙题已审核。 */
+function seedSharedMaterial(dir: string): void {
+  const db = new Database(path.join(dir, "paperweave.sqlite"));
+  const bank = new QuestionBank(db);
+  const material = bank.createMaterial({ title: "共享材料", content: [paragraph("材料原文")], source: "自制样题" });
+  bank.setMaterialStatus(material.id, "pending");
+  bank.setMaterialStatus(material.id, "approved");
+  const versions = ["甲题题干", "乙题题干", "丙题题干"].map((stem, index) => {
+    const version = bank.createQuestion(sharedMaterialContent(material.materialId, material.id, stem, String(index + 1)));
+    bank.setClassification(version.questionId, {
+      stage: "初中",
+      subject: "语文",
+      grade: "九年级",
+      examType: "单元测",
+      year: "2026",
+      sourceName: "自制样题",
+      questionType: "阅读题",
+      knowledgePoints: ["材料阅读"],
+    });
+    bank.setContentStatus(version.id, "pending");
+    if (index > 0) bank.setContentStatus(version.id, "approved");
+    bank.setAnswerStatus(version.id, "pending");
+    bank.setAnswerStatus(version.id, "approved");
+    return version;
+  });
+  expect(versions).toHaveLength(3);
+  db.close();
+}
+
+test("材料改版列出受影响题并逐题采用新版", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-material-"));
+  seedSharedMaterial(dir);
+  const app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`] });
+  try {
+    const page = await app.firstWindow();
+    await page.getByRole("button", { name: "题目审核" }).click();
+    const card = page.locator(".paper-card", { hasText: "甲题题干" });
+    await expect(card).toBeVisible();
+    await card.getByRole("button", { name: "查看并审核" }).click();
+    const detail = page.getByRole("region", { name: "题目审核详情" });
+    await expect(detail).toBeVisible();
+
+    await detail.getByRole("button", { name: "编辑材料" }).click();
+    await page.getByLabel("材料正文").fill("材料修订版");
+    await detail.getByRole("button", { name: "保存为新版本" }).click();
+    await expect(page.getByText(/材料第 2 版已保存/)).toBeVisible();
+    const affected = detail.locator(".review-affected");
+    await expect(affected.locator("li")).toHaveCount(3);
+    await expect(affected).toContainText("原卷第 3 页 题 2 · 题目第 1 版 · 材料第 1 版");
+
+    await affected.locator("li", { hasText: "题 2 ·" }).getByRole("button", { name: /采用新版/ }).click();
+    await expect(page.getByText(/已采用材料第 2 版；题目第 2 版回到待核。/)).toBeVisible();
+    await expect(affected.locator("li")).toHaveCount(2);
+    await expect(affected.locator("li", { hasText: "题 3 ·" })).toContainText("题目第 1 版");
+    await expect(page.locator(".paper-card", { hasText: "乙题题干" })).toBeVisible();
+  } finally {
+    await closeApp(app);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("录题提交待核后完整审核公式、题图与标签，再进入新卷", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "paperweave-review-"));

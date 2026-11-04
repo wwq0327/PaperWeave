@@ -91,6 +91,18 @@ export function registerExams(db: Database, root: string, currentWindow: () => B
     permitted(event);
     return bank.createMaterial(input);
   });
+  ipcMain.handle("question:saveMaterialVersion", (event, materialId: unknown, input: unknown) => {
+    permitted(event);
+    return bank.saveMaterialVersion(text(materialId, "材料标识"), input);
+  });
+  ipcMain.handle("question:affectedByMaterial", (event, materialId: unknown) => {
+    permitted(event);
+    return bank.questionsAffectedByMaterial(text(materialId, "材料标识"));
+  });
+  ipcMain.handle("question:adoptMaterialVersion", (event, questionId: unknown, materialId: unknown, materialVersionId: unknown) => {
+    permitted(event);
+    return bank.adoptMaterialVersion(text(questionId, "题目标识"), text(materialId, "材料标识"), text(materialVersionId, "材料版本"));
+  });
   ipcMain.handle("question:setMaterialStatus", (event, versionId: unknown, status: unknown) => {
     permitted(event);
     bank.setMaterialStatus(text(versionId, "材料版本"), status as never);

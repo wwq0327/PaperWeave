@@ -152,6 +152,8 @@ test("一份材料被三道题引用，材料改版后三道题全部列为受�
   for (const item of affected) {
     expect(item.version).toBe(1);
     expect(item.materialVersion).toBe(material.version);
+    expect(item.latestVersionId).toBe(next.id);
+    expect(item.latestVersion).toBe(next.version);
   }
 });
 

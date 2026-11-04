@@ -36,6 +36,8 @@ export interface QuestionUsage {
   versionId: string;
   version: number;
   materialVersion: number;
+  latestVersionId: string;
+  latestVersion: number;
 }
 
 export interface QuestionFilter {
@@ -360,6 +362,9 @@ export class QuestionBank {
   /** 列出仍引用旧版材料的题目（只取每题最新版本）。 */
   questionsAffectedByMaterial(materialId: string): QuestionUsage[] {
     return this.db.read((sqlite) => {
+      const latest = sqlite.prepare("SELECT id, version FROM material_versions WHERE material_id = ? ORDER BY version DESC LIMIT 1")
+        .get(materialId) as { id: string; version: number } | undefined;
+      if (latest === undefined) return [];
       const rows = sqlite.prepare(`
         SELECT qv.question_id AS questionId, qv.id AS versionId, qv.version AS version, MAX(mv.version) AS materialVersion
         FROM question_versions qv
@@ -374,7 +379,7 @@ export class QuestionBank {
       `).all(materialId, materialId) as unknown[];
       return rows.map((row) => {
         const value = row as { questionId: string; versionId: string; version: number; materialVersion: number };
-        return { questionId: value.questionId, versionId: value.versionId, version: value.version, materialVersion: value.materialVersion };
+        return { ...value, latestVersionId: latest.id, latestVersion: latest.version };
       });
     });
   }
