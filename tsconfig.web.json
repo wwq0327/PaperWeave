@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "strict": true
+  },
+  "include": ["src/renderer", "src/shared"]
+}
