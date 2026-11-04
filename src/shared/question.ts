@@ -170,6 +170,42 @@ export function hasContent(blocks: Block[]): boolean {
   });
 }
 
+export interface ReadinessInput {
+  content: QuestionContent;
+  contentStatus: ReviewStatus;
+  answerStatus: AnswerStatus;
+  confirmAnswerGap: boolean;
+  materialStatuses: Record<string, ReviewStatus | undefined>;
+}
+
+export interface Readiness {
+  ready: boolean;
+  blockers: string[];
+  notices: string[];
+  requiresAnswerConfirmation: boolean;
+}
+
+/** 出卷门槛：内容与材料必须已审核；答案或评分待补时需教师明确确认，教师版留下提示。 */
+export function questionReadiness(input: ReadinessInput): Readiness {
+  const blockers: string[] = [];
+  const notices: string[] = [];
+  if (input.contentStatus !== "approved") blockers.push("题目内容尚未审核");
+  for (const sub of input.content.subQuestions) {
+    if (!hasContent(sub.prompt)) blockers.push(`小问「${sub.originalLabel || sub.id}」缺少题干`);
+  }
+  for (const ref of input.content.materials) {
+    const status = input.materialStatuses[ref.versionId];
+    if (status === undefined) blockers.push(`材料「${ref.materialId}」缺失`);
+    else if (status !== "approved") blockers.push(`材料「${ref.materialId}」尚未审核`);
+  }
+  const requiresAnswerConfirmation = input.answerStatus !== "approved";
+  if (requiresAnswerConfirmation) {
+    if (input.confirmAnswerGap) notices.push("答案或评分尚未齐全，教师版将标注待补");
+    else blockers.push("答案或评分尚未齐全，需教师确认后出卷");
+  }
+  return { ready: blockers.length === 0, blockers, notices, requiresAnswerConfirmation };
+}
+
 export interface ScoreSummary {
   total: number;
   conflict: string | null;

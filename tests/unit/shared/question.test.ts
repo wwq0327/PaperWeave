@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { Block } from "../../../src/shared/document";
-import { hasContent, isQuestionContent, questionContentProblem, selectionScore, type QuestionContent } from "../../../src/shared/question";
+import { hasContent, isQuestionContent, questionContentProblem, questionReadiness, selectionScore, type QuestionContent, type ReadinessInput } from "../../../src/shared/question";
 
 const p = (text: string): Block => ({ type: "paragraph", runs: [{ type: "text", text, style: "普通" }] });
 
@@ -179,4 +179,58 @@ test("换行和空白内容不算已填写", () => {
   expect(hasContent([{ type: "table", rows: [["", " "]] }])).toBe(false);
   expect(hasContent([p("有内容")])).toBe(true);
   expect(hasContent([{ type: "image", id: "a".repeat(64), alt: "" }])).toBe(true);
+});
+
+function readiness(overrides: Partial<ReadinessInput> = {}): ReadinessInput {
+  return { content: math(), contentStatus: "approved", answerStatus: "approved", confirmAnswerGap: false, materialStatuses: {}, ...overrides };
+}
+
+test("内容未审核时阻断并说明原因", () => {
+  const result = questionReadiness(readiness({ contentStatus: "pending" }));
+  expect(result.ready).toBe(false);
+  expect(result.blockers).toContain("题目内容尚未审核");
+});
+
+test("必要材料缺失或未审核时阻断", () => {
+  const content = math();
+  content.materials = [{ materialId: "material-1", versionId: "material-v1" }];
+  const missing = questionReadiness(readiness({ content }));
+  expect(missing.ready).toBe(false);
+  expect(missing.blockers).toContain("材料「material-1」缺失");
+
+  const pending = questionReadiness(readiness({ content, materialStatuses: { "material-v1": "pending" } }));
+  expect(pending.blockers).toContain("材料「material-1」尚未审核");
+
+  const approved = questionReadiness(readiness({ content, materialStatuses: { "material-v1": "approved" } }));
+  expect(approved.ready).toBe(true);
+});
+
+test("小问题干为空时阻断", () => {
+  const content = note();
+  content.subQuestions[0].prompt = [p("   ")];
+  const result = questionReadiness(readiness({ content }));
+  expect(result.ready).toBe(false);
+  expect(result.blockers).toContain("小问「(3)」缺少题干");
+});
+
+test("仅答案或评分待补时要求教师确认", () => {
+  for (const answerStatus of ["missing", "pending"] as const) {
+    const result = questionReadiness(readiness({ answerStatus }));
+    expect(result.ready).toBe(false);
+    expect(result.requiresAnswerConfirmation).toBe(true);
+    expect(result.blockers).toContain("答案或评分尚未齐全，需教师确认后出卷");
+  }
+});
+
+test("教师确认答案待补后通过并给出教师版提示", () => {
+  const result = questionReadiness(readiness({ answerStatus: "missing", confirmAnswerGap: true }));
+  expect(result.ready).toBe(true);
+  expect(result.requiresAnswerConfirmation).toBe(true);
+  expect(result.blockers).toEqual([]);
+  expect(result.notices).toContain("答案或评分尚未齐全，教师版将标注待补");
+});
+
+test("内容与材料均已审核且答案齐全时直接通过", () => {
+  const result = questionReadiness(readiness());
+  expect(result).toEqual({ ready: true, blockers: [], notices: [], requiresAnswerConfirmation: false });
 });
