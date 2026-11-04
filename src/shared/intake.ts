@@ -8,6 +8,7 @@ import {
   type QuestionBlock,
   type QuestionContent,
   type QuestionInline,
+  type ReferenceKind,
   type ReviewStatus,
   type SelectionRule,
   type SlotKind,
@@ -18,8 +19,17 @@ import {
 export type IntakeBlock =
   | { kind: "text"; text: string }
   | { kind: "formula"; latex: string }
-  | { kind: "image"; id: string; alt: string }
-  | { kind: "table"; rows: string[][] };
+  | { kind: "image"; id: string; alt: string; figureId?: string }
+  | { kind: "table"; rows: string[][] }
+  | { kind: "reference"; refKind: ReferenceKind; targetId: string; fallback: string };
+
+const referenceKinds = new Set<ReferenceKind>(["subQuestion", "material", "figure"]);
+/** 表单中的引用目标，供录题界面选择；label 为插入时写入的回退文字。 */
+export interface IntakeReferenceOption {
+  kind: ReferenceKind;
+  targetId: string;
+  label: string;
+}
 
 /** 作答位置；互换关系必须与同小问的其他空位互相引用。 */
 export interface IntakeSlot {
@@ -192,9 +202,20 @@ function intakeBlocks(blocks: IntakeBlock[], label: string, problems: string[]):
       else result.push({ type: "formula", latex: block.latex });
       continue;
     }
+    if (block.kind === "reference") {
+      const fallback = block.fallback.trim();
+      if (!referenceKinds.has(block.refKind)) problems.push(`${label}的引用类型无效`);
+      else if (!subIdPattern.test(block.targetId)) problems.push(`${label}的引用目标无效`);
+      else if (!fallback) problems.push(`${label}的引用缺少回退文字`);
+      else if (fallback.length > 2000) problems.push(`${label}的引用回退文字过长`);
+      else result.push({ type: "paragraph", runs: [{ type: "reference", kind: block.refKind, targetId: block.targetId, fallback }] });
+      continue;
+    }
     if (block.kind === "image") {
+      const figureId = block.figureId?.trim();
       if (!imageIdPattern.test(block.id)) problems.push(`${label}含无效图片`);
-      else result.push({ type: "image", id: block.id, alt: block.alt.trim() || "题图" });
+      else if (figureId !== undefined && figureId !== "" && !subIdPattern.test(figureId)) problems.push(`${label}的图标识无效`);
+      else result.push({ type: "image", id: block.id, alt: block.alt.trim() || "题图", ...(figureId ? { figureId } : {}) });
       continue;
     }
     const rows = block.rows.map((row) => row.map((cell) => cell.trim()));
@@ -207,14 +228,31 @@ function intakeBlocks(blocks: IntakeBlock[], label: string, problems: string[]):
   return result;
 }
 
+function paragraphToIntake(block: Extract<QuestionBlock, { type: "paragraph" }>): IntakeBlock[] {
+  const result: IntakeBlock[] = [];
+  let text = "";
+  const flush = () => {
+    if (text.trim()) result.push({ kind: "text", text });
+    text = "";
+  };
+  for (const run of block.runs) {
+    if (run.type === "reference") {
+      flush();
+      result.push({ kind: "reference", refKind: run.kind, targetId: run.targetId, fallback: run.fallback });
+      continue;
+    }
+    text += run.type === "text" ? run.text : `$${run.latex}$`;
+  }
+  flush();
+  return result;
+}
+
 function blocksToIntake(blocks: QuestionBlock[]): IntakeBlock[] {
   const result: IntakeBlock[] = [];
   for (const block of blocks) {
-    if (block.type === "paragraph") {
-      const text = block.runs.map((run) => run.type === "text" ? run.text : run.type === "formula" ? `$${run.latex}$` : run.fallback).join("");
-      if (text.trim()) result.push({ kind: "text", text });
-    } else if (block.type === "formula") result.push({ kind: "formula", latex: block.latex });
-    else if (block.type === "image") result.push({ kind: "image", id: block.id, alt: block.alt });
+    if (block.type === "paragraph") result.push(...paragraphToIntake(block));
+    else if (block.type === "formula") result.push({ kind: "formula", latex: block.latex });
+    else if (block.type === "image") result.push({ kind: "image", id: block.id, alt: block.alt, ...(block.figureId === undefined ? {} : { figureId: block.figureId }) });
     else result.push({ kind: "table", rows: block.rows.map((row) => [...row]) });
   }
   return result;
@@ -235,24 +273,21 @@ const blockHasReference = (block: QuestionBlock): boolean =>
   block.type === "paragraph" && block.runs.some((run) => run.type === "reference");
 const blocksHaveReference = (blocks: QuestionBlock[]): boolean => blocks.some(blockHasReference);
 
-/** 录题工作台只编辑自己可完整表达的内容；含引用或答案变体的题目先拒绝，避免保存时静默丢失。 */
+/** 录题工作台只编辑自己可完整表达的内容；选项引用或答案变体先拒绝，避免保存时静默丢失。 */
 function editabilityProblem(content: QuestionContent): string | null {
   for (const sub of content.subQuestions) {
-    if (blocksHaveReference(sub.prompt) || blocksHaveReference(sub.explanation)) return "该题含小问、材料或图引用，暂不能在录题工作台编辑";
     for (const option of sub.options) {
-      if (blocksHaveReference(option.content)) return "该题含小问、材料或图引用，暂不能在录题工作台编辑";
+      if (blocksHaveReference(option.content)) return "选项含引用，暂不能在录题工作台编辑";
       if (option.content.some((block) => block.type === "image" || block.type === "table")) return "选项含图片或表格，暂不能在录题工作台编辑";
     }
     for (const answer of sub.answers) {
-      if (blocksHaveReference(answer.blocks)) return "该题含小问、材料或图引用，暂不能在录题工作台编辑";
       if (answer.variants.length > 0) return "该题含答案变体，暂不能在录题工作台编辑";
     }
   }
-  if (blocksHaveReference(content.stem)) return "该题含小问、材料或图引用，暂不能在录题工作台编辑";
   return null;
 }
 
-/** 将题库内容回填为表单；不认识的引用结构直接拒绝，作答位置与空位答案完整回填。 */
+/** 将题库内容回填为表单；引用与作答位置完整回填为可编辑块。 */
 export function contentToForm(
   content: QuestionContent,
   classification: Classification | undefined,
@@ -394,6 +429,32 @@ export function buildContent(form: IntakeForm): IntakeBuildResult {
     }
     earlier.add(sub.id);
   });
+  const figureIds = new Set<string>();
+  const references: { kind: ReferenceKind; targetId: string; label: string }[] = [];
+  const scanBlocks = (blocks: QuestionBlock[], blockLabel: string) => {
+    for (const block of blocks) {
+      if (block.type === "image" && block.figureId !== undefined) {
+        if (figureIds.has(block.figureId)) problems.push(`${blockLabel}的图标识重复`);
+        else figureIds.add(block.figureId);
+      }
+      if (block.type !== "paragraph") continue;
+      for (const run of block.runs) {
+        if (run.type === "reference") references.push({ kind: run.kind, targetId: run.targetId, label: blockLabel });
+      }
+    }
+  };
+  scanBlocks(stem, "题干");
+  subQuestions.forEach((sub, index) => {
+    const subLabel = sub.originalLabel.trim() ? `第 ${sub.originalLabel.trim()} 小问` : `第 ${index + 1} 小问`;
+    scanBlocks(sub.prompt, `${subLabel}题干`);
+    scanBlocks(sub.explanation, `${subLabel}解析`);
+    for (const answer of sub.answers) scanBlocks(answer.blocks, `${subLabel}答案`);
+  });
+  for (const reference of references) {
+    if (reference.kind === "subQuestion" && !seenSubIds.has(reference.targetId)) problems.push(`${reference.label}引用了不存在的小问`);
+    else if (reference.kind === "material" && !materialIds.has(reference.targetId)) problems.push(`${reference.label}引用了不在本题材料列表中的材料`);
+    else if (reference.kind === "figure" && !figureIds.has(reference.targetId)) problems.push(`${reference.label}引用了不存在的图`);
+  }
   if (!hasContent(stem) && !subQuestions.some((sub) => hasContent(sub.prompt))) problems.push("题干或小问题干至少填写一项");
   for (const key of ["section", "originalNumber"] as const) {
     if (!form.source[key].trim()) problems.push(key === "section" ? "请填写卷内分部" : "请填写原题号");

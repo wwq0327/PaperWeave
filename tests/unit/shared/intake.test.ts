@@ -124,7 +124,7 @@ test("空题干、坏页码、未配对公式与悬空依赖给出可读提示",
   expect(buildContent(score).problems.join("；")).toContain("评分");
 });
 
-test("含引用或答案变体的题目拒绝在录题工作台编辑，避免静默丢失", () => {
+test("题干与小问引用可回填编辑；选项引用与答案变体仍拒绝", () => {
   const referenced: QuestionContent = {
     stem: [{ type: "paragraph", runs: [{ type: "reference", kind: "material", targetId: "material-a", fallback: "材料甲" }] }],
     subQuestions: [{ id: "sub-a", originalLabel: "(1)", prompt: [], explanation: [], options: [], slots: [], answers: [], scoring: [], originalScore: null, materialIds: [], dependsOn: [] }],
@@ -132,12 +132,117 @@ test("含引用或答案变体的题目拒绝在录题工作台编辑，避免�
     selection: { mode: "all" },
     source: { section: "全卷", pdfPage: 1, originalNumber: "1" },
   };
-  expect(contentToForm(referenced, classification).problem).toContain("引用");
+  const editable = contentToForm(referenced, classification);
+  expect(editable.problem).toBeUndefined();
+  expect(editable.form!.stem).toEqual([{ kind: "reference", refKind: "material", targetId: "material-a", fallback: "材料甲" }]);
+
+  const optionReference = structuredClone(referenced);
+  optionReference.subQuestions[0].options = [{ label: "A", content: [{ type: "paragraph", runs: [{ type: "reference", kind: "material", targetId: "material-a", fallback: "材料甲" }] }] }];
+  expect(contentToForm(optionReference, classification).problem).toContain("选项");
+
   const variant = structuredClone(referenced);
-  variant.stem = [];
-  variant.materials = [];
   variant.subQuestions[0].answers = [{ slotId: null, blocks: [], variants: ["另一种写法"] }];
   expect(contentToForm(variant, classification).problem).toContain("答案变体");
+});
+
+test("小问、材料与图引用及图标识在表单和题目内容间往返保持", () => {
+  const content: QuestionContent = {
+    stem: [{ type: "paragraph", runs: [
+      { type: "text", text: "提示：", style: "普通" },
+      { type: "reference", kind: "material", targetId: "material-a", fallback: "材料甲" },
+      { type: "text", text: "。", style: "普通" },
+    ] }],
+    subQuestions: [
+      {
+        id: "sub-a",
+        originalLabel: "(1)",
+        prompt: [
+          { type: "image", id: "a".repeat(64), alt: "示意图", figureId: "fig-a" },
+          { type: "paragraph", runs: [
+            { type: "text", text: "结合", style: "普通" },
+            { type: "reference", kind: "subQuestion", targetId: "sub-b", fallback: "下一问" },
+            { type: "text", text: "作答。", style: "普通" },
+          ] },
+        ],
+        explanation: [],
+        options: [],
+        slots: [],
+        answers: [{ slotId: null, blocks: [{ type: "paragraph", runs: [{ type: "reference", kind: "figure", targetId: "fig-a", fallback: "旧图" }] }], variants: [] }],
+        scoring: [],
+        originalScore: null,
+        materialIds: ["material-a"],
+        dependsOn: [],
+      },
+      {
+        id: "sub-b",
+        originalLabel: "(2)",
+        prompt: [],
+        explanation: [],
+        options: [],
+        slots: [],
+        answers: [],
+        scoring: [],
+        originalScore: null,
+        materialIds: [],
+        dependsOn: [],
+      },
+    ],
+    materials: [{ materialId: "material-a", versionId: "material-version-a" }],
+    selection: { mode: "all" },
+    source: { section: "全卷", pdfPage: 1, originalNumber: "1" },
+  };
+  const roundtrip = contentToForm(content, classification);
+  expect(roundtrip.problem).toBeUndefined();
+  const form = roundtrip.form!;
+  expect(form.stem).toEqual([
+    { kind: "text", text: "提示：" },
+    { kind: "reference", refKind: "material", targetId: "material-a", fallback: "材料甲" },
+    { kind: "text", text: "。" },
+  ]);
+  expect(form.subQuestions[0].prompt[0]).toEqual({ kind: "image", id: "a".repeat(64), alt: "示意图", figureId: "fig-a" });
+  expect(form.subQuestions[0].prompt[1]).toEqual({ kind: "text", text: "结合" });
+  expect(form.subQuestions[0].prompt[2]).toEqual({ kind: "reference", refKind: "subQuestion", targetId: "sub-b", fallback: "下一问" });
+  expect(form.subQuestions[0].answer).toEqual([{ kind: "reference", refKind: "figure", targetId: "fig-a", fallback: "旧图" }]);
+
+  const again = buildContent(form);
+  expect(again.problems).toEqual([]);
+  const built = again.content as QuestionContent;
+  expect(isQuestionContent(built)).toBe(true);
+  expect(built.subQuestions[0].prompt[0]).toEqual({ type: "image", id: "a".repeat(64), alt: "示意图", figureId: "fig-a" });
+  expect(built.subQuestions[0].prompt[2]).toEqual({ type: "paragraph", runs: [
+    { type: "reference", kind: "subQuestion", targetId: "sub-b", fallback: "下一问" },
+  ] });
+  expect(built.subQuestions[0].answers[0].blocks).toEqual([{ type: "paragraph", runs: [{ type: "reference", kind: "figure", targetId: "fig-a", fallback: "旧图" }] }]);
+  expect(built.stem).toContainEqual({ type: "paragraph", runs: [{ type: "reference", kind: "material", targetId: "material-a", fallback: "材料甲" }] });
+});
+
+test("引用目标缺失、类型无效、回退文字为空与图标识重复被拒绝", () => {
+  const missingSub = newIntakeForm(classification, "全卷");
+  missingSub.subQuestions[0].prompt = [{ kind: "reference", refKind: "subQuestion", targetId: "missing", fallback: "上一问" }];
+  expect(buildContent(missingSub).problems.join("；")).toContain("引用了不存在的小问");
+
+  const missingMaterial = newIntakeForm(classification, "全卷");
+  missingMaterial.subQuestions[0].prompt = [{ kind: "reference", refKind: "material", targetId: "material-a", fallback: "材料甲" }];
+  expect(buildContent(missingMaterial).problems.join("；")).toContain("引用了不在本题材料列表中的材料");
+
+  const missingFigure = newIntakeForm(classification, "全卷");
+  missingFigure.subQuestions[0].prompt = [{ kind: "reference", refKind: "figure", targetId: "fig-a", fallback: "图 1" }];
+  expect(buildContent(missingFigure).problems.join("；")).toContain("引用了不存在的图");
+
+  const badKind = newIntakeForm(classification, "全卷");
+  badKind.subQuestions[0].prompt = [{ kind: "reference", refKind: "unknown" as never, targetId: "sub-a", fallback: "引用" }];
+  expect(buildContent(badKind).problems.join("；")).toContain("引用类型无效");
+
+  const emptyFallback = newIntakeForm(classification, "全卷");
+  emptyFallback.subQuestions[0].prompt = [{ kind: "reference", refKind: "subQuestion", targetId: emptyFallback.subQuestions[0].id, fallback: " " }];
+  expect(buildContent(emptyFallback).problems.join("；")).toContain("引用缺少回退文字");
+
+  const duplicateFigure = newIntakeForm(classification, "全卷");
+  duplicateFigure.subQuestions[0].prompt = [
+    { kind: "image", id: "a".repeat(64), alt: "图一", figureId: "fig-a" },
+    { kind: "image", id: "b".repeat(64), alt: "图二", figureId: "fig-a" },
+  ];
+  expect(buildContent(duplicateFigure).problems.join("；")).toContain("图标识重复");
 });
 
 test("两个可互换作答位置、空位答案与评分点关联在表单和题目内容间往返保持", () => {
