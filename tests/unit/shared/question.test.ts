@@ -1,6 +1,18 @@
 import { expect, test } from "vitest";
-import { hasContent, isQuestionContent, questionContentProblem, questionReadiness, selectionScore, type ReadinessInput } from "../../../src/shared/question";
-import { exercise, math, note, paragraph as p } from "../fixtures/questions";
+import {
+  buildSearchText,
+  classificationProblem,
+  hasContent,
+  isClassification,
+  isQuestionContent,
+  questionContentProblem,
+  questionReadiness,
+  selectionDependencies,
+  selectionScore,
+  type Classification,
+  type ReadinessInput,
+} from "../../../src/shared/question";
+import { exercise, math, note, paragraph as p, readingGroup } from "../fixtures/questions";
 
 test("接受二选一习作、分项评分与依赖前问的自制结构", () => {
   for (const content of [exercise(), note(), math()]) {
@@ -145,4 +157,99 @@ test("教师确认答案待补后通过并给出教师版提示", () => {
 test("内容与材料均已审核且答案齐全时直接通过", () => {
   const result = questionReadiness(readiness());
   expect(result).toEqual({ ready: true, blockers: [], notices: [], requiresAnswerConfirmation: false });
+});
+
+const validClassification: Classification = {
+  stage: "小学",
+  subject: "语文",
+  grade: "三年级",
+  examType: "期中",
+  year: "2025-2026",
+  sourceName: "自编",
+  questionType: "阅读",
+  knowledgePoints: ["概括", "人物形象"],
+};
+
+test("接受完整分类并拒绝未知学段、重复知识点和未知字段", () => {
+  expect(classificationProblem(validClassification)).toBeNull();
+  expect(isClassification(validClassification)).toBe(true);
+  expect(isClassification({ ...validClassification, stage: "大学" })).toBe(false);
+  expect(isClassification({ ...validClassification, knowledgePoints: ["概括", "概括"] })).toBe(false);
+  expect(isClassification({ ...validClassification, knowledgePoints: [" "] })).toBe(false);
+  expect(isClassification({ ...validClassification, extra: true })).toBe(false);
+  expect(isClassification({ ...validClassification, subject: " " })).toBe(false);
+  expect(isClassification({ ...validClassification, grade: "" })).toBe(false);
+  expect(isClassification({ ...validClassification, knowledgePoints: ["词".repeat(101)] })).toBe(false);
+  expect(isClassification({ ...validClassification, sourceName: "来".repeat(201) })).toBe(false);
+  expect(isClassification({ ...validClassification, knowledgePoints: Array.from({ length: 31 }, (_, index) => `点${index}`) })).toBe(false);
+  expect(isClassification({ stage: "小学", subject: "语文", grade: "三年级", knowledgePoints: [] })).toBe(false);
+  expect(isClassification({ ...validClassification, examType: "", year: "", sourceName: "", questionType: "" })).toBe(true);
+});
+
+test("可搜索文本只含题组指令、小问题干与选项", () => {
+  const content = note();
+  content.stem = [p("题组指令文字")];
+  content.subQuestions[0].prompt = [
+    p("小问题干文字"),
+    p("合并  空白"),
+    { type: "formula", latex: "x^{2}" },
+    { type: "table", rows: [["表格单元"]] },
+    { type: "image", id: "a".repeat(64), alt: "示意图" },
+  ];
+  content.subQuestions[0].options = [{ label: "A", content: [p("选项内容文字")] }];
+  content.subQuestions[0].explanation = [p("解析文字")];
+  content.subQuestions[0].answers = [{ slotId: null, blocks: [p("答案文字")], variants: ["变体文字"] }];
+  content.subQuestions[0].scoring = [{ id: "s1", description: "评分说明文字", score: 5, slotIds: [] }];
+  const searchText = buildSearchText(content);
+  for (const expected of ["题组指令文字", "小问题干文字", "合并 空白", "x^{2}", "表格单元", "示意图", "A", "选项内容文字"]) {
+    expect(searchText).toContain(expected);
+  }
+  for (const forbidden of ["解析文字", "答案文字", "变体文字", "评分说明文字"]) {
+    expect(searchText).not.toContain(forbidden);
+  }
+
+  const long = note();
+  long.subQuestions[0].prompt = [p("长".repeat(20000)), p("文".repeat(20000))];
+  expect(buildSearchText(long).length).toBeLessThanOrEqual(20000);
+});
+
+test("传递前问按原顺序返回，直接前问单列", () => {
+  const deps = selectionDependencies(readingGroup(), "read-4");
+  expect(deps.subQuestionId).toBe("read-4");
+  expect(deps.directPrevious).toEqual(["read-3"]);
+  expect(deps.previous).toEqual(["read-1", "read-2", "read-3"]);
+});
+
+test("共享材料与组选答候选进入依赖结果", () => {
+  const reading = selectionDependencies(readingGroup(), "read-1");
+  expect(reading.materialIds).toEqual(["material-a"]);
+  expect(reading.groupCandidates).toEqual([]);
+  expect(reading.usesGroupStem).toBe(true);
+
+  const chosen = selectionDependencies(exercise(), "task-a");
+  expect(chosen.groupCandidates).toEqual(["task-a", "task-b"]);
+  expect(chosen.materialIds).toEqual([]);
+
+  const partial = exercise();
+  partial.selection = { mode: "choose", required: 1, candidates: ["task-a"] };
+  expect(selectionDependencies(partial, "task-b").groupCandidates).toEqual([]);
+});
+
+test("无题组指令、无材料、无前问的小问判定为独立可用", () => {
+  const content = note();
+  content.stem = [];
+  expect(selectionDependencies(content, "note-1")).toMatchObject({
+    directPrevious: [],
+    previous: [],
+    materialIds: [],
+    groupCandidates: [],
+    usesGroupStem: false,
+    independent: true,
+  });
+  expect(selectionDependencies(readingGroup(), "read-1").independent).toBe(false);
+  expect(selectionDependencies(readingGroup(), "read-4").independent).toBe(false);
+});
+
+test("不存在的小问标识被拒绝", () => {
+  expect(() => selectionDependencies(note(), "missing")).toThrow("小问不存在");
 });

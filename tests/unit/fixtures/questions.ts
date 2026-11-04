@@ -64,6 +64,28 @@ export function note(): QuestionContent {
   };
 }
 
+/** 阅读题组：四个小问依次依赖前问，共享一份材料。 */
+export function readingGroup(): QuestionContent {
+  const prompts = ["概括第一段的主要内容。", "分析第二段的人物心理。", "说明第三段的写作手法。", "结合全文探究标题含义。"];
+  return {
+    stem: [paragraph("阅读下面的材料，完成各题。")],
+    subQuestions: prompts.map((prompt, index) => ({
+      id: `read-${index + 1}`,
+      originalLabel: `(${index + 1})`,
+      prompt: [paragraph(prompt)],
+      explanation: [],
+      options: [],
+      slots: [],
+      answers: [],
+      scoring: [{ id: `read-score-${index + 1}`, description: "回答完整", score: 3, slotIds: [] }],
+      dependsOn: index === 0 ? [] : [`read-${index}`],
+    })),
+    materials: [{ materialId: "material-a", versionId: "material-a-v1" }],
+    selection: { mode: "all" },
+    source: { section: "语文·阅读", pdfPage: 6, originalNumber: "8" },
+  };
+}
+
 /** 数学综合题：小问 (2) 依赖前问 (1)。 */
 export function math(): QuestionContent {
   return {

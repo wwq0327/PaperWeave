@@ -56,6 +56,45 @@ export interface QuestionContent {
   source: SourcePosition;
 }
 
+export type Stage = "小学" | "初中" | "高中";
+
+export interface Classification {
+  stage: Stage;
+  subject: string;
+  grade: string;
+  examType: string;
+  year: string;
+  sourceName: string;
+  questionType: string;
+  knowledgePoints: string[];
+}
+
+const classificationKeys = ["stage", "subject", "grade", "examType", "year", "sourceName", "questionType", "knowledgePoints"];
+const stages = new Set(["小学", "初中", "高中"]);
+
+export function classificationProblem(value: unknown): string | null {
+  if (!object(value) || !keys(value, classificationKeys)) return "分类结构无效";
+  if (classificationKeys.some((key) => !(key in value))) return "分类结构无效";
+  if (typeof value.stage !== "string" || !stages.has(value.stage)) return "学段无效";
+  if (!text(value.subject, 200) || !value.subject.trim()) return "学科无效";
+  if (!text(value.grade, 200) || !value.grade.trim()) return "年级无效";
+  for (const key of ["examType", "year", "sourceName", "questionType"]) {
+    if (!text(value[key], 200)) return "分类文本无效";
+  }
+  if (!Array.isArray(value.knowledgePoints) || value.knowledgePoints.length > 30) return "知识点数量无效";
+  const points = new Set<string>();
+  for (const point of value.knowledgePoints) {
+    if (typeof point !== "string" || point.trim() === "" || point.length > 100) return "知识点无效";
+    if (points.has(point)) return "知识点重复";
+    points.add(point);
+  }
+  return null;
+}
+
+export function isClassification(value: unknown): value is Classification {
+  return classificationProblem(value) === null;
+}
+
 const object = (x: unknown): x is Record<string, unknown> => typeof x === "object" && x !== null && !Array.isArray(x);
 const keys = (x: Record<string, unknown>, allowed: string[]) => Object.keys(x).every((key) => allowed.includes(key));
 const id = (x: unknown): x is string => typeof x === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(x);
@@ -170,6 +209,59 @@ export function hasContent(blocks: Block[]): boolean {
     if (block.type === "table") return block.rows.some((row) => row.some((cell) => cell.trim() !== ""));
     return false;
   });
+}
+
+function blockText(blocks: Block[]): string {
+  return blocks.map((block) => {
+    if (block.type === "paragraph") return block.runs.map((run) => run.type === "text" ? run.text : run.latex).join("");
+    if (block.type === "formula") return block.latex;
+    if (block.type === "image") return block.alt;
+    return block.rows.map((row) => row.join(" ")).join(" ");
+  }).join(" ");
+}
+
+/** 只收题组指令、小问题干与选项，答案、解析、评分点和材料正文不进检索。 */
+export function buildSearchText(content: QuestionContent): string {
+  const parts = [blockText(content.stem)];
+  for (const sub of content.subQuestions) {
+    parts.push(blockText(sub.prompt));
+    for (const option of sub.options) parts.push(option.label, blockText(option.content));
+  }
+  return parts.join(" ").replace(/\s+/g, " ").trim().slice(0, 20000);
+}
+
+export interface SelectionDependencies {
+  subQuestionId: string;
+  directPrevious: string[];
+  previous: string[];
+  materialIds: string[];
+  groupCandidates: string[];
+  usesGroupStem: boolean;
+  independent: boolean;
+}
+
+/** 选题时提示小问连带依赖：直接/传递前问、共享材料、组选答候选与题组指令。 */
+export function selectionDependencies(content: QuestionContent, subQuestionId: string): SelectionDependencies {
+  const sub = content.subQuestions.find((item) => item.id === subQuestionId);
+  if (!sub) throw new Error("小问不存在");
+  const directPrevious = [...new Set(sub.dependsOn)];
+  const closure = new Set<string>();
+  const stack = [...directPrevious];
+  while (stack.length > 0) {
+    const current = stack.pop() as string;
+    if (closure.has(current)) continue;
+    closure.add(current);
+    const source = content.subQuestions.find((item) => item.id === current);
+    if (source) stack.push(...source.dependsOn);
+  }
+  const previous = content.subQuestions.filter((item) => closure.has(item.id)).map((item) => item.id);
+  const materialIds = [...new Set(content.materials.map((ref) => ref.materialId))];
+  const groupCandidates = content.selection.mode === "choose" && content.selection.candidates.includes(subQuestionId)
+    ? [...content.selection.candidates]
+    : [];
+  const usesGroupStem = hasContent(content.stem);
+  const independent = !usesGroupStem && previous.length === 0 && materialIds.length === 0 && groupCandidates.length === 0;
+  return { subQuestionId, directPrevious, previous, materialIds, groupCandidates, usesGroupStem, independent };
 }
 
 export interface ReadinessInput {

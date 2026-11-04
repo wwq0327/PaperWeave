@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, test } from "vitest";
 import { Database } from "../../../src/main/database";
 import { QuestionBank } from "../../../src/main/question-bank";
+import type { Classification } from "../../../src/shared/question";
 import { math, note, paragraph } from "../fixtures/questions";
 
 const directories: string[] = [];
@@ -212,4 +213,166 @@ test("就绪检查接入材料状态：材料未审核阻断，确认答案待�
   const confirmed = bank.checkReady(gapQuestion.id, { confirmAnswerGap: true });
   expect(confirmed.ready).toBe(true);
   expect(confirmed.notices.length).toBeGreaterThan(0);
+});
+
+const classification = {
+  stage: "小学",
+  subject: "语文",
+  grade: "三年级",
+  examType: "期中",
+  year: "2025-2026",
+  sourceName: "自编",
+  questionType: "阅读",
+  knowledgePoints: ["概括", "人物形象"],
+} satisfies Classification;
+
+test("创建题目时写入分类，读取一致；未提供分类时返回 undefined", () => {
+  const { bank } = open();
+  const categorized = bank.createQuestion(note(), classification);
+  expect(bank.getQuestionClassification(categorized.questionId)).toEqual(classification);
+  const plain = bank.createQuestion(note());
+  expect(bank.getQuestionClassification(plain.questionId)).toBeUndefined();
+  expect(bank.getQuestionClassification("missing")).toBeUndefined();
+});
+
+test("修改分类不生成新版本，也不改变内容审核状态", () => {
+  const { bank } = open();
+  const created = bank.createQuestion(note(), classification);
+  bank.setContentStatus(created.id, "pending");
+  bank.setContentStatus(created.id, "approved");
+  const updated = { ...classification, examType: "期末", knowledgePoints: ["概括"] };
+  expect(bank.setClassification(created.questionId, updated)).toEqual(updated);
+  const latest = bank.getLatestQuestionVersion(created.questionId);
+  expect(latest?.id).toBe(created.id);
+  expect(latest?.version).toBe(1);
+  expect(latest?.contentStatus).toBe("approved");
+  expect(bank.getQuestionClassification(created.questionId)).toEqual(updated);
+});
+
+test("修改分类时知识点整体替换", () => {
+  const { bank } = open();
+  const created = bank.createQuestion(note(), classification);
+  bank.setClassification(created.questionId, { ...classification, knowledgePoints: ["分析"] });
+  expect(bank.getQuestionClassification(created.questionId)?.knowledgePoints).toEqual(["分析"]);
+  bank.setClassification(created.questionId, { ...classification, knowledgePoints: [] });
+  expect(bank.getQuestionClassification(created.questionId)?.knowledgePoints).toEqual([]);
+});
+
+test("非法分类被拒绝且不留下部分更新", () => {
+  const { bank, path } = open();
+  const created = bank.createQuestion(note(), classification);
+  expect(() => bank.setClassification(created.questionId, { ...classification, stage: "大学" })).toThrow("学段无效");
+  expect(() => bank.setClassification(created.questionId, { ...classification, knowledgePoints: ["概括", "概括"] })).toThrow();
+  expect(bank.getQuestionClassification(created.questionId)).toEqual(classification);
+  expect(() => bank.setClassification("missing", classification)).toThrow("题目不存在");
+  expect(() => bank.createQuestion(note(), { ...classification, stage: "大学" })).toThrow("学段无效");
+
+  const raw = new DatabaseSync(path);
+  expect((raw.prepare("SELECT count(*) AS count FROM questions").get() as { count: number }).count).toBe(1);
+  expect((raw.prepare("SELECT count(*) AS count FROM question_knowledge_points").get() as { count: number }).count).toBe(2);
+  raw.close();
+});
+
+test("两项以上筛选条件命中目标题，无结果返回空列表", () => {
+  const { bank } = open();
+  const primary = bank.createQuestion(note(), classification);
+  const secondary = bank.createQuestion(note(), {
+    ...classification,
+    stage: "初中",
+    subject: "数学",
+    grade: "七年级",
+    knowledgePoints: ["方程"],
+  });
+  expect(bank.searchQuestions({ stage: "小学", subject: "语文" }).map((item) => item.questionId)).toEqual([primary.questionId]);
+  expect(bank.searchQuestions({ subject: "数学", knowledgePoint: "方程" }).map((item) => item.questionId)).toEqual([secondary.questionId]);
+  expect(bank.searchQuestions({ stage: "初中", subject: "语文" })).toEqual([]);
+  expect(bank.searchQuestions({ knowledgePoint: "方程", questionType: "写作" })).toEqual([]);
+});
+
+test("关键词只命中题干与选项，不命中答案、解析或材料正文", () => {
+  const { bank } = open();
+  const material = bank.createMaterial({ title: "材料", content: [paragraph("材料关键词")], source: "自制" });
+  const content = note();
+  content.stem = [paragraph("题组指令关键词")];
+  content.subQuestions[0].prompt = [paragraph("题干关键词")];
+  content.subQuestions[0].options = [{ label: "A", content: [paragraph("选项关键词")] }];
+  content.subQuestions[0].explanation = [paragraph("解析关键词")];
+  content.subQuestions[0].answers = [{ slotId: null, blocks: [paragraph("答案关键词")], variants: ["变体关键词"] }];
+  content.subQuestions[0].scoring = [{ id: "s1", description: "评分关键词", score: 5, slotIds: [] }];
+  content.materials = [{ materialId: material.materialId, versionId: material.id }];
+  bank.createQuestion(content);
+  const hits = (keyword: string) => bank.searchQuestions({ keyword }).length;
+  expect(hits("题干关键词")).toBe(1);
+  expect(hits("题组指令关键词")).toBe(1);
+  expect(hits("选项关键词")).toBe(1);
+  for (const forbidden of ["解析关键词", "答案关键词", "变体关键词", "评分关键词", "材料关键词"]) expect(hits(forbidden)).toBe(0);
+});
+
+test("审核状态按最新版本过滤，历史版本不误命中", () => {
+  const { bank } = open();
+  const created = bank.createQuestion(note());
+  bank.setContentStatus(created.id, "pending");
+  bank.setContentStatus(created.id, "approved");
+  bank.setAnswerStatus(created.id, "pending");
+  bank.setAnswerStatus(created.id, "approved");
+  const next = bank.saveQuestionVersion(created.questionId, note());
+  expect(next.contentStatus).toBe("pending");
+  expect(next.answerStatus).toBe("pending");
+  expect(bank.searchQuestions({ contentStatus: "approved" })).toEqual([]);
+  expect(bank.searchQuestions({ contentStatus: "pending" }).map((item) => item.questionId)).toEqual([created.questionId]);
+  expect(bank.searchQuestions({ answerStatus: "approved" })).toEqual([]);
+  expect(bank.searchQuestions({ answerStatus: "pending" }).map((item) => item.questionId)).toEqual([created.questionId]);
+});
+
+test("分类更新后按新分类可检索到，旧分类不再命中", () => {
+  const { bank } = open();
+  const created = bank.createQuestion(note(), classification);
+  expect(bank.searchQuestions({ subject: "语文" }).map((item) => item.questionId)).toEqual([created.questionId]);
+  bank.setClassification(created.questionId, { ...classification, subject: "数学", knowledgePoints: ["计算"] });
+  expect(bank.searchQuestions({ subject: "语文" })).toEqual([]);
+  expect(bank.searchQuestions({ subject: "数学" }).map((item) => item.questionId)).toEqual([created.questionId]);
+  expect(bank.searchQuestions({ knowledgePoint: "概括" })).toEqual([]);
+  expect(bank.searchQuestions({ knowledgePoint: "计算" }).map((item) => item.questionId)).toEqual([created.questionId]);
+});
+
+test("非法筛选条件被拒绝", () => {
+  const { bank } = open();
+  bank.createQuestion(note());
+  expect(() => bank.searchQuestions({ extra: true })).toThrow("未知字段");
+  for (const limit of [0, 201, 1.5, "10"]) expect(() => bank.searchQuestions({ limit })).toThrow("检索数量无效");
+  expect(() => bank.searchQuestions({ contentStatus: "unknown" })).toThrow("检索内容状态无效");
+  expect(() => bank.searchQuestions({ answerStatus: "unknown" })).toThrow("检索答案状态无效");
+  expect(() => bank.searchQuestions({ stage: "大学" })).toThrow("检索学段无效");
+  expect(() => bank.searchQuestions({ keyword: "长".repeat(201) })).toThrow("检索条件「keyword」无效");
+  expect(() => bank.searchQuestions({ knowledgePoint: "长".repeat(201) })).toThrow("检索条件「knowledgePoint」无效");
+  expect(bank.searchQuestions()).toHaveLength(1);
+});
+
+test("结果包含题干预览、来源、材料标识与最新版本状态", () => {
+  const { bank } = open();
+  const material = approvedMaterial(bank);
+  const content = withMaterial(material);
+  content.source = { section: "语文·阅读", pdfPage: 5, originalNumber: "12" };
+  const question = bank.createQuestion(content, classification);
+  bank.setContentStatus(question.id, "pending");
+  bank.setContentStatus(question.id, "approved");
+  bank.setAnswerStatus(question.id, "pending");
+  bank.setAnswerStatus(question.id, "approved");
+
+  const results = bank.searchQuestions({ keyword: "留言条" });
+  expect(results).toHaveLength(1);
+  expect(results[0]).toMatchObject({
+    questionId: question.questionId,
+    versionId: question.id,
+    version: 1,
+    contentStatus: "approved",
+    answerStatus: "approved",
+    classification,
+    source: content.source,
+    materialIds: [material.materialId],
+  });
+  expect(results[0].preview).toContain("根据情境写一张留言条");
+  expect(results[0].preview.length).toBeLessThanOrEqual(120);
+  expect(results[0].preview).not.toContain("示例答案");
+  expect(bank.searchQuestions({ limit: 1 })).toHaveLength(1);
 });
