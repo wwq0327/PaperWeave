@@ -1,13 +1,16 @@
 import { DatabaseSync } from "node:sqlite";
+import { createMigrationSnapshot } from "./migration-snapshot";
 
 const DATA_VERSION = 7;
 
 /** 主进程持有的唯一数据库写入口；不向渲染进程暴露 SQL。 */
 export class Database {
   private readonly db: DatabaseSync;
+  private readonly path: string;
   private maintenanceReason: string | null = null;
 
   constructor(path: string) {
+    this.path = path;
     this.db = new DatabaseSync(path);
     this.db.exec("PRAGMA foreign_keys = ON");
     try {
@@ -19,6 +22,16 @@ export class Database {
   }
 
   private migrate(): void {
+    const before = this.dataVersion();
+    if (before > DATA_VERSION) throw new Error(`不支持的数据版本：${before}`);
+    let snapshot: string | undefined;
+    if (before > 0 && before < DATA_VERSION) {
+      try {
+        snapshot = createMigrationSnapshot(this.path, before);
+      } catch (error) {
+        throw new Error(`无法创建迁移前快照，已停止升级：${String(error)}`);
+      }
+    }
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const { user_version: version } = this.db.prepare("PRAGMA user_version").get() as { user_version: number };
@@ -223,6 +236,7 @@ export class Database {
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
+      if (snapshot) throw new Error(`数据迁移失败，原库保持在版本 ${before}；迁移前快照：${snapshot}\n${String(error)}`);
       throw error;
     }
   }

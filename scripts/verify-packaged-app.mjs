@@ -24,7 +24,7 @@ const port = 9300 + Math.floor(Math.random() * 500);
 const child = spawn(path.resolve(APP), [
   `--remote-debugging-port=${port}`,
   `--user-data-dir=${dataDir}`,
-], { stdio: ["ignore", "ignore", "pipe"], env: { ...process.env, PAPERWEAVE_TEST: "1" } });
+], { stdio: ["ignore", "ignore", "pipe"], env: { ...process.env, PAPERWEAVE_TEST: "1", PAPERWEAVE_AI_FAKE: "ok" } });
 let stderr = "";
 child.stderr.on("data", (d) => (stderr += d.toString()));
 
@@ -105,6 +105,16 @@ try {
 
   const config = await evaluate(`window.paperweave.getAiConfig()`);
   ok("AI 配置默认值且无密钥", config && config.hasKey === false && config.baseUrl === "https://api.anthropic.com", JSON.stringify(config));
+
+  const fakeCheck = await evaluate(`(async () => {
+    try {
+      await window.paperweave.generateAiDraft("packaged-fake-check-1234", { mode: "text", text: "安装包固定响应检查", pages: [1] });
+      return "resolved";
+    } catch (error) {
+      return String(error);
+    }
+  })()`);
+  ok("打包应用不启用固定响应后门", typeof fakeCheck === "string" && fakeCheck.includes("尚未配置模型密钥") && fakeCheck !== "resolved", fakeCheck);
 
   const versions = await evaluate(`window.paperweave.getRuntimeVersions()`);
   ok("运行信息只读可用", versions && typeof versions.electron === "string" && versions.electron.length > 0);
