@@ -1,6 +1,6 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, test } from "vitest";
 import { Database } from "../../../src/main/database";
@@ -222,4 +222,58 @@ test("拒绝更高版本或未识别的现有数据库，不改动原数据", ()
   const reopened = new Database(path);
   expect(reopened.getDraft()).toBe("草稿");
   reopened.close();
+});
+
+test("升级前生成旧版本快照，迁移成功后仍可打开旧库", () => {
+  const path = dbPath();
+  const old = new DatabaseSync(path);
+  old.exec("CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT; INSERT INTO app_settings VALUES ('标题', '旧值'); PRAGMA user_version = 1");
+  old.close();
+  const db = new Database(path);
+  expect(db.getSetting("标题")).toBe("旧值");
+  db.close();
+
+  const directory = join(dirname(path), ".migration-backups");
+  const snapshots = readdirSync(directory);
+  expect(snapshots).toHaveLength(1);
+  expect(snapshots[0]).toMatch(/^paperweave-v1-.+\.sqlite$/);
+  const snapshot = new DatabaseSync(join(directory, snapshots[0]));
+  expect(snapshot.prepare("PRAGMA user_version").get()?.user_version).toBe(1);
+  expect(snapshot.prepare("SELECT value FROM app_settings WHERE key = '标题'").get()?.value).toBe("旧值");
+  const tables = snapshot.prepare("SELECT name FROM sqlite_schema WHERE name = 'questions'").all();
+  expect(tables).toHaveLength(0);
+  snapshot.close();
+});
+
+test("迁移失败时保留旧库与迁移前快照，并在错误中给出快照路径", () => {
+  const path = dbPath();
+  v4Database(path, ["不是 JSON"]);
+  let message = "";
+  try {
+    new Database(path);
+  } catch (error) {
+    message = String(error);
+  }
+  expect(message).toContain("迁移前快照");
+
+  const directory = join(dirname(path), ".migration-backups");
+  const snapshots = readdirSync(directory);
+  expect(snapshots).toHaveLength(1);
+  expect(message).toContain(join(directory, snapshots[0]));
+  const snapshot = new DatabaseSync(join(directory, snapshots[0]));
+  expect(snapshot.prepare("PRAGMA user_version").get()?.user_version).toBe(4);
+  expect(snapshot.prepare("SELECT content FROM question_versions WHERE id = 'v1'").get()).toEqual({ content: "不是 JSON" });
+  snapshot.close();
+
+  const original = new DatabaseSync(path);
+  expect(original.prepare("PRAGMA user_version").get()?.user_version).toBe(4);
+  expect(original.prepare("SELECT content FROM question_versions WHERE id = 'v1'").get()).toEqual({ content: "不是 JSON" });
+  original.close();
+});
+
+test("新建库与已是最新版本不生成迁移快照", () => {
+  const path = dbPath();
+  new Database(path).close();
+  new Database(path).close();
+  expect(existsSync(join(dirname(path), ".migration-backups"))).toBe(false);
 });
