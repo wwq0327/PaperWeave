@@ -109,6 +109,17 @@ test("导入原卷、裁图录题、保存草稿并在重开后继续编辑与�
     await scoringGroup.getByLabel("说明").fill("答案正确");
     await scoringGroup.getByLabel("分值").fill("4");
 
+    const slotGroup = page.getByRole("group", { name: "小问 1 作答位置" });
+    await slotGroup.getByRole("button", { name: "添加空位" }).click();
+    await page.getByLabel("空位 1 标签").fill("作答一");
+    await slotGroup.getByRole("button", { name: "添加空位" }).click();
+    await page.getByLabel("空位 2 标签").fill("作答二");
+    await page.getByLabel("空位 1 与空位 2 互换").check();
+    const firstSlotAnswer = page.getByRole("group", { name: "小问 1 空位 1 答案" });
+    await firstSlotAnswer.getByRole("button", { name: "添加文字" }).click();
+    await page.getByLabel("小问 1 空位 1 答案 文字 1", { exact: true }).fill("甲");
+    await scoringGroup.getByLabel("评分点 1 关联空位 1").check();
+
     const promptGroup = page.getByRole("group", { name: "小问 1 题干" });
     await promptGroup.getByRole("button", { name: "插入裁图" }).click();
     await expect(page.getByText("拖动页面选区，裁图将插入：", { exact: false })).toBeVisible();
@@ -143,6 +154,11 @@ test("导入原卷、裁图录题、保存草稿并在重开后继续编辑与�
     await expect(reopenedGroup.locator("img")).toBeVisible();
     await expect(page.getByRole("group", { name: "小问 1 评分点" }).getByLabel("说明")).toHaveValue("答案正确");
     await expect(page.getByRole("group", { name: "小问 1 评分点" }).getByLabel("分值")).toHaveValue("4");
+    await expect(page.getByLabel("空位 1 标签")).toHaveValue("作答一");
+    await expect(page.getByLabel("空位 2 标签")).toHaveValue("作答二");
+    await expect(page.getByLabel("空位 1 与空位 2 互换")).toBeChecked();
+    await expect(page.getByLabel("小问 1 空位 1 答案 文字 1", { exact: true })).toHaveValue("甲");
+    await expect(page.getByRole("group", { name: "小问 1 评分点" }).getByLabel("评分点 1 关联空位 1")).toBeChecked();
   } finally {
     await closeApp(app);
     rmSync(dir, { recursive: true, force: true });

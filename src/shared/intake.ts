@@ -2,6 +2,7 @@ import {
   classificationProblem,
   hasContent,
   type AnswerKey,
+  type AnswerSlot,
   type AnswerStatus,
   type Classification,
   type QuestionBlock,
@@ -9,6 +10,7 @@ import {
   type QuestionInline,
   type ReviewStatus,
   type SelectionRule,
+  type SlotKind,
   type SourcePosition,
 } from "./question";
 
@@ -19,9 +21,24 @@ export type IntakeBlock =
   | { kind: "image"; id: string; alt: string }
   | { kind: "table"; rows: string[][] };
 
+/** 作答位置；互换关系必须与同小问的其他空位互相引用。 */
+export interface IntakeSlot {
+  id: string;
+  label: string;
+  kind: SlotKind;
+  required: boolean;
+  interchangeableWith: string[];
+}
+
+export interface IntakeSlotAnswer {
+  slotId: string;
+  blocks: IntakeBlock[];
+}
+
 export interface IntakeScoringPoint {
   description: string;
   score: string;
+  slotIds: string[];
 }
 
 export interface IntakeSubQuestion {
@@ -29,10 +46,13 @@ export interface IntakeSubQuestion {
   id: string;
   originalLabel: string;
   prompt: IntakeBlock[];
+  /** 未关联具体作答位置的答案。 */
   answer: IntakeBlock[];
+  slotAnswers: IntakeSlotAnswer[];
   explanation: IntakeBlock[];
   options: string;
   scoring: IntakeScoringPoint[];
+  slots: IntakeSlot[];
   originalScore: string;
   materialIds: string[];
   dependsOn: string[];
@@ -106,9 +126,11 @@ export function blankSubQuestion(): IntakeSubQuestion {
     originalLabel: "(1)",
     prompt: [blankBlock()],
     answer: [],
+    slotAnswers: [],
     explanation: [],
     options: "",
     scoring: [],
+    slots: [],
     originalScore: "",
     materialIds: [],
     dependsOn: [],
@@ -213,7 +235,7 @@ const blockHasReference = (block: QuestionBlock): boolean =>
   block.type === "paragraph" && block.runs.some((run) => run.type === "reference");
 const blocksHaveReference = (blocks: QuestionBlock[]): boolean => blocks.some(blockHasReference);
 
-/** 录题工作台只编辑自己可完整表达的内容；含引用、作答位置或答案变体的题目先拒绝，避免保存时静默丢失。 */
+/** 录题工作台只编辑自己可完整表达的内容；含引用或答案变体的题目先拒绝，避免保存时静默丢失。 */
 function editabilityProblem(content: QuestionContent): string | null {
   for (const sub of content.subQuestions) {
     if (blocksHaveReference(sub.prompt) || blocksHaveReference(sub.explanation)) return "该题含小问、材料或图引用，暂不能在录题工作台编辑";
@@ -223,16 +245,14 @@ function editabilityProblem(content: QuestionContent): string | null {
     }
     for (const answer of sub.answers) {
       if (blocksHaveReference(answer.blocks)) return "该题含小问、材料或图引用，暂不能在录题工作台编辑";
-      if (answer.slotId !== null || answer.variants.length > 0) return "该题含作答位置关联或答案变体，暂不能在录题工作台编辑";
+      if (answer.variants.length > 0) return "该题含答案变体，暂不能在录题工作台编辑";
     }
-    if (sub.slots.length > 0) return "该题含作答位置关联，暂不能在录题工作台编辑";
-    if (sub.scoring.some((point) => point.slotIds.length > 0)) return "该题含作答位置关联，暂不能在录题工作台编辑";
   }
   if (blocksHaveReference(content.stem)) return "该题含小问、材料或图引用，暂不能在录题工作台编辑";
   return null;
 }
 
-/** 将题库内容回填为表单；不认识的引用与作答位置结构直接拒绝。 */
+/** 将题库内容回填为表单；不认识的引用结构直接拒绝，作答位置与空位答案完整回填。 */
 export function contentToForm(
   content: QuestionContent,
   classification: Classification | undefined,
@@ -249,10 +269,12 @@ export function contentToForm(
         id: sub.id,
         originalLabel: sub.originalLabel,
         prompt: blocksToIntake(sub.prompt),
-        answer: sub.answers.flatMap((answer) => blocksToIntake(answer.blocks)),
+        answer: sub.answers.filter((answer) => answer.slotId === null).flatMap((answer) => blocksToIntake(answer.blocks)),
+        slotAnswers: sub.answers.flatMap((answer) => answer.slotId === null ? [] : [{ slotId: answer.slotId, blocks: blocksToIntake(answer.blocks) }]),
         explanation: blocksToIntake(sub.explanation),
         options: sub.options.map((option) => blocksToText(option.content)).join("\n"),
-        scoring: sub.scoring.map((point) => ({ description: point.description, score: String(point.score) })),
+        scoring: sub.scoring.map((point) => ({ description: point.description, score: String(point.score), slotIds: [...point.slotIds] })),
+        slots: sub.slots.map((slot) => ({ ...slot, interchangeableWith: [...slot.interchangeableWith] })),
         originalScore: sub.originalScore === null ? "" : String(sub.originalScore),
         materialIds: [...sub.materialIds],
         dependsOn: [...sub.dependsOn],
@@ -286,6 +308,43 @@ export function buildContent(form: IntakeForm): IntakeBuildResult {
     const prompt = intakeBlocks(sub.prompt, `${label}题干`, problems);
     const explanation = intakeBlocks(sub.explanation, `${label}解析`, problems);
     const answer = intakeBlocks(sub.answer, `${label}答案`, problems);
+    const slots: AnswerSlot[] = [];
+    const slotIds = new Set<string>();
+    for (const slot of sub.slots) {
+      const slotLabel = `${label}的作答位置`;
+      if (!subIdPattern.test(slot.id)) problems.push(`${slotLabel}标识无效`);
+      else if (slotIds.has(slot.id)) problems.push(`${slotLabel}标识重复`);
+      const slotText = slot.label.trim();
+      if (!slotText) problems.push(`${slotLabel}缺少标签`);
+      else if (slotText.length > 200) problems.push(`${slotLabel}标签过长`);
+      if (slot.kind !== "text" && slot.kind !== "choice" && slot.kind !== "blank") problems.push(`${slotLabel}类型无效`);
+      if (typeof slot.required !== "boolean") problems.push(`${slotLabel}必答标记无效`);
+      if (slotIds.has(slot.id)) continue;
+      slotIds.add(slot.id);
+      slots.push({ id: slot.id, label: slotText, kind: slot.kind, required: slot.required, interchangeableWith: [] });
+    }
+    sub.slots.forEach((slot) => {
+      const targets: string[] = [];
+      for (const targetId of new Set(slot.interchangeableWith)) {
+        if (!slotIds.has(targetId)) { problems.push(`${label}的作答位置互换关系引用了不存在的空`); continue; }
+        if (targetId === slot.id) { problems.push(`${label}的作答位置不能与自身互换`); continue; }
+        const other = sub.slots.find((entry) => entry.id === targetId);
+        if (other === undefined || !other.interchangeableWith.includes(slot.id)) { problems.push(`${label}的作答位置互换关系必须互为引用`); continue; }
+        targets.push(targetId);
+      }
+      const built = slots.find((entry) => entry.id === slot.id);
+      if (built !== undefined) built.interchangeableWith = targets;
+    });
+    const answers: AnswerKey[] = [];
+    if (answer.length > 0) answers.push({ slotId: null, blocks: answer, variants: [] });
+    const answeredSlots = new Set<string>();
+    for (const entry of sub.slotAnswers) {
+      if (!slotIds.has(entry.slotId)) { problems.push(`${label}的答案引用了不存在的作答位置`); continue; }
+      if (answeredSlots.has(entry.slotId)) { problems.push(`${label}的同一作答位置只能有一份答案`); continue; }
+      answeredSlots.add(entry.slotId);
+      const blocks = intakeBlocks(entry.blocks, `${label}空位答案`, problems);
+      if (blocks.length > 0) answers.push({ slotId: entry.slotId, blocks, variants: [] });
+    }
     const lines = sub.options.split("\n").map((line) => line.trim()).filter(Boolean);
     if (lines.length > 26) problems.push(`${label}的选项超过 26 个`);
     const options = lines.map((line, optionIndex) => ({
@@ -300,7 +359,9 @@ export function buildContent(form: IntakeForm): IntakeBuildResult {
       if (!description) { problems.push(`${label}的评分点缺少说明`); continue; }
       const score = Number(scoreText);
       if (scoreText === "" || !Number.isFinite(score) || score < 0 || score > 1000) { problems.push(`${label}的评分分值无效`); continue; }
-      scoring.push({ id: newId(), description, score, slotIds: [] as string[] });
+      const pointSlotIds = [...new Set(point.slotIds)];
+      if (pointSlotIds.some((slotId) => !slotIds.has(slotId))) { problems.push(`${label}的评分点引用了不存在的作答位置`); continue; }
+      scoring.push({ id: newId(), description, score, slotIds: pointSlotIds });
     }
     let originalScore: number | null = null;
     if (sub.originalScore.trim() !== "") {
@@ -317,8 +378,8 @@ export function buildContent(form: IntakeForm): IntakeBuildResult {
       prompt,
       explanation,
       options,
-      slots: [],
-      answers: answer.length > 0 ? [{ slotId: null, blocks: answer, variants: [] }] as AnswerKey[] : [],
+      slots,
+      answers,
       scoring,
       originalScore,
       materialIds: [...new Set(sub.materialIds)],

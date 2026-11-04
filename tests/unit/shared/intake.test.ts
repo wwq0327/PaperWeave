@@ -28,8 +28,8 @@ function form() {
   sub.explanation = [{ kind: "text", text: "移项后开方。" }];
   sub.originalScore = "5";
   sub.scoring = [
-    { description: "列式正确", score: "2" },
-    { description: "求得结果", score: "3" },
+    { description: "列式正确", score: "2", slotIds: [] },
+    { description: "求得结果", score: "3", slotIds: [] },
   ];
   value.selection = { mode: "all" };
   return value;
@@ -120,11 +120,11 @@ test("空题干、坏页码、未配对公式与悬空依赖给出可读提示",
   expect(buildContent(dependency).problems.join("；")).toContain("依赖");
 
   const score = form();
-  score.subQuestions[0].scoring = [{ description: "列式", score: "" }];
+  score.subQuestions[0].scoring = [{ description: "列式", score: "", slotIds: [] }];
   expect(buildContent(score).problems.join("；")).toContain("评分");
 });
 
-test("含引用或作答位置的题目拒绝在录题工作台编辑，避免静默丢失", () => {
+test("含引用或答案变体的题目拒绝在录题工作台编辑，避免静默丢失", () => {
   const referenced: QuestionContent = {
     stem: [{ type: "paragraph", runs: [{ type: "reference", kind: "material", targetId: "material-a", fallback: "材料甲" }] }],
     subQuestions: [{ id: "sub-a", originalLabel: "(1)", prompt: [], explanation: [], options: [], slots: [], answers: [], scoring: [], originalScore: null, materialIds: [], dependsOn: [] }],
@@ -133,9 +133,80 @@ test("含引用或作答位置的题目拒绝在录题工作台编辑，避免�
     source: { section: "全卷", pdfPage: 1, originalNumber: "1" },
   };
   expect(contentToForm(referenced, classification).problem).toContain("引用");
-  const slotted = structuredClone(referenced);
-  slotted.stem = [];
-  slotted.materials = [];
-  slotted.subQuestions[0].slots = [{ id: "slot-a", label: "答案", kind: "text", required: true, interchangeableWith: [] }];
-  expect(contentToForm(slotted, classification).problem).toContain("作答位置");
+  const variant = structuredClone(referenced);
+  variant.stem = [];
+  variant.materials = [];
+  variant.subQuestions[0].answers = [{ slotId: null, blocks: [], variants: ["另一种写法"] }];
+  expect(contentToForm(variant, classification).problem).toContain("答案变体");
+});
+
+test("两个可互换作答位置、空位答案与评分点关联在表单和题目内容间往返保持", () => {
+  const value = form();
+  value.subQuestions[0].answer = [];
+  value.subQuestions[0].slots = [
+    { id: "slot-a", label: "第一空", kind: "text", required: true, interchangeableWith: ["slot-b"] },
+    { id: "slot-b", label: "第二空", kind: "blank", required: false, interchangeableWith: ["slot-a"] },
+  ];
+  value.subQuestions[0].slotAnswers = [
+    { slotId: "slot-a", blocks: [{ kind: "text", text: "4" }] },
+    { slotId: "slot-b", blocks: [{ kind: "text", text: "x=2" }] },
+  ];
+  value.subQuestions[0].scoring = [{ description: "两空正确", score: "5", slotIds: ["slot-a", "slot-b"] }];
+
+  const built = buildContent(value);
+  expect(built.problems).toEqual([]);
+  const content = built.content as QuestionContent;
+  expect(isQuestionContent(content)).toBe(true);
+  expect(content.subQuestions[0].slots).toEqual([
+    { id: "slot-a", label: "第一空", kind: "text", required: true, interchangeableWith: ["slot-b"] },
+    { id: "slot-b", label: "第二空", kind: "blank", required: false, interchangeableWith: ["slot-a"] },
+  ]);
+  expect(content.subQuestions[0].answers.map((answer) => answer.slotId)).toEqual(["slot-a", "slot-b"]);
+  expect(content.subQuestions[0].scoring[0].slotIds).toEqual(["slot-a", "slot-b"]);
+
+  const roundtrip = contentToForm(content, classification);
+  expect(roundtrip.problem).toBeUndefined();
+  const restored = roundtrip.form!.subQuestions[0];
+  expect(restored.slots).toEqual(content.subQuestions[0].slots);
+  expect(restored.slotAnswers).toEqual([
+    { slotId: "slot-a", blocks: [{ kind: "text", text: "4" }] },
+    { slotId: "slot-b", blocks: [{ kind: "text", text: "x=2" }] },
+  ]);
+  expect(restored.scoring[0].slotIds).toEqual(["slot-a", "slot-b"]);
+
+  const again = buildContent(roundtrip.form!);
+  expect(again.problems).toEqual([]);
+  expect(again.content!.subQuestions[0].slots).toEqual(content.subQuestions[0].slots);
+  expect(again.content!.subQuestions[0].answers).toEqual(content.subQuestions[0].answers);
+  expect(again.content!.subQuestions[0].scoring[0].slotIds).toEqual(["slot-a", "slot-b"]);
+});
+
+test("作答位置标签为空、标识重复、互换不互指、答案或评分点指向不存在的空时给出提示", () => {
+  const noLabel = form();
+  noLabel.subQuestions[0].slots = [{ id: "slot-a", label: " ", kind: "text", required: true, interchangeableWith: [] }];
+  expect(buildContent(noLabel).problems.join("；")).toContain("作答位置缺少标签");
+
+  const duplicate = form();
+  duplicate.subQuestions[0].slots = [
+    { id: "slot-a", label: "第一空", kind: "text", required: true, interchangeableWith: [] },
+    { id: "slot-a", label: "第二空", kind: "text", required: true, interchangeableWith: [] },
+  ];
+  expect(buildContent(duplicate).problems.join("；")).toContain("作答位置标识重复");
+
+  const oneWay = form();
+  oneWay.subQuestions[0].slots = [
+    { id: "slot-a", label: "第一空", kind: "text", required: true, interchangeableWith: ["slot-b"] },
+    { id: "slot-b", label: "第二空", kind: "text", required: true, interchangeableWith: [] },
+  ];
+  expect(buildContent(oneWay).problems.join("；")).toContain("互换关系必须互为引用");
+
+  const danglingAnswer = form();
+  danglingAnswer.subQuestions[0].slots = [{ id: "slot-a", label: "第一空", kind: "text", required: true, interchangeableWith: [] }];
+  danglingAnswer.subQuestions[0].slotAnswers = [{ slotId: "slot-b", blocks: [{ kind: "text", text: "4" }] }];
+  expect(buildContent(danglingAnswer).problems.join("；")).toContain("答案引用了不存在的作答位置");
+
+  const danglingScoring = form();
+  danglingScoring.subQuestions[0].slots = [{ id: "slot-a", label: "第一空", kind: "text", required: true, interchangeableWith: [] }];
+  danglingScoring.subQuestions[0].scoring = [{ description: "两空正确", score: "5", slotIds: ["slot-b"] }];
+  expect(buildContent(danglingScoring).problems.join("；")).toContain("评分点引用了不存在的作答位置");
 });

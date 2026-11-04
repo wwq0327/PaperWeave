@@ -2,6 +2,7 @@ import type { Block } from "./document";
 import type { BlankSpace, PaperScoring, PaperScoringState } from "./paper";
 import type {
   AnswerKey,
+  AnswerSlot,
   QuestionBlock,
   QuestionContent,
   ReferenceInline,
@@ -41,6 +42,7 @@ export interface SnapshotSubQuestion {
   originalLabel: string;
   prompt: QuestionBlock[];
   options: { label: string; content: QuestionBlock[] }[];
+  slots?: AnswerSlot[];
   answers: AnswerKey[];
   explanation: QuestionBlock[];
   scoring: ScoringPoint[];
@@ -110,6 +112,7 @@ export interface VolumeSubQuestion {
   label: string;
   prompt: QuestionBlock[];
   options: { label: string; content: QuestionBlock[] }[];
+  slots: AnswerSlot[];
   originalLabel?: string;
   answers?: AnswerKey[];
   explanation?: QuestionBlock[];
@@ -230,6 +233,7 @@ export function buildPaperSnapshot(input: SnapshotInput): PaperSnapshot {
           originalLabel: sub.originalLabel,
           prompt: sub.prompt,
           options: sub.options,
+          slots: sub.slots,
           answers: sub.answers,
           explanation: sub.explanation,
           scoring: sub.scoring,
@@ -368,6 +372,7 @@ export function paperVolume(snapshot: PaperSnapshot, volume: Volume): VolumePape
             label: sub.label,
             prompt: resolveBlocks(sub.prompt, context),
             options: sub.options.map((option) => ({ label: option.label, content: resolveBlocks(option.content, context) })),
+            slots: sub.slots ?? [],
           };
           if (volume === "student") return base;
           return {

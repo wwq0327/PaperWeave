@@ -1,8 +1,9 @@
 import { test, expect, _electron as electron, type Page } from "@playwright/test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Database } from "../../src/main/database";
+import { extractPdfText } from "../../src/main/pdf-text";
 import { QuestionBank } from "../../src/main/question-bank";
 import type { QuestionContent } from "../../src/shared/question";
 import { paragraph } from "../unit/fixtures/questions";
@@ -128,10 +129,15 @@ test("材料改版列出受影响题并逐题采用新版", async () => {
 
 test("录题提交待核后完整审核公式、题图与标签，再进入新卷", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "paperweave-review-"));
+  const outDir = mkdtempSync(path.join(tmpdir(), "paperweave-review-out-"));
   const app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`] });
   try {
     const page = await app.firstWindow();
     await importExam(page, app);
+    await app.evaluate(({ dialog, shell }, target) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] });
+      shell.openPath = async () => "";
+    }, outDir);
 
     await page.getByLabel("原卷页码", { exact: true }).fill("2");
     await page.getByLabel("原题号").fill("1");
@@ -140,6 +146,18 @@ test("录题提交待核后完整审核公式、题图与标签，再进入新�
     await page.getByLabel("小问 1 题干 文字 1", { exact: true }).fill("求 $x^2$ 的值。");
     await page.getByLabel("小问号").fill("(1)");
     await page.getByLabel("原分值").fill("4");
+    const slotGroup = page.getByRole("group", { name: "小问 1 作答位置" });
+    await slotGroup.getByRole("button", { name: "添加空位" }).click();
+    await slotGroup.getByRole("button", { name: "添加空位" }).click();
+    await page.getByLabel("空位 1 标签").fill("方程空");
+    await page.getByLabel("空位 2 标签").fill("结果空");
+    await page.getByLabel("空位 1 与空位 2 互换").check();
+    const firstSlotAnswer = page.getByRole("group", { name: "小问 1 空位 1 答案" });
+    await firstSlotAnswer.getByRole("button", { name: "添加文字" }).click();
+    await page.getByLabel("小问 1 空位 1 答案 文字 1", { exact: true }).fill("答案甲内容");
+    const secondSlotAnswer = page.getByRole("group", { name: "小问 1 空位 2 答案" });
+    await secondSlotAnswer.getByRole("button", { name: "添加文字" }).click();
+    await page.getByLabel("小问 1 空位 2 答案 文字 1", { exact: true }).fill("答案乙内容");
     const answerGroup = page.getByRole("group", { name: "小问 1 答案" });
     await answerGroup.getByRole("button", { name: "添加文字" }).click();
     await page.getByLabel("小问 1 答案 文字 1", { exact: true }).fill("4");
@@ -147,6 +165,8 @@ test("录题提交待核后完整审核公式、题图与标签，再进入新�
     await scoringGroup.getByRole("button", { name: "添加评分点" }).click();
     await scoringGroup.getByLabel("说明").fill("答案正确");
     await scoringGroup.getByLabel("分值").fill("4");
+    await scoringGroup.getByLabel("评分点 1 关联空位 1").check();
+    await scoringGroup.getByLabel("评分点 1 关联空位 2").check();
     const promptGroup = page.getByRole("group", { name: "小问 1 题干" });
     await promptGroup.getByRole("button", { name: "插入裁图" }).click();
     await dragOnPage(page);
@@ -193,8 +213,30 @@ test("录题提交待核后完整审核公式、题图与标签，再进入新�
     await expect(page.getByText("总分 4 分")).toBeVisible();
     await page.getByRole("button", { name: "检查定稿" }).click();
     await expect(page.getByText("定稿检查通过。", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "生成学生卷与教师答案卷" }).click();
+    const confirm = page.getByRole("dialog", { name: "确认定稿" });
+    await expect(confirm).toBeVisible({ timeout: 30000 });
+    await confirm.getByRole("button", { name: "确认保存为定稿" }).click();
+    await expect(page.getByText(/双卷已保存为定稿/)).toBeVisible({ timeout: 30000 });
+
+    const directories = readdirSync(outDir).filter((name) => name.startsWith("拾题成卷-样张-"));
+    expect(directories).toHaveLength(1);
+    const student = readFileSync(path.join(outDir, directories[0], "学生卷.pdf"));
+    const teacher = readFileSync(path.join(outDir, directories[0], "教师答案卷.pdf"));
+    const studentText = (await extractPdfText(new Uint8Array(student))).pages.map((entry) => entry.text).join("\n").normalize("NFKC");
+    const teacherText = (await extractPdfText(new Uint8Array(teacher))).pages.map((entry) => entry.text).join("\n").normalize("NFKC");
+    expect(studentText).toContain("作答位置");
+    expect(studentText).toContain("方程空");
+    expect(studentText).toContain("结果空");
+    expect(studentText).not.toContain("答案甲内容");
+    expect(studentText).not.toContain("答案乙内容");
+    expect(teacherText).toContain("方程空");
+    expect(teacherText).toContain("答案甲内容");
+    expect(teacherText).toContain("答案乙内容");
   } finally {
     await closeApp(app);
     rmSync(dir, { recursive: true, force: true });
+    rmSync(outDir, { recursive: true, force: true });
   }
 });
