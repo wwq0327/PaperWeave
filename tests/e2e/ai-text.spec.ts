@@ -166,6 +166,9 @@ test("超时、格式错误、取消与重复提交都保留人工输入", async
       return second;
     });
     expect(duplicate).toContain("重复");
+    await expect(window.getByRole("heading", { name: /待核草稿/ })).toHaveCount(0);
+    await expect(window.getByRole("button", { name: "全部采纳" })).toHaveCount(0);
+    await expect(window.getByLabel(/待处理文字/)).toHaveValue("取消后仍保留的人工文字");
   } finally {
     await closeApp(app);
     rmSync(dir, { recursive: true, force: true });

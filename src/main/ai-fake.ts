@@ -1,7 +1,7 @@
 import type { AiDraft, AiInput } from "../shared/ai";
 
 /** 自动化测试用固定响应；仅当 PAPERWEAVE_AI_FAKE 设置时启用，不触网。 */
-export type FakeScenario = "ok" | "invalid" | "malicious" | "timeout" | "late";
+export type FakeScenario = "ok" | "invalid" | "malicious" | "timeout" | "late" | "late-success";
 
 function awaitAbortable(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -22,6 +22,8 @@ export async function fakeAiDraft(scenario: FakeScenario, input: AiInput, signal
     throw new Error("AI 请求超时，人工草稿已保留，可重试");
   }
   if (scenario === "late") await awaitAbortable(1500, signal);
+  // 模拟已发出、取消后仍会返回的响应，验证主进程丢弃而不是交给界面。
+  if (scenario === "late-success") await new Promise((resolve) => setTimeout(resolve, 1200));
   const questions: AiDraft["questions"] = [{
     stem: scenario === "malicious"
       ? `<script>window.__paperweavePwned = true</script><img src="http://127.0.0.1:9/track.png" onerror="window.__paperweavePwned = true">恶意标记题干`
