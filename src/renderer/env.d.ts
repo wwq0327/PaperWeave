@@ -88,7 +88,7 @@ declare global {
       getExamFile(fileId: string): Promise<{ file: OriginalFileView; data: Uint8Array }>;
       listExamQuestions(examId: string): Promise<ExamQuestionSummary[]>;
       scanImports(kind: "tiku" | "mathvault"): Promise<{ status: "canceled" } | { status: "scanned"; scan: ImportScanView }>;
-      applyImports(input: { scanId: string; rows: { sourceKey: string; action: "import" | "revise" | "skip" }[] }): Promise<ImportApplyResult>;
+      applyImports(input: { scanId: string; rows: { sourceKey: string; action: "import" | "revise" | "skip"; acknowledgeProofread?: boolean }[] }): Promise<ImportApplyResult>;
       listImportBatches(): Promise<ImportBatchView[]>;
       saveIntake(input: { examId: string; sectionId: string; questionId?: string; content: QuestionContent; classification: Classification; submit?: boolean }): Promise<SaveIntakeResult>;
       saveIntakeFigure(dataUrl: string): Promise<{ id: string; url: string }>;

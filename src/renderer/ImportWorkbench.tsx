@@ -16,6 +16,7 @@ function errorText(error: unknown): string {
 export default function ImportWorkbench({ onBack }: { onBack: () => void }) {
   const [scan, setScan] = useState<ImportScanView | null>(null);
   const [choices, setChoices] = useState<Record<string, ImportDecision>>({});
+  const [proofread, setProofread] = useState<Record<string, boolean>>({});
   const [history, setHistory] = useState<ImportBatchView[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -28,10 +29,10 @@ export default function ImportWorkbench({ onBack }: { onBack: () => void }) {
 
   useEffect(() => { void loadHistory(); }, []);
 
-  async function scanTiku() {
+  async function scanLibrary(kind: "tiku" | "mathvault") {
     setBusy(true); setError(""); setMessage("");
     try {
-      const result = await window.paperweave.scanImports("tiku");
+      const result = await window.paperweave.scanImports(kind);
       if (result.status === "canceled") return;
       setScan(result.scan);
       const initial: Record<string, ImportDecision> = {};
@@ -40,6 +41,7 @@ export default function ImportWorkbench({ onBack }: { onBack: () => void }) {
         if (row.status === "changed") initial[row.sourceKey] = "skip";
       }
       setChoices(initial);
+      setProofread({});
       setMessage(`扫描完成：共 ${result.scan.rows.length} 条。确认后执行导入。`);
     } catch (e) {
       setError(`扫描失败：${errorText(e)}`);
@@ -48,7 +50,11 @@ export default function ImportWorkbench({ onBack }: { onBack: () => void }) {
 
   async function apply() {
     if (!scan) return;
-    const rows = Object.entries(choices).map(([sourceKey, action]) => ({ sourceKey, action }));
+    const rows = Object.entries(choices).map(([sourceKey, action]) => ({
+      sourceKey,
+      action,
+      ...(scan.rows.find((row) => row.sourceKey === sourceKey)?.needsProofread ? { acknowledgeProofread: proofread[sourceKey] === true } : {}),
+    }));
     if (rows.length === 0) { setError("请选择至少一条要导入或保留的来源。"); return; }
     setBusy(true); setError(""); setMessage("");
     try {
@@ -56,6 +62,7 @@ export default function ImportWorkbench({ onBack }: { onBack: () => void }) {
       setMessage(`导入完成：新增 ${result.imported}，修订 ${result.revised}，保留 ${result.skipped}。`);
       setScan(null);
       setChoices({});
+      setProofread({});
       await loadHistory();
     } catch (e) {
       setError(`导入失败：${errorText(e)}。本批未写入任何题目。`);
@@ -84,12 +91,13 @@ export default function ImportWorkbench({ onBack }: { onBack: () => void }) {
     {error && <p role="alert" className="error">{error} <button onClick={() => setError("")}>关闭</button></p>}
 
     <section className="paper-panel" aria-label="扫描旧库">
-      <h2>Tiku 题库</h2>
-      <p className="muted">选择 Tiku 根目录（包含 wiki/by-type 与 wiki/passages）。扫描只读，不修改旧库。</p>
+      <h2>旧库来源</h2>
+      <p className="muted">选择 Tiku 或 mathVault 根目录（包含 wiki）。扫描只读，不修改旧库。</p>
       <div className="paper-actions">
-        <button className="primary" onClick={() => void scanTiku()} disabled={busy}>{busy ? "处理中…" : "扫描 Tiku 根目录"}</button>
+        <button className="primary" onClick={() => void scanLibrary("tiku")} disabled={busy}>{busy ? "处理中…" : "扫描 Tiku 根目录"}</button>
+        <button onClick={() => void scanLibrary("mathvault")} disabled={busy}>{busy ? "处理中…" : "扫描 mathVault 根目录"}</button>
         {scan && <button onClick={() => void apply()} disabled={busy}>执行导入</button>}
-        {scan && <button onClick={() => { setScan(null); setChoices({}); setMessage(""); }} disabled={busy}>取消本次扫描</button>}
+        {scan && <button onClick={() => { setScan(null); setChoices({}); setProofread({}); setMessage(""); }} disabled={busy}>取消本次扫描</button>}
       </div>
       {scan && <p className="muted">可导入 {scan.summary.importable} · 完全重复 {scan.summary.duplicate} · 来源变化 {scan.summary.changed} · 已人工修改 {scan.summary.target_modified} · 阻断 {scan.summary.blocked}</p>}
     </section>
@@ -107,6 +115,7 @@ export default function ImportWorkbench({ onBack }: { onBack: () => void }) {
           </div>
           <div className="paper-actions">
             {row.status === "importable" && <label className="inline"><input type="checkbox" checked={choices[row.sourceKey] === "import"} onChange={(event) => setImportChecked(row, event.target.checked)} />导入</label>}
+            {row.needsProofread && <label className="inline"><input type="checkbox" checked={proofread[row.sourceKey] === true} onChange={(event) => setProofread((current) => ({ ...current, [row.sourceKey]: event.target.checked }))} />我已核对校勘说明</label>}
             {row.status === "changed" && <>
               <label className="inline"><input type="radio" name={`action-${row.sourceKey}`} checked={choices[row.sourceKey] === "revise"} onChange={() => setChoice(row, "revise")} />建立修订版</label>
               <label className="inline"><input type="radio" name={`action-${row.sourceKey}`} checked={choices[row.sourceKey] === "skip"} onChange={() => setChoice(row, "skip")} />保留当前</label>

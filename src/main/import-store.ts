@@ -18,7 +18,9 @@ import { buildSearchText, hasContent, type AnswerStatus, type QuestionContent } 
 import type { AttachmentStore } from "./attachments";
 import type { Database } from "./database";
 import { QuestionBank } from "./question-bank";
-import { scanTiku, type ImportMaterialSpec, type TikuCandidate } from "./tiku";
+import type { ImportCandidate, ImportMaterialSpec } from "./import-candidate";
+import { scanMathVault } from "./mathvault";
+import { scanTiku } from "./tiku";
 
 interface RecordRow {
   source_hash: string;
@@ -39,7 +41,7 @@ interface BatchRow {
 interface CachedScan {
   kind: ImportKind;
   root: string;
-  candidates: Map<string, TikuCandidate>;
+  candidates: Map<string, ImportCandidate>;
   rows: Map<string, ImportRow>;
 }
 
@@ -57,7 +59,7 @@ export class ImportStore {
   scan(kind: unknown, root: unknown): ImportScanView {
     if (!isImportKind(kind)) throw new Error("旧库类型无效");
     if (typeof root !== "string" || !root.trim()) throw new Error("旧库根目录无效");
-    const candidates = kind === "tiku" ? scanTiku(root) : (() => { throw new Error("mathVault 迁入将在下一阶段提供"); })();
+    const candidates = kind === "tiku" ? scanTiku(root) : scanMathVault(root);
     const rows = candidates.map((candidate) => this.annotate(kind, candidate));
     const summary = emptyImportSummary();
     for (const row of rows) summary[row.status] += 1;
@@ -84,15 +86,17 @@ export class ImportStore {
     for (const entry of value.rows) {
       if (typeof entry !== "object" || entry === null || Array.isArray(entry)) throw new Error("导入条目无效");
       const item = entry as Record<string, unknown>;
-      if (!Object.keys(item).every((key) => key === "sourceKey" || key === "action")) throw new Error("导入条目包含未知字段");
+      if (!Object.keys(item).every((key) => key === "sourceKey" || key === "action" || key === "acknowledgeProofread")) throw new Error("导入条目包含未知字段");
       if (typeof item.sourceKey !== "string" || !item.sourceKey) throw new Error("来源标识无效");
       if (!isImportDecision(item.action)) throw new Error("导入动作无效");
+      if (item.acknowledgeProofread !== undefined && typeof item.acknowledgeProofread !== "boolean") throw new Error("校勘确认无效");
       if (seen.has(item.sourceKey)) throw new Error("同一来源不能重复提交");
       seen.add(item.sourceKey);
       const row = cache.rows.get(item.sourceKey);
       if (!row) throw new Error(`扫描结果中没有来源：${item.sourceKey}`);
-      this.checkAction(row, item.action);
-      actions.push({ sourceKey: item.sourceKey, action: item.action });
+      const acknowledgeProofread = item.acknowledgeProofread === true;
+      this.checkAction(row, item.action, acknowledgeProofread);
+      actions.push({ sourceKey: item.sourceKey, action: item.action, acknowledgeProofread });
     }
 
     for (const action of actions) {
@@ -119,7 +123,7 @@ export class ImportStore {
         const row = cache.rows.get(action.sourceKey)!;
         const candidate = cache.candidates.get(action.sourceKey)!;
         if (action.action === "skip") {
-          this.writeRecord(sqlite, batchId, cache.kind, candidate, "skip", row.target?.questionId ?? null, row.target?.versionId ?? null, row);
+          this.writeRecord(sqlite, batchId, cache.kind, candidate, "skip", row.target?.questionId ?? null, row.target?.versionId ?? null, row, false);
           skipped += 1;
           continue;
         }
@@ -140,7 +144,7 @@ export class ImportStore {
           versionId = record.id;
           revised += 1;
         }
-        this.writeRecord(sqlite, batchId, cache.kind, candidate, action.action, questionId, versionId, row);
+        this.writeRecord(sqlite, batchId, cache.kind, candidate, action.action, questionId, versionId, row, action.acknowledgeProofread === true);
       }
       const summary = { imported, revised, skipped, materials };
       sqlite.prepare("UPDATE import_batches SET summary = ? WHERE id = ?").run(JSON.stringify(summary), batchId);
@@ -160,7 +164,7 @@ export class ImportStore {
     })));
   }
 
-  private annotate(kind: ImportKind, candidate: TikuCandidate): ImportRow {
+  private annotate(kind: ImportKind, candidate: ImportCandidate): ImportRow {
     const base = {
       sourceKey: candidate.sourceKey,
       sourceHash: candidate.sourceHash,
@@ -172,6 +176,7 @@ export class ImportStore {
       preview: candidate.preview,
       reasons: [...candidate.reasons],
       legacyStatus: candidate.legacyStatus,
+      needsProofread: candidate.needsProofread,
     };
     if (candidate.blocked) return { ...base, status: "blocked", canRevise: false };
     const record = this.getRecord(kind, candidate.sourceKey);
@@ -195,11 +200,13 @@ export class ImportStore {
       target,
       incoming: status === "importable" || status === "changed" ? candidate.content : undefined,
       canRevise: status === "changed",
+      needsProofread: candidate.needsProofread,
     };
   }
 
-  private checkAction(row: ImportRow, action: ImportApplyRow["action"]): void {
+  private checkAction(row: ImportRow, action: ImportApplyRow["action"], acknowledgeProofread: boolean): void {
     if (row.status === "blocked") throw new Error("该来源存在阻断原因，不能导入");
+    if (row.needsProofread && action !== "skip" && !acknowledgeProofread) throw new Error("该来源待校勘，请先确认校勘说明");
     if (action === "import") {
       if (row.status === "importable") return;
       if (row.status === "duplicate") throw new Error("该来源已导入，不能重复导入");
@@ -215,7 +222,7 @@ export class ImportStore {
     if (row.status === "importable") throw new Error("尚未导入的来源不能选择保留当前");
   }
 
-  private resolveMaterials(sqlite: DatabaseSync, batchId: string, kind: ImportKind, candidate: TikuCandidate): { refs: Map<string, { materialId: string; versionId: string }>; created: number } {
+  private resolveMaterials(sqlite: DatabaseSync, batchId: string, kind: ImportKind, candidate: ImportCandidate): { refs: Map<string, { materialId: string; versionId: string }>; created: number } {
     const refs = new Map<string, { materialId: string; versionId: string }>();
     let created = 0;
     for (const material of candidate.materials) {
@@ -258,11 +265,12 @@ export class ImportStore {
     sqlite: DatabaseSync,
     batchId: string,
     kind: ImportKind,
-    candidate: TikuCandidate,
+    candidate: ImportCandidate,
     decision: string,
     questionId: string | null,
     versionId: string | null,
     row: ImportRow,
+    acknowledged: boolean,
   ): void {
     const detail = JSON.stringify({
       legacyStatus: candidate.legacyStatus ?? null,
@@ -271,6 +279,7 @@ export class ImportStore {
       originalNumber: candidate.originalNumber,
       pdfPage: candidate.pdfPage,
       targetStatus: row.status,
+      ...(candidate.needsProofread ? { proofread: acknowledged ? "acknowledged" : "not_acknowledged" } : {}),
     });
     this.upsertRecord(sqlite, batchId, kind, candidate.sourceKey, candidate.sourceHash, questionId, versionId, decision, detail);
   }

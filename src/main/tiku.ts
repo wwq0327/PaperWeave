@@ -1,4 +1,4 @@
-import { lstatSync, readdirSync, readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import {
   blocksText,
@@ -12,36 +12,16 @@ import {
   splitSections,
   splitSubLabels,
   textValue,
+  walk,
+  inside,
   type FrontmatterValue,
   type ParsedImage,
 } from "./import-parse";
 import type { Classification, QuestionBlock, QuestionContent, SubQuestion } from "../shared/question";
 
-export interface ImportMaterialSpec {
-  key: string;
-  placeholderId: string;
-  title: string;
-  content: QuestionBlock[];
-  source: string;
-  hash: string;
-}
+import type { ImportCandidate, ImportMaterialSpec } from "./import-candidate";
 
-export interface TikuCandidate {
-  sourceKey: string;
-  sourceHash: string;
-  title: string;
-  section: string;
-  pdfPage: number;
-  originalNumber: string;
-  classification: Classification;
-  preview: string;
-  reasons: string[];
-  legacyStatus?: string;
-  blocked: boolean;
-  content?: QuestionContent;
-  images: ParsedImage[];
-  materials: ImportMaterialSpec[];
-}
+export type TikuCandidate = ImportCandidate;
 
 const KNOWLEDGE_DEFAULT: Classification = {
   stage: "初中",
@@ -53,24 +33,6 @@ const KNOWLEDGE_DEFAULT: Classification = {
   questionType: "",
   knowledgePoints: [],
 };
-
-function walk(directory: string, match: (name: string) => boolean): string[] {
-  const files: string[] = [];
-  let entries;
-  try { entries = readdirSync(directory, { withFileTypes: true }); } catch { return files; }
-  for (const entry of entries) {
-    const full = join(directory, entry.name);
-    if (entry.isDirectory()) files.push(...walk(full, match));
-    else if (entry.isFile() && match(entry.name)) files.push(full);
-  }
-  return files;
-}
-
-function inside(root: string, path: string): boolean {
-  const base = resolve(root);
-  const target = resolve(path);
-  return target === base || target.startsWith(base + sep);
-}
 
 function passageNames(value: FrontmatterValue | undefined): string[] {
   const raw = Array.isArray(value) ? value.join("\n") : typeof value === "string" ? value : "";
@@ -115,6 +77,7 @@ function emptyCandidate(sourceKey: string, reason: string): TikuCandidate {
     preview: "",
     reasons: [reason],
     blocked: true,
+    needsProofread: false,
     images: [],
     materials: [],
   };
@@ -280,6 +243,7 @@ function parseQuestion(wiki: string, file: string, passages: Map<string, string>
     reasons,
     legacyStatus: textValue(frontmatter.data["审核状态"]) || undefined,
     blocked: problems.length > 0,
+    needsProofread: false,
     content,
     images,
     materials,
