@@ -192,6 +192,31 @@ try {
   check(summaryText.includes("数据版本") && summaryText.includes("6"), "新版本识别上一版备份", summaryText.slice(0, 120));
   const opened = await harness.openedFiles();
   check(opened.length === 0, "升级校验不打开 PDF");
+
+  // 3. 实际恢复上一版备份：备份内是 v6 快照，恢复流程应迁移到 7 并保留数据。
+  await harness.page.getByRole("button", { name: "恢复并重启" }).click();
+  const confirm = harness.page.getByRole("alertdialog", { name: "确认恢复备份" });
+  await confirm.getByRole("button", { name: "确认恢复并重启" }).click();
+  await waitForExit(harness.child, 20_000).catch(() => undefined);
+  await harness.close().catch(() => undefined);
+  harness = undefined;
+
+  harness = await launchPackaged({ appPath: NEW_APP, userData });
+  await installStubs(harness, {});
+  await harness.page.getByRole("button", { name: "题库与组卷" }).click();
+  await harness.page.getByRole("heading", { name: /升级前试卷/ }).waitFor({ timeout: 30_000 });
+  const restored = (() => { const db = new DatabaseSync(dbPath, { readOnly: true }); try { return countsOf(db); } finally { db.close(); } })();
+  check(JSON.stringify(restored) === JSON.stringify(before), "从 v6 备份恢复后计数一致", `${JSON.stringify(before)} → ${JSON.stringify(restored)}`);
+  check(readVersion(dbPath) === 7, "恢复后数据版本为 7");
+  const restoredConfig = await harness.page.evaluate(() => window.paperweave.getAiConfig());
+  check(restoredConfig.baseUrl === "https://api.example.invalid" && restoredConfig.textModel === "升级前文字模型", "恢复后模型设置保留", JSON.stringify(restoredConfig));
+  const restoredDraft = await harness.page.evaluate(() => window.paperweave.loadDraft());
+  check(restoredDraft?.blocks?.[0]?.runs?.[0]?.text === "升级前草稿", "恢复后草稿保留");
+  const restoredFinals = (() => {
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try { return db.prepare("SELECT student_pdf, teacher_pdf FROM paper_finalizations").all(); } finally { db.close(); }
+  })();
+  check(restoredFinals.length === before.finalizations && restoredFinals.every((row) => existsSync(row.student_pdf) && existsSync(row.teacher_pdf)), "恢复后定稿 PDF 可读");
   await harness.close();
   harness = undefined;
 
@@ -213,12 +238,17 @@ try {
   const failDb = path.join(failUserData, "paperweave.sqlite");
   downgradeToV6(failDb, { conflict: true });
   const failSnapshotsBefore = snapshotFiles(failUserData).length;
-  const failApp = spawn(NEW_APP, [`--user-data-dir=${failUserData}`], { stdio: "ignore", env: { ...process.env, PAPERWEAVE_TEST: "1" } });
+  const failPort = 9800 + Math.floor(Math.random() * 150);
+  const failApp = spawn(NEW_APP, [`--user-data-dir=${failUserData}`, `--remote-debugging-port=${failPort}`], { stdio: "ignore", env: { ...process.env, PAPERWEAVE_TEST: "1" } });
   await new Promise((resolve) => setTimeout(resolve, 3_000));
-  const stillRunning = failApp.exitCode === null;
-  if (stillRunning) failApp.kill("SIGKILL");
+  let failPages = [];
+  try {
+    const targets = await (await fetch(`http://127.0.0.1:${failPort}/json/list`)).json();
+    failPages = targets.filter((target) => target.type === "page" && target.url.startsWith("file://"));
+  } catch { /* 进程已退出或调试端口未就绪 */ }
+  if (failApp.exitCode === null) failApp.kill("SIGKILL");
   await waitForExit(failApp, 5_000).catch(() => undefined);
-  check(stillRunning, "迁移失败时应用停在错误提示，未继续打开界面");
+  check(failPages.length === 0, "迁移失败时不打开题库界面", `页面数 ${failPages.length}`);
 
   const failed = new DatabaseSync(failDb, { readOnly: true });
   try {

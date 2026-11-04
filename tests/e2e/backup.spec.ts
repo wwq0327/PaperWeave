@@ -148,6 +148,74 @@ test("备份包含原卷、配图与定稿 PDF，恢复并重启后数据回到�
   }
 });
 
+test("备份可在全新用户目录恢复，定稿路径改写为新机器目录", async () => {
+  const source = mkdtempSync(path.join(tmpdir(), "paperweave-backup-source-"));
+  const target = mkdtempSync(path.join(tmpdir(), "paperweave-backup-target-"));
+  const output = mkdtempSync(path.join(tmpdir(), "paperweave-backup-cross-out-"));
+  const destination = mkdtempSync(path.join(tmpdir(), "paperweave-backup-cross-dest-"));
+  const { attachmentId, originalSha } = seed(source, output);
+  let app = await electron.launch({ args: [entry, `--user-data-dir=${source}`] });
+  try {
+    let page = await app.firstWindow();
+    const backupDir = await backupThroughUi(app, page, destination);
+    await closeApp(app);
+
+    // 模拟另一台机器：全新 userData，不包含源机器的数据库、附件与原卷。
+    app = await electron.launch({ args: [entry, `--user-data-dir=${target}`] });
+    page = await app.firstWindow();
+    await openBackup(page);
+    await app.evaluate(({ dialog }, backup) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [backup] });
+    }, backupDir);
+    await page.getByRole("button", { name: "选择备份目录" }).click();
+    await expect(page.getByText("备份校验通过，请核对摘要后确认恢复。", { exact: true })).toBeVisible({ timeout: 15000 });
+    await page.getByRole("button", { name: "恢复并重启" }).click();
+    const dialog = page.getByRole("alertdialog", { name: "确认恢复备份" });
+    const exited = new Promise<void>((resolve) => app.process().once("exit", () => resolve()));
+    await dialog.getByRole("button", { name: "确认恢复并重启" }).click();
+    await Promise.race([exited, new Promise((_, reject) => setTimeout(() => reject(new Error("恢复后应用未退出")), 15000))]);
+    await app.close().catch(() => undefined);
+
+    app = await electron.launch({ args: [entry, `--user-data-dir=${target}`] });
+    page = await app.firstWindow();
+    await expect(page.getByRole("heading", { name: "编辑草稿" })).toBeVisible();
+    const result = await page.evaluate(async (input) => {
+      const bridge = (window as unknown as { paperweave: {
+        listPapers: () => Promise<{ title: string }[]>;
+        listPaperFinalizations: (paperId: string) => Promise<{ studentPdf: string; teacherPdf: string }[]>;
+        getExam: (examId: string) => Promise<{ exam: { title: string } }>;
+        getExamFile: (fileId: string) => Promise<{ data: Uint8Array }>;
+        getImage: (id: string) => Promise<string>;
+      } }).paperweave;
+      const [papers, finals, exam, file, image] = await Promise.all([
+        bridge.listPapers(),
+        bridge.listPaperFinalizations(input.paper),
+        bridge.getExam(input.exam),
+        bridge.getExamFile(input.file),
+        bridge.getImage(input.attachment),
+      ]);
+      return { papers, finals, examTitle: exam.exam.title, originalBytes: file.data.length, image };
+    }, { paper: ids.paper, exam: ids.exam, file: ids.file, attachment: attachmentId });
+
+    expect(result.papers.map((paper) => paper.title)).toEqual(["原始卷"]);
+    expect(result.examTitle).toBe("合成考试");
+    expect(result.originalBytes).toBe(originals.length);
+    expect(result.image.startsWith("data:image/png;base64,")).toBe(true);
+    expect(result.finals).toHaveLength(1);
+    expect(result.finals[0].studentPdf).toBe(path.join(realpathSync(target), "papers", ids.finalization, "student.pdf"));
+    expect(result.finals[0].teacherPdf).toBe(path.join(realpathSync(target), "papers", ids.finalization, "teacher.pdf"));
+    expect(readFileSync(result.finals[0].studentPdf, "utf8")).toContain("学生卷");
+    expect(existsSync(path.join(target, "originals", `${originalSha}.pdf`))).toBe(true);
+    expect(existsSync(path.join(target, "restore-request.json"))).toBe(false);
+  } finally {
+    await closeApp(app);
+    rmSync(source, { recursive: true, force: true });
+    rmSync(target, { recursive: true, force: true });
+    rmSync(output, { recursive: true, force: true });
+    rmSync(destination, { recursive: true, force: true });
+  }
+});
+
 test("备份文件被篡改时拒绝恢复并保留原题库", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "paperweave-backup-bad-"));
   const output = mkdtempSync(path.join(tmpdir(), "paperweave-backup-bad-out-"));
