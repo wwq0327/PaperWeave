@@ -1,10 +1,12 @@
 import { BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { join } from "node:path";
 import type { Database } from "./database";
 import { Basket } from "./basket";
 import { Paper } from "./paper";
 import { PaperFinalizer } from "./paper-finalization";
 import { QuestionBank } from "./question-bank";
 import { paperVolume, type PaperSnapshot } from "../shared/paper-layout";
+import { pdfPairPaths } from "./pdf-pair";
 import type { AnswerStatus, ReviewStatus } from "../shared/question";
 import type { BeginFinalizationView, QuestionDetailView } from "../shared/paper-api";
 
@@ -14,7 +16,7 @@ export function registerPaper(db: Database, currentWindow: () => BrowserWindow |
   const basket = new Basket(db);
   const papers = new Paper(db);
   const finalizer = new PaperFinalizer(db, async () => { throw new Error("组卷 PDF 由界面渲染"); });
-  let pending: { id: string; paperId: string; parent: string; snapshot: PaperSnapshot; owner: number; student?: Buffer; teacher?: Buffer } | undefined;
+  let pending: { id: string; paperId: string; parent: string; snapshot: PaperSnapshot; owner: number; student?: Buffer; teacher?: Buffer; previewOpenErrors?: string[] } | undefined;
   let busy = false;
 
   const permitted = (event: Electron.IpcMainInvokeEvent) => {
@@ -193,11 +195,21 @@ export function registerPaper(db: Database, currentWindow: () => BrowserWindow |
     const paths = await finalizer.stagePreview(operation.id, operation.parent, operation.student, teacher);
     operation.teacher = teacher;
     const openErrors = await Promise.all([shell.openPath(paths.studentPath), shell.openPath(paths.teacherPath)]);
+    operation.previewOpenErrors = openErrors;
     return { ...paths, openErrors };
+  });
+  ipcMain.handle("paper:reopenPreview", async (event, id: unknown) => {
+    const { operation } = requirePending(event, id);
+    if (!operation.student || !operation.teacher) throw new Error("请先生成双卷预览");
+    const { preview } = pdfPairPaths(operation.parent, operation.id);
+    const openErrors = await Promise.all([shell.openPath(join(preview, "学生卷.pdf")), shell.openPath(join(preview, "教师答案卷.pdf"))]);
+    operation.previewOpenErrors = openErrors;
+    return openErrors;
   });
   ipcMain.handle("paper:confirmFinalize", async (event, id: unknown) => {
     const { operation } = requirePending(event, id);
     if (!operation.student || !operation.teacher) throw new Error("请先生成双卷预览");
+    if ((operation.previewOpenErrors ?? []).some(Boolean)) throw new Error("双卷预览尚未成功打开，请重新打开预览后再确认定稿");
     try {
       const record = await finalizer.complete(operation.id, operation.paperId, operation.parent, operation.snapshot, operation.student, operation.teacher);
       await finalizer.clearPreview(operation.id, operation.parent).catch(() => undefined);

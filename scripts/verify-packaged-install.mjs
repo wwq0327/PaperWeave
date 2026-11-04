@@ -74,7 +74,7 @@ try {
   }));
   check(probe.title === "拾题成卷 PaperWeave", "窗口标题", probe.title);
   check(probe.heading === "编辑草稿", "首次启动进入编辑界面", probe.heading);
-  check(probe.bridge === 72, "桥接口 72 个", String(probe.bridge));
+  check(probe.bridge === 73, "桥接口 73 个", String(probe.bridge));
   check(probe.globals.every((value) => value === "undefined"), "渲染进程无 Node 全局", probe.globals.join(" "));
   check(existsSync(path.join(userData, "paperweave.sqlite")), "首次启动创建题库数据库");
   check(readdirSync(userData).includes("paperweave.sqlite"), "userData 使用指定目录");
