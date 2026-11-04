@@ -1,0 +1,236 @@
+{
+  "issue": 65,
+  "measuredAt": "2026-11-04T18:03:52.195Z",
+  "method": "docs/基线记录.md：同一隔离库、断网、本地磁盘；每项预热一次后连续 5 次，记录全部结果与最大值，慢次不剔除。",
+  "harness": "Electron 45.2.2 运行生产构建 .vite/build/main.cjs（与打包产物同版本同代码）；可见窗口；Playwright 自动化。",
+  "environment": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "release": "27.2.0",
+    "cpu": "Apple M5 Pro",
+    "cpuCount": 15,
+    "totalMemoryBytes": 51539607552,
+    "loadAverageBefore": [
+      10.669921875,
+      5.431640625,
+      3.30859375
+    ],
+    "nodeInTestRunner": "v22.23.3",
+    "appVersion": "1.0.0",
+    "electron": "45.2.2",
+    "node": "24.22.2",
+    "chrome": "156.0.8078.80",
+    "loadAverageAfter": [
+      10.669921875,
+      5.431640625,
+      3.30859375
+    ]
+  },
+  "fixture": {
+    "fixtureVersion": 1,
+    "createdAt": "2026-11-04T18:03:31.822Z",
+    "dataDir": "out/performance/final-20261105",
+    "questions": 5000,
+    "materials": 1000,
+    "originals": 201,
+    "originalsBytes": 2202009600,
+    "paperId": "cdae552a-03e8-4d09-aa37-122c0fcb74ae",
+    "paperItems": 50,
+    "draftImageId": "f6744ce28de7a6e3114d7e5c39aa05b5e15ad12b813359c2c1cbd121a3c2dfda",
+    "draftImageBytes": 2097152,
+    "databaseBytes": 13164544,
+    "generatedMs": 1595,
+    "summary": "题目 5000 道 / 材料 1000 条；原卷 201 份 / 2100 MiB；试卷 50 题；数据库 12.1 MiB"
+  },
+  "targets": {
+    "coldStart": 10000,
+    "search": 2000,
+    "save": 5000,
+    "export": 30000,
+    "backup": 300000
+  },
+  "runs": 5,
+  "warmup": {
+    "coldStart": 560,
+    "searchHit": 9.100000001490116,
+    "searchMiss": 5.5,
+    "save": 4.799999997019768,
+    "export": 413.6000000014901,
+    "backup": 1820.7999999970198
+  },
+  "results": [
+    {
+      "operation": "冷启动",
+      "variant": "打开规模库至主界面可操作",
+      "unit": "ms",
+      "target": 10000,
+      "values": [
+        449,
+        423,
+        432,
+        426,
+        419
+      ],
+      "max": 449,
+      "passed": true
+    },
+    {
+      "operation": "检索",
+      "variant": "有结果（学科+年级+关键词）",
+      "unit": "ms",
+      "target": 2000,
+      "values": [
+        8.799999997019768,
+        8.800000004470348,
+        11.300000004470348,
+        8.900000005960464,
+        10.899999998509884
+      ],
+      "max": 11.300000004470348,
+      "passed": true
+    },
+    {
+      "operation": "检索",
+      "variant": "无结果（学科+年级+关键词）",
+      "unit": "ms",
+      "target": 2000,
+      "values": [
+        6.199999995529652,
+        5.5,
+        4.399999998509884,
+        5.399999998509884,
+        4.700000002980232
+      ],
+      "max": 6.199999995529652,
+      "passed": true
+    },
+    {
+      "operation": "保存",
+      "variant": "草稿含公式/表格/2 MiB 图片",
+      "unit": "ms",
+      "target": 5000,
+      "values": [
+        2.0999999940395355,
+        3.2999999970197678,
+        2.7999999970197678,
+        3.100000001490116,
+        2.5
+      ],
+      "max": 3.2999999970197678,
+      "passed": true
+    },
+    {
+      "operation": "导出双卷",
+      "variant": "50 小题至两份 PDF 写完",
+      "unit": "ms",
+      "target": 30000,
+      "values": [
+        364.5,
+        346.80000000447035,
+        354,
+        342.29999999701977,
+        356.30000000447035
+      ],
+      "max": 364.5,
+      "passed": true
+    },
+    {
+      "operation": "备份",
+      "variant": "含全部原卷、附件与定稿",
+      "unit": "ms",
+      "target": 300000,
+      "values": [
+        1787.7999999970198,
+        1792,
+        1779.3000000044703,
+        1847.3999999985099,
+        1871.5
+      ],
+      "max": 1871.5,
+      "passed": true
+    }
+  ],
+  "verification": {
+    "export": {
+      "runs": [
+        {
+          "studentBytes": 254170,
+          "teacherBytes": 349698,
+          "studentPages": 17,
+          "teacherPages": 50
+        },
+        {
+          "studentBytes": 254170,
+          "teacherBytes": 349698,
+          "studentPages": 17,
+          "teacherPages": 50
+        },
+        {
+          "studentBytes": 254170,
+          "teacherBytes": 349698,
+          "studentPages": 17,
+          "teacherPages": 50
+        },
+        {
+          "studentBytes": 254170,
+          "teacherBytes": 349698,
+          "studentPages": 17,
+          "teacherPages": 50
+        },
+        {
+          "studentBytes": 254170,
+          "teacherBytes": 349698,
+          "studentPages": 17,
+          "teacherPages": 50
+        }
+      ]
+    },
+    "backup": [
+      {
+        "totalBytes": 2220575086,
+        "fileCount": 216
+      },
+      {
+        "totalBytes": 2220575086,
+        "fileCount": 216
+      },
+      {
+        "totalBytes": 2220575086,
+        "fileCount": 216
+      },
+      {
+        "totalBytes": 2220575086,
+        "fileCount": 216
+      },
+      {
+        "totalBytes": 2220575086,
+        "fileCount": 216
+      }
+    ],
+    "draft": {
+      "blocks": 4,
+      "text": "合成规模测试草稿：中文、公式、表格与 2 MiB 图片。·预热·第1次·第2次·第3次·第4次·第5次",
+      "imageBytes": 2097152,
+      "imageId": "f6744ce28de7a6e3114d7e5c39aa05b5e15ad12b813359c2c1cbd121a3c2dfda"
+    }
+  },
+  "limitations": [
+    "Playwright 无法自动化打包后的 Mach-O 产物，计时使用与打包产物同版本同代码的 Electron 45.2.2 生产构建；安装包可见窗口冷启动仍待人工复核。",
+    "保存按 M0 目标样本测编辑器草稿（含 2 MiB 图片引用，每次保存校验附件哈希），重开完整性另验；录题表单保存走同一 SQLite 事务层，未单独计时。",
+    "Windows 待硬件，按同一方法另记，不用 macOS 结果代替。"
+  ],
+  "backgroundLoad": {
+    "loadAverageBefore": [
+      10.669921875,
+      5.431640625,
+      3.30859375
+    ],
+    "loadAverageAfter": [
+      10.669921875,
+      5.431640625,
+      3.30859375
+    ],
+    "note": "测量期间未主动运行其他大型任务；以 load average 记录后台负载。"
+  },
+  "networkRequests": []
+}

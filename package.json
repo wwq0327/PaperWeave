@@ -18,7 +18,8 @@
     "test:packaged-app": "node scripts/verify-packaged-app.mjs",
     "typecheck": "tsc -b",
     "test": "vitest run",
-    "check": "npm run typecheck && npm run test"
+    "check": "npm run typecheck && npm run test",
+    "test:performance": "node scripts/performance.mjs"
   },
   "repository": {
     "type": "git",
