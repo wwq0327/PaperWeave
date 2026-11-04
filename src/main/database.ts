@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 
-const DATA_VERSION = 3;
+const DATA_VERSION = 4;
 
 /** 主进程持有的唯一数据库写入口；不向渲染进程暴露 SQL。 */
 export class Database {
@@ -64,6 +64,26 @@ export class Database {
           CREATE INDEX material_versions_material ON material_versions(material_id, version);
           CREATE INDEX question_material_refs_material ON question_material_refs(material_version_id);
           PRAGMA user_version = 3
+        `);
+      }
+      if (version < 4) {
+        this.db.exec(`
+          ALTER TABLE questions ADD COLUMN stage TEXT NOT NULL DEFAULT '';
+          ALTER TABLE questions ADD COLUMN subject TEXT NOT NULL DEFAULT '';
+          ALTER TABLE questions ADD COLUMN grade TEXT NOT NULL DEFAULT '';
+          ALTER TABLE questions ADD COLUMN exam_type TEXT NOT NULL DEFAULT '';
+          ALTER TABLE questions ADD COLUMN year TEXT NOT NULL DEFAULT '';
+          ALTER TABLE questions ADD COLUMN source_name TEXT NOT NULL DEFAULT '';
+          ALTER TABLE questions ADD COLUMN question_type TEXT NOT NULL DEFAULT '';
+          ALTER TABLE question_versions ADD COLUMN search_text TEXT NOT NULL DEFAULT '';
+          CREATE TABLE question_knowledge_points (
+            question_id TEXT NOT NULL REFERENCES questions(id),
+            value TEXT NOT NULL,
+            PRIMARY KEY (question_id, value)
+          ) STRICT;
+          CREATE INDEX questions_classification ON questions(stage, subject, grade);
+          CREATE INDEX question_knowledge_points_value ON question_knowledge_points(value);
+          PRAGMA user_version = 4
         `);
       }
       this.db.exec("COMMIT");
