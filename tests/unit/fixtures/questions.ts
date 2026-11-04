@@ -1,7 +1,9 @@
 import type { Block } from "../../../src/shared/document";
-import type { QuestionContent } from "../../../src/shared/question";
+import type { QuestionBlock, QuestionContent, QuestionInline } from "../../../src/shared/question";
 
 export const paragraph = (text: string): Block => ({ type: "paragraph", runs: [{ type: "text", text, style: "普通" }] });
+const reference = (kind: "subQuestion" | "material" | "figure", targetId: string, fallback: string): QuestionInline => ({ type: "reference", kind, targetId, fallback });
+const richParagraph = (...runs: QuestionInline[]): QuestionBlock => ({ type: "paragraph", runs });
 
 /** 二选一习作：两个候选各 30 分，选 1 篇，组总分 30。 */
 export function exercise(): QuestionContent {
@@ -17,6 +19,8 @@ export function exercise(): QuestionContent {
         slots: [],
         answers: [],
         scoring: [{ id: "score-a", description: "符合题意，结构完整", score: 30, slotIds: [] }],
+        originalScore: 30,
+        materialIds: [],
         dependsOn: [],
       },
       {
@@ -28,6 +32,8 @@ export function exercise(): QuestionContent {
         slots: [],
         answers: [],
         scoring: [{ id: "score-b", description: "符合题意，结构完整", score: 30, slotIds: [] }],
+        originalScore: 30,
+        materialIds: [],
         dependsOn: [],
       },
     ],
@@ -55,6 +61,8 @@ export function note(): QuestionContent {
           { id: "content", description: "内容完整", score: 2, slotIds: ["note-slot"] },
           { id: "express", description: "表达清楚", score: 1, slotIds: ["note-slot"] },
         ],
+        originalScore: 5,
+        materialIds: [],
         dependsOn: [],
       },
     ],
@@ -78,6 +86,8 @@ export function readingGroup(): QuestionContent {
       slots: [],
       answers: [],
       scoring: [{ id: `read-score-${index + 1}`, description: "回答完整", score: 3, slotIds: [] }],
+      originalScore: 3,
+      materialIds: ["material-a"],
       dependsOn: index === 0 ? [] : [`read-${index}`],
     })),
     materials: [{ materialId: "material-a", versionId: "material-a-v1" }],
@@ -100,6 +110,8 @@ export function math(): QuestionContent {
         slots: [{ id: "p1-slot", label: "答案", kind: "text", required: true, interchangeableWith: [] }],
         answers: [{ slotId: "p1-slot", blocks: [paragraph("3")], variants: [] }],
         scoring: [{ id: "p1-score", description: "得出 f(1)=3", score: 4, slotIds: ["p1-slot"] }],
+        originalScore: 4,
+        materialIds: [],
         dependsOn: [],
       },
       {
@@ -111,11 +123,57 @@ export function math(): QuestionContent {
         slots: [],
         answers: [],
         scoring: [{ id: "p2-score", description: "得出最大值", score: 6, slotIds: [] }],
+        originalScore: 6,
+        materialIds: [],
         dependsOn: ["part-1"],
       },
     ],
     materials: [],
     selection: { mode: "all" },
     source: { section: "数学·解答题", pdfPage: 7, originalNumber: "23" },
+  };
+}
+
+/** 图文引用题：题组材料池两份，小问各用一份；题干图带图标识，答案引用图与小问。 */
+export function referenceGroup(): QuestionContent {
+  return {
+    stem: [richParagraph({ type: "text", text: "阅读材料，", style: "普通" }, reference("material", "material-a", "材料一"))],
+    subQuestions: [
+      {
+        id: "ref-1",
+        originalLabel: "(1)",
+        prompt: [
+          { type: "image", id: "a".repeat(64), alt: "函数图象", figureId: "figure-1" },
+          richParagraph({ type: "text", text: "观察", style: "普通" }, reference("figure", "figure-1", "图 1"), { type: "text", text: "，写出结论。", style: "普通" }),
+        ],
+        explanation: [],
+        options: [],
+        slots: [],
+        answers: [{ slotId: null, blocks: [richParagraph(reference("figure", "figure-1", "图 1"), { type: "text", text: "在 x=1 处取得最小值。", style: "普通" })], variants: [] }],
+        scoring: [{ id: "ref-score-1", description: "结论正确", score: 4, slotIds: [] }],
+        originalScore: 4,
+        materialIds: ["material-a"],
+        dependsOn: [],
+      },
+      {
+        id: "ref-2",
+        originalLabel: "(2)",
+        prompt: [richParagraph({ type: "text", text: "说明", style: "普通" }, reference("subQuestion", "ref-1", "(1)"), { type: "text", text: "的结论是否成立。", style: "普通" })],
+        explanation: [],
+        options: [],
+        slots: [],
+        answers: [],
+        scoring: [{ id: "ref-score-2", description: "判断正确", score: 6, slotIds: [] }],
+        originalScore: 6,
+        materialIds: ["material-b"],
+        dependsOn: ["ref-1"],
+      },
+    ],
+    materials: [
+      { materialId: "material-a", versionId: "material-a-v1" },
+      { materialId: "material-b", versionId: "material-b-v1" },
+    ],
+    selection: { mode: "all" },
+    source: { section: "数学·综合题", pdfPage: 9, originalNumber: "24" },
   };
 }

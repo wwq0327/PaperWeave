@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 
-const DATA_VERSION = 4;
+const DATA_VERSION = 5;
 
 /** 主进程持有的唯一数据库写入口；不向渲染进程暴露 SQL。 */
 export class Database {
@@ -86,11 +86,101 @@ export class Database {
           PRAGMA user_version = 4
         `);
       }
+      if (version < 5) {
+        this.db.exec(`
+          CREATE TABLE basket_items (
+            id TEXT PRIMARY KEY,
+            question_id TEXT NOT NULL REFERENCES questions(id),
+            question_version_id TEXT NOT NULL REFERENCES question_versions(id),
+            sub_question_ids TEXT NOT NULL,
+            primary_sub_question_id TEXT,
+            position INTEGER NOT NULL,
+            created_at TEXT NOT NULL
+          ) STRICT;
+          CREATE INDEX basket_items_position ON basket_items(position);
+          CREATE TABLE papers (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            stage TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            grade TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          ) STRICT;
+          CREATE TABLE paper_sections (
+            id TEXT PRIMARY KEY,
+            paper_id TEXT NOT NULL REFERENCES papers(id),
+            title TEXT NOT NULL,
+            position INTEGER NOT NULL
+          ) STRICT;
+          CREATE TABLE paper_items (
+            id TEXT PRIMARY KEY,
+            paper_id TEXT NOT NULL REFERENCES papers(id),
+            section_id TEXT NOT NULL REFERENCES paper_sections(id),
+            position INTEGER NOT NULL,
+            question_id TEXT NOT NULL REFERENCES questions(id),
+            question_version_id TEXT NOT NULL REFERENCES question_versions(id),
+            sub_question_ids TEXT NOT NULL,
+            score REAL NOT NULL,
+            blank_space TEXT NOT NULL CHECK (blank_space IN ('none', 'small', 'medium', 'large')),
+            scoring TEXT NOT NULL,
+            score_conflict_confirmations TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL
+          ) STRICT;
+          CREATE TABLE paper_finalizations (
+            id TEXT PRIMARY KEY,
+            paper_id TEXT NOT NULL REFERENCES papers(id),
+            student_pdf TEXT NOT NULL,
+            teacher_pdf TEXT NOT NULL,
+            snapshot TEXT NOT NULL,
+            student_sha256 TEXT NOT NULL,
+            teacher_sha256 TEXT NOT NULL,
+            created_at TEXT NOT NULL
+          ) STRICT;
+        `);
+        const rows = this.db.prepare("SELECT id, content FROM question_versions").all() as { id: string; content: string }[];
+        const update = this.db.prepare("UPDATE question_versions SET content = ? WHERE id = ?");
+        for (const row of rows) update.run(this.upgradeQuestionContent(row.id, row.content), row.id);
+        this.db.exec("PRAGMA user_version = 5");
+      }
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  /** 版本 4 内容升级：按评分点合计补原分值；小问材料保守填入整组材料。失败即整次迁移回滚。 */
+  private upgradeQuestionContent(versionId: string, raw: string): string {
+    const fail = (): never => { throw new Error(`题目版本内容无法迁移：${versionId}`); };
+    let content: unknown;
+    try { content = JSON.parse(raw); } catch { return fail(); }
+    if (typeof content !== "object" || content === null || Array.isArray(content)) return fail();
+    const value = content as { materials?: unknown; subQuestions?: unknown };
+    if (!Array.isArray(value.materials) || !Array.isArray(value.subQuestions)) return fail();
+    const materialIds: string[] = [];
+    for (const ref of value.materials) {
+      const materialId = typeof ref === "object" && ref !== null ? (ref as { materialId?: unknown }).materialId : undefined;
+      if (typeof materialId !== "string") return fail();
+      materialIds.push(materialId);
+    }
+    const subQuestions = value.subQuestions.map((sub) => {
+      if (typeof sub !== "object" || sub === null || Array.isArray(sub)) return fail();
+      const item = sub as Record<string, unknown>;
+      if (!Array.isArray(item.scoring)) return fail();
+      let originalScore: number | null = null;
+      if (item.scoring.length > 0) {
+        let sum = 0;
+        for (const point of item.scoring) {
+          const score = typeof point === "object" && point !== null ? (point as { score?: unknown }).score : undefined;
+          if (typeof score !== "number" || !Number.isFinite(score)) return fail();
+          sum += score;
+        }
+        originalScore = Math.round(sum * 100) / 100;
+      }
+      return { ...item, originalScore, materialIds: [...materialIds] };
+    });
+    return JSON.stringify({ ...(content as object), subQuestions });
   }
 
   /** 同一连接上的事务入口；供题库等主进程模块使用，嵌套调用由调用方避免。 */

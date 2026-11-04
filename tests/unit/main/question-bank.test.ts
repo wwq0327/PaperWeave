@@ -32,6 +32,23 @@ test("新建题目为草稿、版本 1、答案待补，重开后内容一致", 
   reopened.close();
 });
 
+test("原分值、小问材料与图引用保存后重开一致", () => {
+  const { db, bank, path } = open();
+  const material = bank.createMaterial({ title: "材料一", content: [paragraph("材料正文")], source: "自编" });
+  const content = math();
+  content.materials = [{ materialId: material.materialId, versionId: material.id }];
+  content.subQuestions[0].materialIds = [material.materialId];
+  content.subQuestions[0].prompt = [{ type: "image", id: "a".repeat(64), alt: "示意图", figureId: "figure-1" }];
+  content.subQuestions[0].answers = [{ slotId: "p1-slot", blocks: [{ type: "paragraph", runs: [{ type: "reference", kind: "figure", targetId: "figure-1", fallback: "图 1" }] }], variants: [] }];
+  content.subQuestions[1].originalScore = null;
+  const created = bank.createQuestion(content);
+  db.close();
+  const reopened = new Database(path);
+  const reread = new QuestionBank(reopened).getQuestionVersion(created.id);
+  expect(reread?.content).toEqual(content);
+  reopened.close();
+});
+
 test("审核通过后修改生成版本 2 并回到待核，旧版本不变", () => {
   const { bank } = open();
   const created = bank.createQuestion(math());
