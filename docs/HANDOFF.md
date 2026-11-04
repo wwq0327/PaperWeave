@@ -45,7 +45,7 @@ M0 已启动。Issue #1「工程脚手架——Electron 双平台安装包与断
 - 双 PDF IPC 接线：`src/main/pdf.ts` 新增 `begin/captureStudent/finish/cancel` 四通道，绑定操作标识与发起窗口，接入 `pdf-pair` 原子落盘；E2E `tests/e2e/pdf-pair.spec.ts` 覆盖生成、校验、打开、无效标识与取消后失效（接线后补充，首次运行即通过）。`npm run check`（9 项）与 `npm run test:e2e`（6 项）通过。仍有两份内容相同、界面未接、纸样未验等缺口，Issue #5 不能关闭（后续已接入界面并补中断恢复，见下）。
 - 草稿级双卷生成（2026-11-04）：设计见 `docs/双卷生成设计-V1.md`；`src/shared/volume.ts` 按卷返回允许字段（学生卷 `answer` 恒为 `null`），界面新增「生成学生卷与教师答案卷」，导出时依次切学生/教师视图再打印，教师卷末尾附「参考答案」节。E2E 新增界面双卷用例，`npm run check`（12 项）与 `npm run test:e2e`（7 项）通过；人工用 `pdftotext` 核验：学生卷无「参考答案」，教师卷含「参考答案：3 个苹果。」。仍无按题号/评分关联、纸样、安装包内导出与 Windows 未验，Issue #5 不关闭。
 - 双卷中断恢复（2026-11-04）：新增 `src/main/pdf-journal.ts`（`app_settings.pdf.pending` 操作日志）与 `src/main/pdf-recovery.ts`；启动时删除只含两份预期 PDF 的 `.paperweave-<id>.pending`，已完成定稿目录一律保留，含非预期文件则保留并弹窗提示。E2E 覆盖启动清理与记录清除。`npm run check`（18 项）与 `npm run test:e2e`（8 项）通过。纸样、安装包内导出与 Windows 仍未验，Issue #5 不关闭。
-- 用户要求每完成一个开发步骤就更新本交接并提交相关代码。上述 #2–#5 提交已推送并按栈顺序经 PR #12–#15 合并入 main（merge commit，未 squash，保留逐 Issue 提交）；草稿级双卷另经 PR #16 合并。各 Issue 均未关闭，待完成项见各 PR 正文与上文。
+- 用户要求每完成一个开发步骤就更新本交接并提交相关代码。上述 #2–#5 提交已推送并按栈顺序经 PR #12–#15 合并入 main（merge commit，未 squash，保留逐 Issue 提交）；草稿级双卷经 PR #16、中断恢复经 PR #17 合并。各 Issue 均未关闭，待完成项见各 PR 正文与上文。
 
 ## 接着讨论
 
