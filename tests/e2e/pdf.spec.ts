@@ -2,6 +2,7 @@ import { test, expect, _electron as electron } from "@playwright/test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { extractPdfText } from "../../src/main/pdf-text";
 
 test("从实际编辑内容生成并打开同一份 A4 PDF；错误公式不生成", async ({}, testInfo) => {
   const dir = mkdtempSync(path.join(tmpdir(), "paperweave-pdf-"));
@@ -70,5 +71,13 @@ test("长文和表格生成多页样张", async ({}, testInfo) => {
     const pdf = readFileSync(output);
     expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
     expect((pdf.toString("latin1").match(/\/Type\s*\/Page\b/g) || []).length).toBeGreaterThan(1);
+    const extracted = await extractPdfText(new Uint8Array(pdf));
+    expect(extracted.pages.length).toBeGreaterThan(1);
+    const text = extracted.pages.map((item) => item.text).join("\n").normalize("NFKC");
+    const expected = [
+      ...Array.from({ length: 80 }, (_, index) => `第 ${index + 1} 行`),
+      ...Array.from({ length: 30 }, (_, index) => `表格第 ${index + 1} 行`),
+    ];
+    expect(expected.filter((line) => !text.includes(line))).toEqual([]);
   } finally { await app.evaluate(({ app: electronApp }) => { electronApp.exit(0); }).catch(() => undefined); await app.close().catch(() => undefined); rmSync(dir, { recursive: true, force: true }); }
 });
