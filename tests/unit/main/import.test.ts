@@ -312,6 +312,27 @@ test("目标题已人工修改时标记为已修改，禁止自动修订；保�
   expect(store.scan("tiku", root).rows.find((entry) => entry.sourceKey === "Q2024-TEST-002")?.status).toBe("duplicate");
 });
 
+test("仅修改目标分类后再扫描标记为已修改，展示分类差异且不覆盖", () => {
+  const { store, bank } = open();
+  const { root } = makeTiku();
+  const first = store.scan("tiku", root);
+  store.apply({ scanId: first.scanId, rows: [{ sourceKey: "Q2024-TEST-002", action: "import" }] });
+  const questionId = store.scan("tiku", root).rows.find((row) => row.sourceKey === "Q2024-TEST-002")!.target!.questionId;
+  const classification = bank.getQuestionClassification(questionId)!;
+  bank.setClassification(questionId, { ...classification, knowledgePoints: ["修改后知识点"] });
+
+  const scan = store.scan("tiku", root);
+  const row = scan.rows.find((entry) => entry.sourceKey === "Q2024-TEST-002");
+  expect(row?.status).toBe("target_modified");
+  const classificationDiff = row?.diff?.find((item) => item.field === "分类");
+  expect(classificationDiff?.before).toContain("修改后知识点");
+  expect(classificationDiff?.after).toContain("小说阅读");
+  expect(() => store.apply({ scanId: scan.scanId, rows: [{ sourceKey: "Q2024-TEST-002", action: "revise" }] })).toThrow("人工修改");
+  const skipped = store.apply({ scanId: scan.scanId, rows: [{ sourceKey: "Q2024-TEST-002", action: "skip" }] });
+  expect(skipped.skipped).toBe(1);
+  expect(bank.getQuestionClassification(questionId)?.knowledgePoints).toEqual(["修改后知识点"]);
+});
+
 test("批次中后续条目失败时整体回滚，先前条目也不落库", () => {
   const { db, store, bank } = open();
   const { root, wiki } = makeTiku();

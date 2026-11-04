@@ -16,7 +16,7 @@ import {
   type ImportStatus,
 } from "../shared/import";
 import { diffImportContent, type ImportDiffMaterial, type ImportFieldDiff } from "../shared/import-diff";
-import { buildSearchText, hasContent, type AnswerStatus, type QuestionContent } from "../shared/question";
+import { buildSearchText, hasContent, isClassification, type AnswerStatus, type Classification, type QuestionContent } from "../shared/question";
 import type { AttachmentStore } from "./attachments";
 import type { Database } from "./database";
 import { QuestionBank, type QuestionVersionRecord } from "./question-bank";
@@ -48,6 +48,28 @@ interface CachedScan {
 }
 
 const MAX_ROWS = 2000;
+
+function sameClassification(before: Classification, after: Classification): boolean {
+  return before.stage === after.stage
+    && before.subject === after.subject
+    && before.grade === after.grade
+    && before.examType === after.examType
+    && before.year === after.year
+    && before.sourceName === after.sourceName
+    && before.questionType === after.questionType
+    && before.knowledgePoints.length === after.knowledgePoints.length
+    && before.knowledgePoints.every((point, index) => point === after.knowledgePoints[index]);
+}
+
+/** 分类修改不生成版本，以导入记录里的分类快照判断目标题是否被人工改过。 */
+function recordClassification(record: RecordRow): Classification | undefined {
+  try {
+    const detail = JSON.parse(record.detail) as Record<string, unknown>;
+    return isClassification(detail.classification) ? detail.classification : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** 旧库迁入：扫描只读，执行在单个事务内写题目、材料、批次与来源记录。 */
 export class ImportStore {
@@ -126,7 +148,8 @@ export class ImportStore {
         const row = cache.rows.get(action.sourceKey)!;
         const candidate = cache.candidates.get(action.sourceKey)!;
         if (action.action === "skip") {
-          this.writeRecord(sqlite, batchId, cache.kind, candidate, "skip", row.target?.questionId ?? null, row.target?.versionId ?? null, row, false);
+          const retained = row.target ? this.bank.getQuestionClassification(row.target.questionId) : undefined;
+          this.writeRecord(sqlite, batchId, cache.kind, candidate, "skip", row.target?.questionId ?? null, row.target?.versionId ?? null, row, false, retained ?? candidate.classification);
           skipped += 1;
           continue;
         }
@@ -147,7 +170,7 @@ export class ImportStore {
           versionId = record.id;
           revised += 1;
         }
-        this.writeRecord(sqlite, batchId, cache.kind, candidate, action.action, questionId, versionId, row, action.acknowledgeProofread === true);
+        this.writeRecord(sqlite, batchId, cache.kind, candidate, action.action, questionId, versionId, row, action.acknowledgeProofread === true, candidate.classification);
       }
       const summary = { imported, revised, skipped, materials };
       sqlite.prepare("UPDATE import_batches SET summary = ? WHERE id = ?").run(JSON.stringify(summary), batchId);
@@ -194,9 +217,12 @@ export class ImportStore {
       contentStatus: latest.contentStatus,
     } : undefined;
     let status: ImportStatus;
-    if (record.source_hash === candidate.sourceHash) status = "duplicate";
-    else if (!latest || !record.target_version_id) status = "importable";
-    else if (latest.id !== record.target_version_id) status = "target_modified";
+    const classification = latest ? this.bank.getQuestionClassification(latest.questionId) : undefined;
+    const storedClassification = recordClassification(record);
+    const classificationChanged = classification !== undefined && storedClassification !== undefined && !sameClassification(classification, storedClassification);
+    if (!latest || !record.target_version_id) status = "importable";
+    else if (latest.id !== record.target_version_id || classificationChanged) status = "target_modified";
+    else if (record.source_hash === candidate.sourceHash) status = "duplicate";
     else status = "changed";
     return {
       ...base,
@@ -205,7 +231,7 @@ export class ImportStore {
       incoming: status === "importable" || status === "changed" ? candidate.content : undefined,
       canRevise: status === "changed",
       needsProofread: candidate.needsProofread,
-      diff: status === "changed" && latest ? this.diffFor(latest, candidate) : undefined,
+      diff: (status === "changed" || status === "target_modified") && latest ? this.diffFor(latest, candidate) : undefined,
     };
   }
 
@@ -336,6 +362,7 @@ export class ImportStore {
     versionId: string | null,
     row: ImportRow,
     acknowledged: boolean,
+    classification: Classification,
   ): void {
     const detail = JSON.stringify({
       legacyStatus: candidate.legacyStatus ?? null,
@@ -344,6 +371,7 @@ export class ImportStore {
       originalNumber: candidate.originalNumber,
       pdfPage: candidate.pdfPage,
       targetStatus: row.status,
+      classification,
       ...(candidate.corrections.length > 0 ? { corrections: candidate.corrections } : {}),
       ...(candidate.needsProofread ? { proofread: acknowledged ? "acknowledged" : "not_acknowledged" } : {}),
     });

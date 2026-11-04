@@ -68,7 +68,7 @@ export default function ImportWorkbench({ onBack }: { onBack: () => void }) {
       const initial: Record<string, ImportDecision> = {};
       for (const row of result.scan.rows) {
         if (row.status === "importable") initial[row.sourceKey] = "import";
-        if (row.status === "changed") initial[row.sourceKey] = "skip";
+        if (row.status === "changed" || row.status === "target_modified") initial[row.sourceKey] = "skip";
       }
       setChoices(initial);
       setProofread({});
@@ -165,7 +165,7 @@ export default function ImportWorkbench({ onBack }: { onBack: () => void }) {
               <p className="muted">{statusLabels[row.status]} · {row.section} · 原卷第 {row.pdfPage} 页 · 题 {row.originalNumber || "待补"} · {row.sourceKey}</p>
               {row.preview && <p className="muted">新来源：{row.preview}</p>}
               {row.status === "changed" && row.target && <p className="muted">当前题库：{row.target.preview || "（无预览）"}（版本 {row.target.version}）</p>}
-              {row.status === "changed" && row.diff && (row.diff.length > 0
+              {(row.status === "changed" || row.status === "target_modified") && row.diff && (row.diff.length > 0
                 ? <div className="import-diff">
                   <p className="muted">字段差异：</p>
                   <ul>{row.diff.map((item) => <li key={item.field} className="muted">
@@ -192,7 +192,10 @@ export default function ImportWorkbench({ onBack }: { onBack: () => void }) {
                 <label className="inline"><input type="radio" name={`action-${row.sourceKey}`} checked={choices[row.sourceKey] === "revise"} onChange={() => setChoice(row, "revise")} />建立修订版</label>
                 <label className="inline"><input type="radio" name={`action-${row.sourceKey}`} checked={choices[row.sourceKey] === "skip"} onChange={() => setChoice(row, "skip")} />保留当前</label>
               </>}
-              {row.status === "target_modified" && <span className="muted">目标题已被人工修改，本次保留当前。</span>}
+              {row.status === "target_modified" && <>
+                <label className="inline"><input type="radio" name={`action-${row.sourceKey}`} checked={choices[row.sourceKey] === "skip"} onChange={() => setChoice(row, "skip")} />保留当前</label>
+                <span className="muted">目标题已被人工修改，不自动覆盖。</span>
+              </>}
             </div>
           </li>;
         })}

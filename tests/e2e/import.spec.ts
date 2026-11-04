@@ -108,6 +108,49 @@ test("缺图题目在应用内补图后导入；来源变化显示字段差异�
   }
 });
 
+test("目标分类被人工修改后扫描标记已修改，展示分类差异并默认保留当前", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-import-classification-"));
+  const app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`] });
+  try {
+    const page = await app.firstWindow();
+    await page.getByRole("button", { name: "旧库迁入" }).click();
+    await stubDirectory(app, fixture);
+    await page.getByRole("button", { name: "扫描 Tiku 根目录" }).click();
+    await page.getByRole("button", { name: "执行导入" }).click();
+    await expect(page.getByText("导入完成：新增 2，修订 0，保留 0。", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "返回录题草稿" }).click();
+    await page.getByRole("button", { name: "题目审核" }).click();
+    const card = page.locator(".paper-card", { hasText: "阅读下面的合成材料" });
+    await card.getByRole("button", { name: "查看并审核" }).click();
+    await page.getByLabel("审核知识点").fill("修改后知识点");
+    await page.getByRole("button", { name: "保存分类标签" }).click();
+    await expect(page.getByText("分类标签已保存。", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "返回录题草稿" }).click();
+    await page.getByRole("button", { name: "旧库迁入" }).click();
+    await stubDirectory(app, fixture);
+    await page.getByRole("button", { name: "扫描 Tiku 根目录" }).click();
+    await expect(page.getByText(/已人工修改 1/)).toBeVisible();
+    const preview = page.getByRole("region", { name: "迁入预览" });
+    await expect(preview).toContainText("目标已人工修改");
+    await expect(preview).toContainText("分类（修改）");
+    await expect(preview).toContainText("修改后知识点");
+    await expect(preview).toContainText("小说阅读");
+    await expect(page.getByLabel("保留当前")).toBeChecked();
+    await page.getByRole("button", { name: "执行导入" }).click();
+    await expect(page.getByText("导入完成：新增 0，修订 0，保留 1。", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "返回录题草稿" }).click();
+    await page.getByRole("button", { name: "题目审核" }).click();
+    await page.locator(".paper-card", { hasText: "阅读下面的合成材料" }).getByRole("button", { name: "查看并审核" }).click();
+    await expect(page.getByRole("region", { name: "题目审核详情" })).toContainText("修改后知识点");
+  } finally {
+    await closeApp(app);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("mathVault 迁入：第 25 题待校勘需确认，确认后导入并跳过重复", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "paperweave-mathvault-"));
   const app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`] });
