@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 
-const DATA_VERSION = 2;
+const DATA_VERSION = 3;
 
 /** 主进程持有的唯一数据库写入口；不向渲染进程暴露 SQL。 */
 export class Database {
@@ -8,6 +8,7 @@ export class Database {
 
   constructor(path: string) {
     this.db = new DatabaseSync(path);
+    this.db.exec("PRAGMA foreign_keys = ON");
     try {
       this.migrate();
     } catch (error) {
@@ -29,7 +30,56 @@ export class Database {
       if (version < 2) {
         this.db.exec("CREATE TABLE editor_drafts (id TEXT PRIMARY KEY, document TEXT NOT NULL) STRICT; PRAGMA user_version = 2");
       }
+      if (version < 3) {
+        this.db.exec(`
+          CREATE TABLE questions (id TEXT PRIMARY KEY, created_at TEXT NOT NULL) STRICT;
+          CREATE TABLE question_versions (
+            id TEXT PRIMARY KEY,
+            question_id TEXT NOT NULL REFERENCES questions(id),
+            version INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            content_status TEXT NOT NULL CHECK (content_status IN ('draft', 'pending', 'approved')),
+            answer_status TEXT NOT NULL CHECK (answer_status IN ('missing', 'pending', 'approved')),
+            created_at TEXT NOT NULL,
+            UNIQUE (question_id, version)
+          ) STRICT;
+          CREATE TABLE materials (id TEXT PRIMARY KEY, created_at TEXT NOT NULL) STRICT;
+          CREATE TABLE material_versions (
+            id TEXT PRIMARY KEY,
+            material_id TEXT NOT NULL REFERENCES materials(id),
+            version INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            source TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('draft', 'pending', 'approved')),
+            created_at TEXT NOT NULL,
+            UNIQUE (material_id, version)
+          ) STRICT;
+          CREATE TABLE question_material_refs (
+            question_version_id TEXT NOT NULL REFERENCES question_versions(id),
+            material_version_id TEXT NOT NULL REFERENCES material_versions(id),
+            PRIMARY KEY (question_version_id, material_version_id)
+          ) STRICT;
+          CREATE INDEX question_versions_question ON question_versions(question_id, version);
+          CREATE INDEX material_versions_material ON material_versions(material_id, version);
+          CREATE INDEX question_material_refs_material ON question_material_refs(material_version_id);
+          PRAGMA user_version = 3
+        `);
+      }
       this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  /** 同一连接上的事务入口；供题库等主进程模块使用，嵌套调用由调用方避免。 */
+  transaction<T>(fn: (db: DatabaseSync) => T): T {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = fn(this.db);
+      this.db.exec("COMMIT");
+      return result;
     } catch (error) {
       this.db.exec("ROLLBACK");
       throw error;
