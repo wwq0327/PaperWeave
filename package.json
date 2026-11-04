@@ -1,0 +1,34 @@
+{
+  "name": "paperweave",
+  "version": "1.0.0",
+  "description": "面向教师本人的本地题库桌面应用：从原卷 PDF 录题、拆题打标签、审核入库，到检索选题、组卷、生成学生卷与教师答案卷 PDF 并打印。覆盖小学至高中全学科，离线可用，题库与数据全部保存在本机。",
+  "private": true,
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm run test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wwq0327/PaperWeave.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/wwq0327/PaperWeave/issues"
+  },
+  "homepage": "https://github.com/wwq0327/PaperWeave#readme",
+  "engines": {
+    "node": "22"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "typescript": "7.0.2",
+    "vitest": "5.1.0"
+  }
+}
