@@ -70,6 +70,9 @@ test("文字草稿经确认发送，待核标记保留，采纳后进入编辑�
     window = await app.firstWindow();
     await expect(window.getByLabel("文本 1").nth(1)).toHaveValue("教师修改后的题干");
     await expect(window.getByLabel("教师参考答案（仅供教师卷样张使用）")).toHaveValue("固定响应答案：B");
+    const source = window.getByRole("region", { name: "原卷来源" });
+    await expect(source).toContainText("来源页：第 3、4 页");
+    await expect(source).toContainText("待核：固定响应待核点");
   } finally {
     await closeApp(app);
     rmSync(dir, { recursive: true, force: true });

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import katex from "katex";
 import "katex/dist/katex.min.css";
-import { emptyDraft, isDraft, type Block, type Draft, type Inline, type TextStyle } from "../shared/document";
+import { emptyDraft, isDraft, type Block, type Draft, type DraftSource, type Inline, type TextStyle } from "../shared/document";
 import { questionToBlocks, type AiQuestion } from "../shared/ai";
 import { volumeSections, type Volume } from "../shared/volume";
 import AiPanel from "./AiPanel";
@@ -62,12 +62,14 @@ export default function App() {
       if (!old) return old;
       const blocks = [...old.blocks];
       const answers: string[] = [];
+      const sources: DraftSource[] = [];
       for (const question of questions) {
         const adopted = questionToBlocks(question);
         blocks.push(...adopted.blocks);
         if (adopted.answer.trim()) answers.push(adopted.answer.trim());
+        sources.push({ pages: [question.page], uncertain: [...question.uncertain] });
       }
-      return { ...old, blocks, teacherAnswer: [old.teacherAnswer.trim(), ...answers].filter(Boolean).join("\n\n") };
+      return { ...old, blocks, teacherAnswer: [old.teacherAnswer.trim(), ...answers].filter(Boolean).join("\n\n"), sources: [...old.sources, ...sources] };
     });
   }
   async function save() {
@@ -143,11 +145,18 @@ export default function App() {
   }
   if (!draft) return <main><h1>拾题成卷</h1><p role={error ? "alert" : undefined}>{error || "正在读取草稿…"}</p></main>;
   const dirty = JSON.stringify(draft) !== saved;
+  const sourcePages = [...new Set(draft.sources.flatMap((source) => source.pages))].sort((a, b) => a - b);
+  const sourceUncertain = [...new Set(draft.sources.flatMap((source) => source.uncertain))];
   return <main onPasteCapture={paste}>
     <fieldset disabled={exporting} className="editor-controls">
     <header><div><h1>编辑草稿</h1><p>本地试用版 · 内容需要自行核对</p></div><button onClick={save} disabled={saving || !dirty}>{saving ? "保存中…" : "保存草稿"}</button></header>
     <p className="intro">按顺序添加内容。文本可分成多段以设置样式；公式使用 LaTeX。表格仅支持纯文字，不支持合并单元格。复杂格式请保留清晰裁图或手工改写并核对。</p>
     <AiPanel onAdopt={adoptAi} />
+    {sourcePages.length > 0 && <section className="ai-result" aria-label="原卷来源">
+      <h3>原卷来源</h3>
+      <p>来源页：第 {sourcePages.join("、")} 页</p>
+      {sourceUncertain.length > 0 && <p className="uncertain">待核：{sourceUncertain.join("；")}</p>}
+    </section>}
     <div className="toolbar" aria-label="添加内容"><button onClick={() => append({ type: "paragraph", runs: [newRun()] })}>添加段落</button><button onClick={() => append({ type: "formula", latex: "" })}>添加独立公式</button><button onClick={addImage}>添加图片</button><button onClick={() => append({ type: "table", rows: [["", ""], ["", ""]] })}>添加表格</button></div>
     <p aria-live="polite">{dirty ? "有未保存的修改" : "没有未保存的修改"} {message}</p>{error && <p className="error" role="alert">{error} <button onClick={() => setError("")}>关闭提示</button></p>}
     {draft.blocks.map((block, index) => <section className="block" key={index} aria-label={`内容 ${index + 1}`}>

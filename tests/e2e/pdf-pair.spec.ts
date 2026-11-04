@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Database } from "../../src/main/database";
+import { extractPdfText } from "../../src/main/pdf-text";
 
 // 覆盖双 PDF IPC 接线（begin/capture/finish/cancel）与原子落盘；
 // 注意：两份内容当前相同，真实学生/教师内容隔离属后续 Issue #5 工作，不能据此关闭 Issue。
@@ -94,6 +95,12 @@ test("界面导出双卷：两份 PDF 由各自允许的字段生成且内容不
     expect(student.subarray(0, 5).toString()).toBe("%PDF-");
     expect(teacher.subarray(0, 5).toString()).toBe("%PDF-");
     expect(teacher.equals(student)).toBe(false);
+    const studentText = (await extractPdfText(new Uint8Array(student))).pages.map((item) => item.text).join("\n").normalize("NFKC");
+    const teacherText = (await extractPdfText(new Uint8Array(teacher))).pages.map((item) => item.text).join("\n").normalize("NFKC");
+    expect(studentText).not.toContain("参考答案");
+    expect(studentText).not.toContain("3 个苹果");
+    expect(teacherText).toContain("参考答案");
+    expect(teacherText).toContain("3 个苹果");
   } finally {
     await app.evaluate(({ app: electronApp }) => { electronApp.exit(0); }).catch(() => undefined);
     await app.close().catch(() => undefined);

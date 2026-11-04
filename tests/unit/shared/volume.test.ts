@@ -3,9 +3,10 @@ import type { Draft } from "../../../src/shared/document";
 import { volumeSections } from "../../../src/shared/volume";
 
 const draft: Draft = {
-  version: 2,
+  version: 3,
   blocks: [{ type: "paragraph", runs: [{ type: "text", text: "小明有几个苹果？", style: "普通" }] }],
   teacherAnswer: "参考答案：3 个苹果。",
+  sources: [],
 };
 
 test("学生卷只含题目字段，答案不出现在任何字段中", () => {
