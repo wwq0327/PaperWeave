@@ -308,6 +308,33 @@ test("两项以上筛选条件命中目标题，无结果返回空列表", () =>
   expect(bank.searchQuestions({ knowledgePoint: "方程", questionType: "写作" })).toEqual([]);
 });
 
+test("考试类型、学年、来源、题型与审核状态组合筛选", () => {
+  const { bank } = open();
+  const target = bank.createQuestion(note(), {
+    ...classification,
+    examType: "期末",
+    year: "2026",
+    sourceName: "区统测",
+    questionType: "阅读题",
+  });
+  bank.createQuestion(note(), classification);
+  const approved = bank.createQuestion(note(), classification);
+  bank.setContentStatus(approved.id, "pending");
+  bank.setContentStatus(approved.id, "approved");
+  bank.setAnswerStatus(approved.id, "pending");
+  bank.setAnswerStatus(approved.id, "approved");
+
+  expect(bank.searchQuestions({
+    examType: "期末",
+    year: "2026",
+    sourceName: "区统测",
+    questionType: "阅读题",
+    knowledgePoint: "概括",
+  }).map((item) => item.questionId)).toEqual([target.questionId]);
+  expect(bank.searchQuestions({ contentStatus: "approved", answerStatus: "approved" }).map((item) => item.questionId)).toEqual([approved.questionId]);
+  expect(bank.searchQuestions({ examType: "期末", sourceName: "区统测", questionType: "写作" })).toEqual([]);
+});
+
 test("关键词只命中题干与选项，不命中答案、解析或材料正文", () => {
   const { bank } = open();
   const material = bank.createMaterial({ title: "材料", content: [paragraph("材料关键词")], source: "自制" });

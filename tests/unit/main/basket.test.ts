@@ -6,7 +6,7 @@ import { Basket } from "../../../src/main/basket";
 import { Database } from "../../../src/main/database";
 import { QuestionBank } from "../../../src/main/question-bank";
 import type { QuestionContent } from "../../../src/shared/question";
-import { math, note } from "../fixtures/questions";
+import { math, note, paragraph } from "../fixtures/questions";
 
 const directories: string[] = [];
 function open() {
@@ -63,6 +63,26 @@ test("有前问依赖时先返回报告，确认后才写入", () => {
   expect(added.status).toBe("added");
   if (added.status !== "added") throw new Error("应已加入");
   expect(added.item.subQuestionIds).toEqual(["part-1", "part-2"]);
+  expect(basket.listBasket()).toHaveLength(1);
+});
+
+test("仅有共享材料依赖时也先返回报告，确认后才写入", () => {
+  const { bank, basket } = open();
+  const material = bank.createMaterial({ title: "阅读材料", content: [paragraph("材料正文")], source: "自制" });
+  const content = independent();
+  content.materials = [{ materialId: material.materialId, versionId: material.id }];
+  content.subQuestions[0].materialIds = [material.materialId];
+  const created = bank.createQuestion(content);
+  const report = basket.addToBasket(created.questionId, created.id, "note-1");
+  expect(report.status).toBe("confirmation_required");
+  if (report.status !== "confirmation_required") throw new Error("应要求确认");
+  expect(report.selection.subQuestionIds).toEqual(["note-1"]);
+  expect(report.selection.materialIds).toEqual([material.materialId]);
+  expect(report.selection.reasons).toEqual([`共享材料：${material.materialId}`]);
+  expect(basket.listBasket()).toEqual([]);
+
+  const added = basket.addToBasket(created.questionId, created.id, "note-1", true);
+  expect(added.status).toBe("added");
   expect(basket.listBasket()).toHaveLength(1);
 });
 

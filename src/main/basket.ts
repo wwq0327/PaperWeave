@@ -48,7 +48,8 @@ export class Basket {
     if (version === undefined) throw new Error("题目版本不存在");
     if (version.questionId !== questionId) throw new Error("题目版本不属于该题");
     const selection = basketSelection(version.content, subQuestionId);
-    const requiresConfirmation = subQuestionId !== null && selection.subQuestionIds.length > 1;
+    const requiresConfirmation = subQuestionId !== null
+      && (selection.subQuestionIds.length > 1 || selection.materialIds.length > 0);
     if (requiresConfirmation && !confirmDependencies) return { status: "confirmation_required", selection };
     return this.db.transaction((sqlite) => {
       const rows = sqlite.prepare("SELECT question_version_id, sub_question_ids FROM basket_items").all() as { question_version_id: string; sub_question_ids: string }[];

@@ -56,6 +56,18 @@ test("独立小问只带自身，材料按所选小问汇总", () => {
   expect(basketSelection(referenced, "ref-2").materialIds).toEqual(["material-a", "material-b"]);
 });
 
+test("只有共享材料依赖时列出材料原因，不标为独立小问", () => {
+  const content = referenceGroup();
+  content.stem = [];
+  const sub = content.subQuestions[1];
+  sub.dependsOn = [];
+  sub.materialIds = ["material-b"];
+  const selection = basketSelection(content, "ref-2");
+  expect(selection.subQuestionIds).toEqual(["ref-2"]);
+  expect(selection.wholeGroup).toBe(false);
+  expect(selection.reasons).toEqual(["共享材料：material-b"]);
+});
+
 test("不存在的小问标识被拒绝", () => {
   expect(() => basketSelection(note(), "missing")).toThrow("小问不存在");
 });
