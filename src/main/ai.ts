@@ -1,13 +1,14 @@
 import { app, BrowserWindow, dialog, ipcMain, safeStorage } from "electron";
 import { open } from "node:fs/promises";
 import { basename } from "node:path";
-import { isAiDraft, normalizeAiInput } from "../shared/ai";
+import { AI_LIMITS, isAiDraft, normalizeAiInput } from "../shared/ai";
 import { normalizeAiConfig, parseAiConfig } from "../shared/ai-config";
 import { Database } from "./database";
 import { fakeAiDraft, type FakeScenario } from "./ai-fake";
 import { clearApiKey, keyExists, loadApiKey, saveApiKey, type KeyStore } from "./ai-key";
 import { requestAiDraft } from "./ai-provider";
 import { extractPdfText } from "./pdf-text";
+import { QuestionBank } from "./question-bank";
 
 const configKey = "ai.config";
 const maxPdfBytes = 50 * 1024 * 1024;
@@ -15,6 +16,7 @@ const requestIdPattern = /^[a-zA-Z0-9-]{8,64}$/;
 const fakeScenarios = new Set(["ok", "invalid", "malicious", "timeout", "late", "late-success"]);
 
 export function registerAi(db: Database, root: string, currentWindow: () => BrowserWindow | undefined): void {
+  const bank = new QuestionBank(db);
   const store: KeyStore = {
     isAvailable: () => safeStorage.isEncryptionAvailable(),
     encrypt: (value) => safeStorage.encryptString(value),
@@ -77,6 +79,8 @@ export function registerAi(db: Database, root: string, currentWindow: () => Brow
     if (inFlight.has(requestId)) throw new Error("重复的 AI 请求");
     const checked = normalizeAiInput(value);
     if (!checked.ok) throw new Error(checked.error);
+    const context = checked.input.context;
+    const tagCandidates = context ? bank.knowledgePointCandidates(context.stage, context.subject, AI_LIMITS.tagCount) : [];
 
     const scenario = process.env.PAPERWEAVE_AI_FAKE as FakeScenario | undefined;
     // 固定响应只用于未打包的开发/自动化运行，避免安装包被环境变量绕过真实调用。
@@ -90,11 +94,11 @@ export function registerAi(db: Database, root: string, currentWindow: () => Brow
     try {
       const result = fake
         ? await fakeAiDraft(fake, checked.input, controller.signal)
-        : await requestAiDraft(config, apiKey as string, checked.input, controller.signal);
+        : await requestAiDraft(config, apiKey as string, checked.input, controller.signal, undefined, tagCandidates);
       // 取消时即使响应已经到达也丢弃，避免迟到结果覆盖人工编辑。
       if (controller.signal.aborted) throw new Error("已取消");
       if (!isAiDraft(result)) throw new Error("模型返回格式无法解析，请重试或手工录入");
-      return result;
+      return { draft: result, tagCandidates };
     } finally {
       if (inFlight.get(requestId) === controller) inFlight.delete(requestId);
     }

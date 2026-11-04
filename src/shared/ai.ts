@@ -1,4 +1,5 @@
 import type { Block } from "./document";
+import type { Stage } from "./question";
 
 export const AI_LIMITS = {
   textChars: 8000,
@@ -6,7 +7,23 @@ export const AI_LIMITS = {
   imageBytes: 5 * 1024 * 1024,
   imageTotalBytes: 15 * 1024 * 1024,
   timeoutMs: 120000,
+  tagCount: 20,
+  contextChars: 100,
 } as const;
+
+/** 生成草稿时随请求发送的科目信息；标签候选由主进程按题库补充。 */
+export interface AiContext {
+  stage: Stage;
+  subject: string;
+  grade: string;
+  questionType: string;
+}
+
+/** AI 草稿与本次请求实际使用的标签候选一起返回，供采纳时区分新标签。 */
+export interface AiDraftResult {
+  draft: AiDraft;
+  tagCandidates: string[];
+}
 
 export interface AiPart {
   label: string;
@@ -106,11 +123,31 @@ export function checkImages(images: { bytes: number }[]): string | null {
 }
 
 export type AiInput =
-  | { mode: "text"; text: string; pages: number[] }
-  | { mode: "images"; images: { dataUrl: string; page: number }[]; note?: string };
+  | { mode: "text"; text: string; pages: number[]; context?: AiContext }
+  | { mode: "images"; images: { dataUrl: string; page: number }[]; note?: string; context?: AiContext };
 
 const pageList = (x: unknown): x is number[] =>
   Array.isArray(x) && x.length >= 1 && x.length <= 50 && x.every((page) => typeof page === "number" && Number.isInteger(page) && page >= 1 && page <= 2000);
+
+function parseContext(value: unknown): { ok: true; context?: AiContext } | { ok: false; error: string } {
+  if (value === undefined) return { ok: true };
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return { ok: false, error: "科目信息格式无效" };
+  const context = value as Record<string, unknown>;
+  if (!Object.keys(context).every((key) => ["stage", "subject", "grade", "questionType"].includes(key))) {
+    return { ok: false, error: "科目信息包含未知字段" };
+  }
+  if (context.stage !== "小学" && context.stage !== "初中" && context.stage !== "高中") return { ok: false, error: "科目信息学段无效" };
+  for (const key of ["subject", "grade", "questionType"] as const) {
+    if (typeof context[key] !== "string" || context[key].length > AI_LIMITS.contextChars) return { ok: false, error: "科目信息字段无效" };
+  }
+  const subject = (context.subject as string).trim();
+  const grade = (context.grade as string).trim();
+  if (!subject || !grade) return { ok: false, error: "科目信息缺少学科或年级" };
+  return {
+    ok: true,
+    context: { stage: context.stage, subject, grade, questionType: (context.questionType as string).trim() },
+  };
+}
 
 export function base64Bytes(dataUrl: string): number {
   const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
@@ -125,7 +162,10 @@ export function normalizeAiInput(value: unknown): { ok: true; input: AiInput } |
   if (input.mode === "text") {
     if (typeof input.text !== "string" || !pageList(input.pages)) return { ok: false, error: "文字或页码无效" };
     const error = checkText(input.text);
-    return error ? { ok: false, error } : { ok: true, input: { mode: "text", text: input.text, pages: input.pages } };
+    if (error) return { ok: false, error };
+    const parsed = parseContext(input.context);
+    if (!parsed.ok) return parsed;
+    return { ok: true, input: { mode: "text", text: input.text, pages: input.pages, context: parsed.context } };
   }
   if (input.mode === "images") {
     if (!Array.isArray(input.images)) return { ok: false, error: "裁图格式无效" };
@@ -140,7 +180,9 @@ export function normalizeAiInput(value: unknown): { ok: true; input: AiInput } |
     const error = checkImages(typed.map((image) => ({ bytes: base64Bytes(image.dataUrl) })));
     if (error) return { ok: false, error };
     if (input.note !== undefined && (typeof input.note !== "string" || input.note.length > 2000)) return { ok: false, error: "说明不能超过 2000 字符" };
-    return { ok: true, input: { mode: "images", images: typed, note: input.note as string | undefined } };
+    const parsed = parseContext(input.context);
+    if (!parsed.ok) return parsed;
+    return { ok: true, input: { mode: "images", images: typed, note: input.note as string | undefined, context: parsed.context } };
   }
   return { ok: false, error: "未知的输入方式" };
 }

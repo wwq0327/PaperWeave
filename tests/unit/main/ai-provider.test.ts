@@ -54,6 +54,29 @@ test("文字请求走兼容 Messages 端点，剥离代码围栏并返回草稿"
   }
 });
 
+test("请求附带科目上下文与已有标签候选，系统提示区分候选与新标签", async () => {
+  const server = await startServer(() => ({ json: { content: [{ type: "text", text: JSON.stringify(draft) }] } }));
+  try {
+    await requestAiDraft({ ...config, baseUrl: server.url }, "sk-test", {
+      mode: "text",
+      text: "原卷文字",
+      pages: [2],
+      context: { stage: "初中", subject: "语文", grade: "九年级", questionType: "阅读题" },
+    }, undefined, undefined, ["词语运用", "概括"]);
+    const body = JSON.parse(server.received().body);
+    const userText = body.messages[0].content.map((block: { text?: string }) => block.text ?? "").join("\n");
+    expect(userText).toContain("初中语文九年级");
+    expect(userText).toContain("阅读题");
+    expect(userText).toContain("词语运用");
+    expect(userText).toContain("概括");
+    expect(body.system).toContain("候选");
+    expect(body.system).toContain("新增标签");
+    expect(body.system).toContain("作答位置需手工录入");
+  } finally {
+    await server.close();
+  }
+});
+
 test("裁图请求按页标注顺序发送图像块并使用图像模型", async () => {
   const server = await startServer(() => ({ json: { content: [{ type: "text", text: JSON.stringify(draft) }] } }));
   const png = "data:image/png;base64," + Buffer.alloc(8, 1).toString("base64");

@@ -75,6 +75,8 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
   const [aiSending, setAiSending] = useState(false);
   const [aiRequestId, setAiRequestId] = useState<string | null>(null);
   const [aiDraft, setAiDraft] = useState<AiDraft | null>(null);
+  const [aiTagCandidates, setAiTagCandidates] = useState<string[]>([]);
+  const [aiNewTags, setAiNewTags] = useState<string[]>([]);
   const [aiAdopted, setAiAdopted] = useState<number[]>([]);
   const [aiMessage, setAiMessage] = useState("");
   const [aiError, setAiError] = useState("");
@@ -116,6 +118,7 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
     setAiUncertain([]);
     setAiUncertainAck(false);
     setAiMaterials([]);
+    setAiNewTags([]);
     setAiPendingAdopt(null);
     setAiMaterialMessage("");
   }
@@ -426,8 +429,14 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
   }
 
   function buildAiInput() {
-    if (aiMode === "images") return normalizeAiInput({ mode: "images", images: aiImages, note: aiNote });
-    return normalizeAiInput({ mode: "text", text: aiText, pages: parsedAiPages() });
+    const context = form ? {
+      stage: form.classification.stage,
+      subject: form.classification.subject,
+      grade: form.classification.grade,
+      questionType: form.classification.questionType,
+    } : undefined;
+    if (aiMode === "images") return normalizeAiInput({ mode: "images", images: aiImages, note: aiNote, context });
+    return normalizeAiInput({ mode: "text", text: aiText, pages: parsedAiPages(), context });
   }
 
   function requestAiSend() {
@@ -443,9 +452,12 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
     const id = crypto.randomUUID();
     setAiRequestId(id); setAiSending(true); setAiError(""); setAiMessage(""); setAiConfirming(false);
     try {
-      const draft = await window.paperweave.generateAiDraft(id, checked.input);
-      if (!isAiDraft(draft)) throw new Error("模型返回格式无法解析，请重试或手工录入");
-      setAiDraft(draft); setAiAdopted([]);
+      const result = await window.paperweave.generateAiDraft(id, checked.input);
+      if (!isAiDraft(result.draft)) throw new Error("模型返回格式无法解析，请重试或手工录入");
+      setAiDraft(result.draft);
+      setAiTagCandidates(result.tagCandidates);
+      setAiAdopted([]);
+      setAiNewTags([]);
       setAiMessage("AI 草稿已生成，请逐题对照原卷核对后采纳。");
     } catch (e) {
       const text = errorText(e);
@@ -463,7 +475,7 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
   function requestAdoptQuestion(index: number) {
     const question = aiDraft?.questions[index];
     if (!question || !form) return;
-    const result = aiQuestionToIntake(question, form.classification, section?.title ?? form.source.section);
+    const result = aiQuestionToIntake(question, form.classification, section?.title ?? form.source.section, aiTagCandidates);
     if (formHasContent(form)) setAiPendingAdopt({ index, result });
     else adoptQuestion(index, result);
   }
@@ -474,12 +486,21 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
     setAiUncertain(result.uncertain);
     setAiUncertainAck(result.uncertain.length === 0);
     setAiMaterials(result.materials);
+    setAiNewTags(result.newTags);
     setAiMaterialMessage("");
     setAiPendingAdopt(null);
     setAiAdopted((current) => current.includes(index) ? current : [...current, index]);
     const nextPage = Number(result.form.source.pdfPage);
     if (Number.isInteger(nextPage) && nextPage >= 1) setPage(nextPage);
     setMessage(`已采纳 AI 第 ${index + 1} 题到表单，请核对并处理待核项后保存。`);
+  }
+
+  function adoptAiTag(tag: string) {
+    if (!form) return;
+    const knowledgePoints = [...new Set([...form.classification.knowledgePoints, tag])];
+    setForm({ ...form, classification: { ...form.classification, knowledgePoints } });
+    setKnowledgeText(knowledgePoints.join("，"));
+    setAiNewTags((current) => current.filter((item) => item !== tag));
   }
 
   async function loadExamText() {
@@ -517,12 +538,12 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
 
   function changeAiMode(mode: "images" | "text") {
     if (aiSending) return;
-    setAiMode(mode); setAiConfirming(false); setAiDraft(null); setAiAdopted([]); setAiError(""); setAiMessage("");
+    setAiMode(mode); setAiConfirming(false); setAiDraft(null); setAiAdopted([]); setAiNewTags([]); setAiError(""); setAiMessage("");
   }
 
   function removeAiImage(index: number) {
     setAiImages((current) => current.filter((_, position) => position !== index));
-    setAiConfirming(false); setAiDraft(null); setAiAdopted([]);
+    setAiConfirming(false); setAiDraft(null); setAiAdopted([]); setAiNewTags([]);
   }
 
   return <main className="paper-app intake-app">
@@ -646,6 +667,15 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
             <h2>AI 待核项</h2>
             <ul className="review-problems">{aiUncertain.map((item) => <li key={item}>{item}</li>)}</ul>
             <label className="inline"><input type="checkbox" checked={aiUncertainAck} onChange={(event) => setAiUncertainAck(event.target.checked)} />我已核对 AI 待核项</label>
+          </section>}
+          {aiNewTags.length > 0 && <section className="paper-panel" aria-label="AI 建议新标签">
+            <h2>AI 建议新标签</h2>
+            <p className="muted">这些标签不在本科目已有标签中，采用后才会写入本题知识点。</p>
+            <ul>{aiNewTags.map((tag) => <li key={tag} className="paper-inline">
+              <span>{tag}</span>
+              <button onClick={() => adoptAiTag(tag)}>采用标签</button>
+              <button onClick={() => setAiNewTags((current) => current.filter((item) => item !== tag))}>忽略</button>
+            </li>)}</ul>
           </section>}
           <section className="paper-panel" aria-label="分类与来源">
             <h2>分类与来源</h2>

@@ -35,7 +35,8 @@ function structured(): AiQuestion {
 
 test("结构化 AI 题映射为录题表单：小问、选项、答案、原分值与来源", () => {
   const result = aiQuestionToIntake(structured(), classification, "数学·解答题");
-  expect(result.form.classification.knowledgePoints).toEqual(["原有知识点", "函数", "一元二次方程"]);
+  expect(result.form.classification.knowledgePoints).toEqual(["原有知识点"]);
+  expect(result.newTags).toEqual(["函数", "一元二次方程"]);
   expect(result.form.classification.questionType).toBe("解答题");
   expect(result.form.source).toEqual({ section: "数学·解答题", pdfPage: "3", originalNumber: "19" });
   expect(result.form.subQuestions).toHaveLength(2);
@@ -48,8 +49,19 @@ test("结构化 AI 题映射为录题表单：小问、选项、答案、原分�
     originalScore: "4",
   });
   expect(result.form.subQuestions[1].originalScore).toBe("6");
-  expect(result.uncertain).toEqual(["整体待核", "第(1)小问：公式待核"]);
+  expect(result.uncertain).toEqual(["整体待核", "第(1)小问：公式待核", "作答位置需手工录入：AI 不生成空位，请在表单中补录。"]);
   expect(result.materials).toEqual([{ title: "材料一", content: "材料正文", source: "自制" }]);
+});
+
+test("候选标签并入知识点，候选外标签只作建议等待教师确认", () => {
+  const inside = aiQuestionToIntake(structured(), classification, "数学·解答题", ["函数", "一元二次方程"]);
+  expect(inside.form.classification.knowledgePoints).toEqual(["原有知识点", "函数", "一元二次方程"]);
+  expect(inside.newTags).toEqual([]);
+
+  const outside = aiQuestionToIntake(structured(), classification, "数学·解答题", ["函数"]);
+  expect(outside.form.classification.knowledgePoints).toEqual(["原有知识点", "函数"]);
+  expect(outside.newTags).toEqual(["一元二次方程"]);
+  expect(outside.uncertain).toContain("作答位置需手工录入：AI 不生成空位，请在表单中补录。");
 });
 
 test("旧格式没有 parts 时按小问文字降级，选项归入第一小问", () => {
@@ -70,7 +82,7 @@ test("旧格式没有 parts 时按小问文字降级，选项归入第一小问"
   ]);
   expect(result.form.subQuestions[0].options).toBe("甲\n乙");
   expect(result.form.subQuestions[0].originalScore).toBe("");
-  expect(result.uncertain).toEqual([]);
+  expect(result.uncertain).toEqual(["作答位置需手工录入：AI 不生成空位，请在表单中补录。"]);
 });
 
 test("只有题干没有小问时作为单小问录入，避免空题干", () => {
