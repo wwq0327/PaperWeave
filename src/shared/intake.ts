@@ -1,3 +1,4 @@
+import type { TextStyle } from "./document";
 import {
   classificationProblem,
   hasContent,
@@ -17,11 +18,36 @@ import {
 
 /** 录题表单的内容块；文字块内可用 $…$ 写行内公式，单独一行 $$…$$ 为独立公式。 */
 export type IntakeBlock =
-  | { kind: "text"; text: string }
+  | { kind: "text"; text: string; style?: TextStyle; continuesPrevious?: boolean }
   | { kind: "formula"; latex: string }
   | { kind: "image"; id: string; alt: string; figureId?: string }
   | { kind: "table"; rows: string[][] }
   | { kind: "reference"; refKind: ReferenceKind; targetId: string; fallback: string };
+
+const textStyles = new Set<TextStyle>(["普通", "粗体", "斜体", "下划线", "上标", "下标"]);
+
+function readTextStyle(value: unknown, label: string, problems: string[]): TextStyle {
+  if (value === undefined) return "普通";
+  if (typeof value === "string" && textStyles.has(value as TextStyle)) return value as TextStyle;
+  problems.push(`${label}的文字样式无效`);
+  return "普通";
+}
+
+/** 同一题内的小问号查重：忽略全半角括号、空白与大小写，空号不参与。 */
+export function duplicateSubLabels(labels: string[]): string[] {
+  const first = new Map<string, string>();
+  const reported = new Set<string>();
+  const duplicates: string[] = [];
+  for (const raw of labels) {
+    const label = raw.trim();
+    const key = label.replace(/[（）()]/g, "").replace(/\s+/g, "").toLowerCase();
+    if (!key) continue;
+    const existing = first.get(key);
+    if (existing === undefined) { first.set(key, label); continue; }
+    if (!reported.has(key)) { duplicates.push(existing); reported.add(key); }
+  }
+  return duplicates;
+}
 
 const referenceKinds = new Set<ReferenceKind>(["subQuestion", "material", "figure"]);
 /** 表单中的引用目标，供录题界面选择；label 为插入时写入的回退文字。 */
@@ -61,6 +87,8 @@ export interface IntakeSubQuestion {
   slotAnswers: IntakeSlotAnswer[];
   explanation: IntakeBlock[];
   options: string;
+  /** 选项行对应的整行文字样式，与选项行按位置对应；缺省为普通。 */
+  optionStyles?: TextStyle[];
   scoring: IntakeScoringPoint[];
   slots: IntakeSlot[];
   originalScore: string;
@@ -139,6 +167,7 @@ export function blankSubQuestion(): IntakeSubQuestion {
     slotAnswers: [],
     explanation: [],
     options: "",
+    optionStyles: [],
     scoring: [],
     slots: [],
     originalScore: "",
@@ -158,11 +187,11 @@ export function newIntakeForm(classification: Classification, section: string): 
   };
 }
 
-function parseTextBlocks(text: string, label: string, problems: string[]): QuestionBlock[] {
+function parseTextBlocks(text: string, label: string, problems: string[], style: TextStyle = "普通", keepLeadingSpace = false): QuestionBlock[] {
   const blocks: QuestionBlock[] = [];
   for (const raw of text.split("\n")) {
-    const line = raw.trim();
-    if (!line) continue;
+    const line = keepLeadingSpace ? raw.trimEnd() : raw.trim();
+    if (!line.trim()) continue;
     const display = /^\$\$(.+)\$\$$/.exec(line);
     if (display) {
       if (!display[1].trim()) problems.push(`${label}的公式不能为空`);
@@ -179,12 +208,12 @@ function parseTextBlocks(text: string, label: string, problems: string[]): Quest
     const pattern = /\$([^$]+)\$/g;
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(line)) !== null) {
-      if (match.index > last) runs.push({ type: "text", text: line.slice(last, match.index), style: "普通" });
+      if (match.index > last) runs.push({ type: "text", text: line.slice(last, match.index), style });
       if (!match[1].trim()) problems.push(`${label}的公式不能为空`);
       else runs.push({ type: "formula", latex: match[1] });
       last = match.index + match[0].length;
     }
-    if (last < line.length) runs.push({ type: "text", text: line.slice(last), style: "普通" });
+    if (last < line.length) runs.push({ type: "text", text: line.slice(last), style });
     if (runs.length > 0) blocks.push({ type: "paragraph", runs });
   }
   return blocks;
@@ -194,7 +223,15 @@ function intakeBlocks(blocks: IntakeBlock[], label: string, problems: string[]):
   const result: QuestionBlock[] = [];
   for (const block of blocks) {
     if (block.kind === "text") {
-      result.push(...parseTextBlocks(block.text, label, problems));
+      const previous = result[result.length - 1];
+      const merges = block.continuesPrevious === true && previous?.type === "paragraph";
+      const parsed = parseTextBlocks(block.text, label, problems, readTextStyle(block.style, label, problems), merges);
+      if (merges && parsed[0]?.type === "paragraph") {
+        previous.runs.push(...parsed[0].runs);
+        result.push(...parsed.slice(1));
+      } else {
+        result.push(...parsed);
+      }
       continue;
     }
     if (block.kind === "formula") {
@@ -231,8 +268,17 @@ function intakeBlocks(blocks: IntakeBlock[], label: string, problems: string[]):
 function paragraphToIntake(block: Extract<QuestionBlock, { type: "paragraph" }>): IntakeBlock[] {
   const result: IntakeBlock[] = [];
   let text = "";
+  let style: TextStyle = "普通";
   const flush = () => {
-    if (text.trim()) result.push({ kind: "text", text });
+    if (text.trim()) {
+      const previous = result[result.length - 1];
+      result.push({
+        kind: "text",
+        text,
+        ...(style === "普通" ? {} : { style }),
+        ...(previous?.kind === "text" ? { continuesPrevious: true } : {}),
+      });
+    }
     text = "";
   };
   for (const run of block.runs) {
@@ -241,7 +287,13 @@ function paragraphToIntake(block: Extract<QuestionBlock, { type: "paragraph" }>)
       result.push({ kind: "reference", refKind: run.kind, targetId: run.targetId, fallback: run.fallback });
       continue;
     }
-    text += run.type === "text" ? run.text : `$${run.latex}$`;
+    if (run.type === "text") {
+      if (text.trim() && run.style !== style) flush();
+      style = run.style;
+      text += run.text;
+    } else {
+      text += `$${run.latex}$`;
+    }
   }
   flush();
   return result;
@@ -273,12 +325,27 @@ const blockHasReference = (block: QuestionBlock): boolean =>
   block.type === "paragraph" && block.runs.some((run) => run.type === "reference");
 const blocksHaveReference = (blocks: QuestionBlock[]): boolean => blocks.some(blockHasReference);
 
-/** 录题工作台只编辑自己可完整表达的内容；选项引用或答案变体先拒绝，避免保存时静默丢失。 */
+/** 选项整行只能有一种文字样式；混合样式无法在单行选项表单中无损表达。 */
+function uniformOptionStyle(content: QuestionBlock[]): TextStyle | null {
+  let found: TextStyle | null = null;
+  for (const block of content) {
+    if (block.type !== "paragraph") continue;
+    for (const run of block.runs) {
+      if (run.type !== "text" || !run.text.trim()) continue;
+      if (found === null) found = run.style;
+      else if (found !== run.style) return null;
+    }
+  }
+  return found ?? "普通";
+}
+
+/** 录题工作台只编辑自己可完整表达的内容；选项引用、混合样式或答案变体先拒绝，避免保存时静默丢失。 */
 function editabilityProblem(content: QuestionContent): string | null {
   for (const sub of content.subQuestions) {
     for (const option of sub.options) {
       if (blocksHaveReference(option.content)) return "选项含引用，暂不能在录题工作台编辑";
       if (option.content.some((block) => block.type === "image" || block.type === "table")) return "选项含图片或表格，暂不能在录题工作台编辑";
+      if (uniformOptionStyle(option.content) === null) return "选项含混合文字样式，录题工作台不能完整表达；请改用原卷裁图替代";
     }
     for (const answer of sub.answers) {
       if (answer.variants.length > 0) return "该题含答案变体，暂不能在录题工作台编辑";
@@ -308,6 +375,7 @@ export function contentToForm(
         slotAnswers: sub.answers.flatMap((answer) => answer.slotId === null ? [] : [{ slotId: answer.slotId, blocks: blocksToIntake(answer.blocks) }]),
         explanation: blocksToIntake(sub.explanation),
         options: sub.options.map((option) => blocksToText(option.content)).join("\n"),
+        optionStyles: sub.options.map((option) => uniformOptionStyle(option.content) ?? "普通"),
         scoring: sub.scoring.map((point) => ({ description: point.description, score: String(point.score), slotIds: [...point.slotIds] })),
         slots: sub.slots.map((slot) => ({ ...slot, interchangeableWith: [...slot.interchangeableWith] })),
         originalScore: sub.originalScore === null ? "" : String(sub.originalScore),
@@ -382,9 +450,10 @@ export function buildContent(form: IntakeForm): IntakeBuildResult {
     }
     const lines = sub.options.split("\n").map((line) => line.trim()).filter(Boolean);
     if (lines.length > 26) problems.push(`${label}的选项超过 26 个`);
+    const optionStyles = sub.optionStyles ?? [];
     const options = lines.map((line, optionIndex) => ({
       label: String.fromCharCode(65 + optionIndex),
-      content: parseTextBlocks(line, `${label}选项`, problems),
+      content: parseTextBlocks(line, `${label}选项`, problems, readTextStyle(optionStyles[optionIndex], `${label}选项`, problems)),
     }));
     const scoring = [];
     for (const point of sub.scoring) {

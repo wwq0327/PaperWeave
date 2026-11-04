@@ -1,10 +1,30 @@
 import { test, expect, _electron as electron, type Page } from "@playwright/test";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+import "pdfjs-dist/legacy/build/pdf.worker.mjs";
 
 const entry = path.resolve(".vite/build/main.cjs");
 const fixture = path.resolve("tests/fixtures/two-pages.pdf");
+
+async function pdfTextItems(data: Uint8Array) {
+  const loading = getDocument({ data, useSystemFonts: true, disableFontFace: true });
+  const document = await loading.promise;
+  const items: { text: string; fontSize: number; y: number }[] = [];
+  try {
+    for (let page = 1; page <= document.numPages; page++) {
+      const content = await (await document.getPage(page)).getTextContent();
+      for (const item of content.items) {
+        if (!("str" in item) || !item.str.trim()) continue;
+        items.push({ text: item.str, fontSize: item.height, y: item.transform[5] });
+      }
+    }
+  } finally {
+    await loading.destroy().catch(() => undefined);
+  }
+  return items;
+}
 
 async function closeApp(app: Awaited<ReturnType<typeof electron.launch>>) {
   await app.evaluate(({ app: electronApp }) => { electronApp.exit(0); }).catch(() => undefined);
@@ -159,6 +179,128 @@ test("导入原卷、裁图录题、保存草稿并在重开后继续编辑与�
     await expect(page.getByLabel("空位 1 与空位 2 互换")).toBeChecked();
     await expect(page.getByLabel("小问 1 空位 1 答案 文字 1", { exact: true })).toHaveValue("甲");
     await expect(page.getByRole("group", { name: "小问 1 评分点" }).getByLabel("评分点 1 关联空位 1")).toBeChecked();
+  } finally {
+    await closeApp(app);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("粗体与上下标题干保存重开后保留样式，组卷 PDF 仍按样式渲染", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-style-"));
+  const outDir = mkdtempSync(path.join(tmpdir(), "paperweave-style-out-"));
+  let app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`] });
+  try {
+    let page = await app.firstWindow();
+    await importExam(page, app);
+    await app.evaluate(({ dialog, shell }, target) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] });
+      shell.openPath = async () => "";
+    }, outDir);
+
+    await page.getByLabel("原卷页码", { exact: true }).fill("1");
+    await page.getByLabel("原题号").fill("3");
+    await page.getByLabel("知识点（逗号分隔）").fill("数与代数");
+    const stemGroup = page.getByRole("group", { name: "题干", exact: true });
+    await page.getByLabel("题干 文字 1", { exact: true }).fill("合成题：粗体");
+    await stemGroup.getByLabel("题干 文字样式 1", { exact: true }).selectOption("粗体");
+    await stemGroup.getByRole("button", { name: "添加文字" }).click();
+    await stemGroup.getByLabel("题干 文字 2", { exact: true }).fill("x");
+    await stemGroup.getByLabel("题干 文字样式 2", { exact: true }).selectOption("上标");
+    await stemGroup.getByLabel("题干 接续上一段 2", { exact: true }).check();
+    await stemGroup.getByRole("button", { name: "添加文字" }).click();
+    await stemGroup.getByLabel("题干 文字 3", { exact: true }).fill(" 与 y");
+    await stemGroup.getByLabel("题干 文字样式 3", { exact: true }).selectOption("下标");
+    await stemGroup.getByLabel("题干 接续上一段 3", { exact: true }).check();
+
+    await page.getByLabel("小问 1 题干 文字 1", { exact: true }).fill("求值。");
+    await page.getByLabel("选项（每行一个）").fill("选项甲\n选项乙");
+    await page.getByLabel("小问 1 选项样式 1", { exact: true }).selectOption("下划线");
+    await page.getByRole("group", { name: "小问 1 答案" }).getByRole("button", { name: "添加文字" }).click();
+    await page.getByLabel("小问 1 答案 文字 1", { exact: true }).fill("答案一");
+    await page.getByRole("button", { name: "提交待核" }).click();
+    await expect(page.getByText("已提交待核（版本 1）。", { exact: true })).toBeVisible();
+
+    // 重开应用：样式、接续关系与选项样式按原样回填。
+    await closeApp(app);
+    app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`] });
+    page = await app.firstWindow();
+    await app.evaluate(({ dialog, shell }, target) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] });
+      shell.openPath = async () => "";
+    }, outDir);
+    await page.getByRole("button", { name: "考试原卷" }).click();
+    await page.getByRole("button", { name: "进入录题" }).click();
+    await page.locator("section[aria-label='本卷题目']").getByRole("button", { name: "编辑" }).click();
+    await expect(page.getByText("已打开题目（版本 1）。", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("题干 文字样式 1", { exact: true })).toHaveValue("粗体");
+    await expect(page.getByLabel("题干 文字样式 2", { exact: true })).toHaveValue("上标");
+    await expect(page.getByLabel("题干 接续上一段 2", { exact: true })).toBeChecked();
+    await expect(page.getByLabel("题干 文字样式 3", { exact: true })).toHaveValue("下标");
+    await expect(page.getByLabel("题干 接续上一段 3", { exact: true })).toBeChecked();
+    await expect(page.getByLabel("题干 文字 3", { exact: true })).toHaveValue(" 与 y");
+    await expect(page.getByLabel("小问 1 选项样式 1", { exact: true })).toHaveValue("下划线");
+
+    await page.getByRole("button", { name: "返回考试原卷" }).click();
+    await page.getByRole("button", { name: "返回录题草稿" }).click();
+    await page.getByRole("button", { name: "题目审核" }).click();
+    const card = page.locator(".paper-card", { hasText: "合成题：粗体" });
+    await card.getByRole("button", { name: "查看并审核" }).click();
+    const detail = page.getByRole("region", { name: "题目审核详情" });
+    await detail.getByRole("button", { name: "通过内容审核" }).click();
+    await detail.getByRole("button", { name: "通过答案审核" }).click();
+
+    await page.getByRole("button", { name: "去题库与组卷" }).click();
+    const result = page.locator(".paper-card", { hasText: "合成题：粗体" });
+    await result.getByRole("button", { name: "整题入篮" }).click();
+    await page.getByLabel("标题", { exact: true }).fill("样式保留卷");
+    await page.getByRole("button", { name: "创建试卷" }).click();
+    await page.getByRole("button", { name: "添加小节" }).click();
+    await page.getByRole("region", { name: "题篮" }).getByRole("button", { name: "加入试卷" }).click();
+    await page.getByRole("button", { name: "检查定稿" }).click();
+    await expect(page.getByText("定稿检查通过。", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "生成学生卷与教师答案卷" }).click();
+    const confirm = page.getByRole("dialog", { name: "确认定稿" });
+    await expect(confirm).toBeVisible({ timeout: 30000 });
+    await confirm.getByRole("button", { name: "确认保存为定稿" }).click();
+    await expect(page.getByText(/双卷已保存为定稿/)).toBeVisible({ timeout: 30000 });
+
+    const directories = readdirSync(outDir).filter((name) => name.startsWith("拾题成卷-样张-"));
+    expect(directories).toHaveLength(1);
+    const student = readFileSync(path.join(outDir, directories[0], "学生卷.pdf"));
+    const items = await pdfTextItems(new Uint8Array(student));
+    const normal = items.find((item) => item.text.includes("合成题：粗体"));
+    const superscript = items.find((item) => item.text.trim() === "x");
+    const subscript = items.find((item) => item.text.trim() === "y");
+    expect(normal).toBeDefined();
+    expect(superscript).toBeDefined();
+    expect(subscript).toBeDefined();
+    // 上下标以更小字号、抬升/下沉基线渲染；粗体与正文使用不同字体。
+    expect(superscript!.fontSize).toBeLessThan(normal!.fontSize * 0.9);
+    expect(subscript!.fontSize).toBeLessThan(normal!.fontSize * 0.9);
+    expect(superscript!.y).toBeGreaterThan(normal!.y);
+    expect(subscript!.y).toBeLessThan(normal!.y);
+  } finally {
+    await closeApp(app);
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test("同一题内小问号重复时拒绝保存并指出重复项", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-intake-labels-"));
+  const app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`] });
+  try {
+    const page = await app.firstWindow();
+    await importExam(page, app);
+    await page.getByLabel("原题号").fill("4");
+    await page.getByLabel("题干 文字 1", { exact: true }).fill("合成题：小问号查重。");
+    await page.getByLabel("小问 1 题干 文字 1", { exact: true }).fill("第一问。");
+    await page.getByRole("button", { name: "添加小问" }).click();
+    const second = page.getByRole("group", { name: "小问 2", exact: true });
+    await second.getByLabel("小问号").fill("（1）");
+    await second.getByLabel("小问 2 题干 文字 1", { exact: true }).fill("第二问。");
+    await page.getByRole("button", { name: "提交待核" }).click();
+    await expect(page.getByRole("alert")).toContainText("小问号重复：(1)");
   } finally {
     await closeApp(app);
     rmSync(dir, { recursive: true, force: true });

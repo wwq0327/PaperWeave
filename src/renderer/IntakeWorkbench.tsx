@@ -4,7 +4,7 @@ import { AI_LIMITS, base64Bytes, isAiDraft, normalizeAiInput, type AiDraft, type
 import type { AiConfig } from "../shared/ai-config";
 import { aiQuestionToIntake, type AiIntakeResult } from "../shared/ai-intake";
 import type { ExamDetailView, ExamQuestionSummary } from "../shared/exam";
-import type { Block } from "../shared/document";
+import { TEXT_STYLES, type Block, type TextStyle } from "../shared/document";
 import { blankSubQuestion, buildContent, contentToForm, newIntakeForm, type IntakeBlock, type IntakeDuplicateSummary, type IntakeForm, type IntakeMaterial, type IntakeReferenceOption, type IntakeSlot, type IntakeSubQuestion } from "../shared/intake";
 import type { Classification, QuestionBlock, QuestionContent, ReviewStatus, Stage } from "../shared/question";
 import BlockListEditor from "./BlockListEditor";
@@ -174,6 +174,18 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
   };
   const setSubBlocks = (key: string, field: SubField, blocks: IntakeBlock[]) => {
     setForm((current) => current && ({ ...current, subQuestions: current.subQuestions.map((sub) => sub.key === key ? { ...sub, [field]: blocks } : sub) }));
+  };
+  const setOptionStyle = (key: string, optionIndex: number, style: TextStyle) => {
+    setForm((current) => current && ({
+      ...current,
+      subQuestions: current.subQuestions.map((sub) => {
+        if (sub.key !== key) return sub;
+        const optionStyles = [...(sub.optionStyles ?? [])];
+        while (optionStyles.length <= optionIndex) optionStyles.push("普通");
+        optionStyles[optionIndex] = style;
+        return { ...sub, optionStyles };
+      }),
+    }));
   };
   const setSlotAnswer = (key: string, slotId: string, blocks: IntakeBlock[]) => {
     setForm((current) => current && ({
@@ -708,6 +720,11 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
               </div>
               <BlockListEditor label={`小问 ${index + 1} 题干`} blocks={sub.prompt} disabled={busy} referenceOptions={referenceOptionsFor(sub.key)} onChange={(blocks) => setSubBlocks(sub.key, "prompt", blocks)} onCrop={() => requestCrop({ field: "prompt", subKey: sub.key })} />
               <label>选项（每行一个）<textarea value={sub.options} onChange={(event) => updateSub(sub.key, { options: event.target.value })} placeholder="选项甲&#10;选项乙" /></label>
+              <div className="paper-inline" aria-label={`小问 ${index + 1} 选项文字样式`}>
+                {sub.options.split("\n").map((line, optionIndex) => line.trim() === "" ? null : <label key={optionIndex}>选项 {String.fromCharCode(65 + optionIndex)} 样式<select aria-label={`小问 ${index + 1} 选项样式 ${optionIndex + 1}`} value={sub.optionStyles?.[optionIndex] ?? "普通"} disabled={busy} onChange={(event) => setOptionStyle(sub.key, optionIndex, event.target.value as TextStyle)}>
+                  {TEXT_STYLES.map((style) => <option key={style}>{style}</option>)}
+                </select></label>)}
+              </div>
               <fieldset className="intake-slots" aria-label={`小问 ${index + 1} 作答位置`}>
                 <legend>作答位置</legend>
                 {sub.slots.length === 0 && <p className="muted">未设置作答位置；答案按整题记录。</p>}
