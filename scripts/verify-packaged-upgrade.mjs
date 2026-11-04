@@ -147,6 +147,7 @@ try {
     exportRoot,
     stem,
     answer: "7",
+    confirmFinalize: false, // 上一版构建没有定稿前预览确认
   });
   await harness.close();
   harness = undefined;
