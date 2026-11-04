@@ -57,3 +57,36 @@ test("扫描 Tiku 预览、导入自制题目，再次扫描全部跳过重复",
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("mathVault 迁入：第 25 题待校勘需确认，确认后导入并跳过重复", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-mathvault-"));
+  const app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`] });
+  try {
+    const page = await app.firstWindow();
+    await page.getByRole("button", { name: "旧库迁入" }).click();
+    await stubDirectory(app, path.resolve("tests/fixtures/mathvault-mini"));
+    await page.getByRole("button", { name: "扫描 mathVault 根目录" }).click();
+    const preview = page.getByRole("region", { name: "迁入预览" });
+    await expect(preview).toBeVisible();
+    await expect(page.getByText(/可导入 2 · 完全重复 0/)).toBeVisible();
+    await expect(preview).toContainText("M2023-NCZK-025");
+    await expect(preview).toContainText("待校勘");
+    await expect(preview).toContainText("M2024-TEST-019");
+
+    await page.getByRole("button", { name: "执行导入" }).click();
+    await expect(page.getByText(/该来源待校勘，请先确认校勘说明/)).toBeVisible();
+    await page.getByLabel("我已核对校勘说明").check();
+    await page.getByRole("button", { name: "执行导入" }).click();
+    await expect(page.getByText("导入完成：新增 2，修订 0，保留 0。", { exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "迁入批次" })).toContainText("mathvault-mini");
+
+    await page.getByRole("button", { name: "返回录题草稿" }).click();
+    await page.getByRole("button", { name: "旧库迁入" }).click();
+    await stubDirectory(app, path.resolve("tests/fixtures/mathvault-mini"));
+    await page.getByRole("button", { name: "扫描 mathVault 根目录" }).click();
+    await expect(page.getByText(/可导入 0 · 完全重复 2/)).toBeVisible();
+  } finally {
+    await closeApp(app);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

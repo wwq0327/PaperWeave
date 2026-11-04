@@ -8,5 +8,6 @@
 | `two-pages.pdf` | 两页文字，用于页码顺序检查 | 同上，原文用换页符分出两页 |
 | `blank.pdf` | 一页无文字，模拟扫描件无文字层 | 同上，原文只有空白 |
 | `tiku-mini/` | 自制 Tiku 目录：两道题、一段材料、一张 1×1 PNG | 手写 Markdown 与 base64 PNG，不含真实题库 |
+| `mathvault-mini/` | 自制 mathVault 目录：带公式／配图的数学题与第 25 题校勘夹具 | 手写 Markdown 与 base64 PNG，不含真实题库 |
 
 重新生成时可在 macOS 上用 `cupsfilter` 从纯文本输出 PDF。真实试卷样本按项目规则留在 `research/pdfs/`（不入库），不放进本目录。

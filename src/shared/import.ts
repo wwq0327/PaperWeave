@@ -26,6 +26,7 @@ export interface ImportRow {
   target?: ImportTarget;
   incoming?: QuestionContent;
   canRevise: boolean;
+  needsProofread?: boolean;
   legacyStatus?: string;
 }
 
@@ -47,6 +48,7 @@ export interface ImportScanView {
 export interface ImportApplyRow {
   sourceKey: string;
   action: ImportDecision;
+  acknowledgeProofread?: boolean;
 }
 
 export interface ImportApplyResult {

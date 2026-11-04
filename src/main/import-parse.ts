@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
 import { imageMime } from "./attachments";
 import type { Inline } from "../shared/document";
 import type { QuestionBlock } from "../shared/question";
@@ -25,6 +26,25 @@ export interface BlockParseResult {
 }
 
 export const sha256 = (data: Buffer | string): string => createHash("sha256").update(data).digest("hex");
+
+/** 递归收集文件；读目录失败按空目录处理。 */
+export function walk(directory: string, match: (name: string) => boolean): string[] {
+  const files: string[] = [];
+  let entries;
+  try { entries = readdirSync(directory, { withFileTypes: true }); } catch { return files; }
+  for (const entry of entries) {
+    const full = join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...walk(full, match));
+    else if (entry.isFile() && match(entry.name)) files.push(full);
+  }
+  return files;
+}
+
+export function inside(root: string, path: string): boolean {
+  const base = resolve(root);
+  const target = resolve(path);
+  return target === base || target.startsWith(base + sep);
+}
 
 /** 支持标量、内联列表与缩进 `-` 列表；未知字段原样保留。 */
 export function parseFrontmatter(text: string): Frontmatter {
