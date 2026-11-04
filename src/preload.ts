@@ -7,4 +7,5 @@ contextBridge.exposeInMainWorld("paperweave", {
   saveDraft: (draft: unknown) => ipcRenderer.invoke("editor:save", draft),
   chooseImage: () => ipcRenderer.invoke("editor:chooseImage"),
   getImage: (id: string) => ipcRenderer.invoke("editor:image", id),
+  exportPdf: () => ipcRenderer.invoke("pdf:export"),
 });

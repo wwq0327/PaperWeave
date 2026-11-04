@@ -11,6 +11,7 @@ declare global {
       saveDraft(draft: Draft): Promise<void>;
       chooseImage(): Promise<{ id: string; url: string } | null>;
       getImage(id: string): Promise<string>;
+      exportPdf(): Promise<{ canceled: true } | { canceled: false; path: string; openError: string }>;
     };
   }
 }

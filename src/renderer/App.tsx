@@ -7,11 +7,11 @@ import "./editor.css";
 const styles: TextStyle[] = ["普通", "粗体", "斜体", "下划线", "上标", "下标"];
 const newRun = (): Inline => ({ type: "text", text: "", style: "普通" });
 function Formula({ latex, display = false }: { latex: string; display?: boolean }) {
-  if (!latex) return <span className="muted">输入 LaTeX 后预览</span>;
+  if (!latex) return <span className="muted" data-invalid-formula>输入 LaTeX 后预览</span>;
   try {
     const html = katex.renderToString(latex, { displayMode: display, throwOnError: true, trust: false, strict: "error" });
     return <span aria-label="公式预览" dangerouslySetInnerHTML={{ __html: html }} />;
-  } catch { return <span role="alert">公式无法渲染，请检查表达式。</span>; }
+  } catch { return <span role="alert" data-invalid-formula>公式无法渲染，请检查表达式。</span>; }
 }
 function ImageView({ id, alt, cache }: { id: string; alt: string; cache: Record<string, string> }) {
   const [url, setUrl] = useState(cache[id]);
@@ -41,6 +41,7 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [imageCache, setImageCache] = useState<Record<string, string>>({});
   useEffect(() => { window.paperweave.loadDraft().then((value) => { if (!isDraft(value)) throw Error("草稿格式不受支持"); setDraft(value); setSaved(JSON.stringify(value)); }).catch((e: unknown) => setError(`读取失败：${String(e)}。原数据已保留。`)); }, []);
   useEffect(() => { const handler = (event: BeforeUnloadEvent) => { if (draft && JSON.stringify(draft) !== saved) { event.preventDefault(); event.returnValue = ""; } }; window.addEventListener("beforeunload", handler); return () => window.removeEventListener("beforeunload", handler); }, [draft, saved]);
@@ -58,6 +59,32 @@ export default function App() {
     try { const picked = await window.paperweave.chooseImage(); if (!picked) return; setImageCache((old) => ({ ...old, [picked.id]: picked.url })); append({ type: "image", id: picked.id, alt: "" }); }
     catch (e) { setError(`无法添加图片：${String(e)}`); }
   }
+  async function exportPdf() {
+    setExporting(true); setError(""); setMessage("");
+    try {
+      // 等待界面进入不可编辑状态，再检查预览实际使用的字体、图片和尺寸。
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      await document.fonts.ready;
+      if ([...document.fonts].some((font) => font.status === "error")) throw Error("字体加载失败，请重试");
+      const preview = document.querySelector<HTMLElement>(".preview");
+      if (!preview || preview.querySelector("[data-invalid-formula]")) throw Error("存在空白或无法渲染的公式，请先修改");
+      if (preview.querySelectorAll("img").length !== draft?.blocks.filter((block) => block.type === "image").length) throw Error("图片尚未加载或读取失败，请稍后重试");
+      const width = 170 * 96 / 25.4;
+      const height = 257 * 96 / 25.4;
+      for (const image of preview.querySelectorAll("img")) {
+        await image.decode();
+        if (!image.naturalWidth || !image.naturalHeight) throw Error("图片无法读取");
+        if (image.naturalWidth > width || image.naturalHeight > height) throw Error("图片超过 A4 可打印区域，请先调整图片尺寸后重新添加");
+      }
+      for (const element of preview.querySelectorAll<HTMLElement>(".katex, tr")) {
+        const rect = element.getBoundingClientRect();
+        if (rect.width > width + 1 || rect.height > height + 1 || element.scrollWidth > width + 1) throw Error("公式或表格超出 A4 可打印区域，请调整后重试");
+      }
+      const result = await window.paperweave.exportPdf();
+      if (!result.canceled) setMessage(result.openError ? `PDF 已保存，但无法自动打开：${result.openError}` : "PDF 已保存并打开，可在预览程序中打印。");
+    } catch (e) { setError(`无法生成 PDF：${String(e)}。草稿仍在。`); }
+    finally { setExporting(false); }
+  }
   function paste(event: React.ClipboardEvent) {
     if (event.clipboardData.types.includes("text/html") || [...event.clipboardData.items].some((item) => item.kind === "file")) {
       event.preventDefault(); setError("不支持直接粘贴带格式的内容或图片。请先粘贴为纯文本，图片请用“添加图片”；复杂内容可保留清晰裁图并核对。");
@@ -66,6 +93,7 @@ export default function App() {
   if (!draft) return <main><h1>拾题成卷</h1><p role={error ? "alert" : undefined}>{error || "正在读取草稿…"}</p></main>;
   const dirty = JSON.stringify(draft) !== saved;
   return <main onPasteCapture={paste}>
+    <fieldset disabled={exporting} className="editor-controls">
     <header><div><h1>编辑草稿</h1><p>本地试用版 · 内容需要自行核对</p></div><button onClick={save} disabled={saving || !dirty}>{saving ? "保存中…" : "保存草稿"}</button></header>
     <p className="intro">按顺序添加内容。文本可分成多段以设置样式；公式使用 LaTeX。表格仅支持纯文字，不支持合并单元格。复杂格式请保留清晰裁图或手工改写并核对。</p>
     <div className="toolbar" aria-label="添加内容"><button onClick={() => append({ type: "paragraph", runs: [newRun()] })}>添加段落</button><button onClick={() => append({ type: "formula", latex: "" })}>添加独立公式</button><button onClick={addImage}>添加图片</button><button onClick={() => append({ type: "table", rows: [["", ""], ["", ""]] })}>添加表格</button></div>
@@ -84,6 +112,8 @@ export default function App() {
       {block.type === "table" && <><div className="table-scroll"><table><tbody>{block.rows.map((row, y) => <tr key={y}>{row.map((cell, x) => <td key={x}><input aria-label={`第 ${y + 1} 行第 ${x + 1} 列`} value={cell} onChange={(e) => update(index, { ...block, rows: block.rows.map((r, yi) => r.map((c, xi) => yi === y && xi === x ? e.target.value : c)) })} /></td>)}</tr>)}</tbody></table></div><div className="toolbar"><button disabled={block.rows.length >= 30} onClick={() => update(index, { ...block, rows: [...block.rows, block.rows[0].map(() => "")] })}>添加行</button><button disabled={block.rows[0].length >= 10} onClick={() => update(index, { ...block, rows: block.rows.map((r) => [...r, ""]) })}>添加列</button></div></>}
     </section>)}
     {!draft.blocks.length && <p>暂无内容，可从上方添加段落。</p>}
+    <button onClick={exportPdf} disabled={saving}>{exporting ? "正在生成 PDF…" : "生成并预览草稿 PDF"}</button>
+    </fieldset>
     <Preview draft={draft} cache={imageCache} />
   </main>;
 }

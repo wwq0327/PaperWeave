@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog } from "electron";
 import { join } from "node:path";
 import { Database } from "./main/database";
 import { registerEditor } from "./main/editor";
+import { registerPdf } from "./main/pdf";
 import { createMainWindow } from "./main/window";
 
 let database: Database | undefined;
@@ -15,6 +16,7 @@ app.whenReady().then(() => {
     return;
   }
   registerEditor(database, app.getPath("userData"), () => mainWindow);
+  registerPdf(() => mainWindow);
   mainWindow = createMainWindow();
 
   app.on("activate", () => {
