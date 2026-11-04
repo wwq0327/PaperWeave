@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import katex from "katex";
 import { answerPresent } from "../shared/intake";
-import type { TextStyle } from "../shared/document";
+import type { Block, TextStyle } from "../shared/document";
 import type {
   MaterialView,
   QuestionDetailView,
@@ -22,6 +22,26 @@ const stages = ["小学", "初中", "高中"] as const;
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+interface AffectedUsage {
+  questionId: string;
+  versionId: string;
+  version: number;
+  materialVersion: number;
+  latestVersionId: string;
+  latestVersion: number;
+  source: QuestionDetailView["content"]["source"];
+}
+
+function materialText(blocks: Block[]): string | null {
+  const lines: string[] = [];
+  for (const block of blocks) {
+    if (block.type !== "paragraph") return null;
+    if (block.runs.some((run) => run.type !== "text")) return null;
+    lines.push(block.runs.map((run) => run.type === "text" ? run.text : "").join(""));
+  }
+  return lines.join("\n");
 }
 
 function Formula({ latex, display = false }: { latex: string; display?: boolean }) {
@@ -232,7 +252,18 @@ export default function ReviewWorkbench({ onBack, onOpenPaper }: { onBack: () =>
         {detail.content.materials.map((ref) => {
           const material = detail.materials.find((entry) => entry.versionId === ref.versionId);
           if (material === undefined) return <p key={ref.versionId} role="alert">材料「{ref.materialId}」缺失</p>;
-          return <MaterialReview key={ref.versionId} material={material} busy={busy} onAdvance={(status) => void run(() => window.paperweave.setMaterialStatus(material.versionId, status), status === "approved" ? "材料已通过审核。" : "材料已提交待核。")} />;
+          return <MaterialReview
+            key={ref.versionId}
+            material={material}
+            busy={busy}
+            onAdvance={(status) => void run(() => window.paperweave.setMaterialStatus(material.versionId, status), status === "approved" ? "材料已通过审核。" : "材料已提交待核。")}
+            onSaved={(savedMessage) => { setMessage(savedMessage); void loadRows(); }}
+            onAdopted={async (questionId, versionId, adoptedMessage) => {
+              setMessage(adoptedMessage);
+              await loadRows();
+              if (detail?.questionId === questionId) await refreshDetail(versionId);
+            }}
+          />;
         })}
       </section>
 
@@ -267,11 +298,88 @@ export default function ReviewWorkbench({ onBack, onOpenPaper }: { onBack: () =>
   </main>;
 }
 
-function MaterialReview({ material, busy, onAdvance }: { material: MaterialView; busy: boolean; onAdvance: (status: ReviewStatus) => void }) {
+function MaterialReview({ material, busy, onAdvance, onSaved, onAdopted }: {
+  material: MaterialView;
+  busy: boolean;
+  onAdvance: (status: ReviewStatus) => void;
+  onSaved: (message: string) => void;
+  onAdopted: (questionId: string, versionId: string, message: string) => Promise<void>;
+}) {
+  const editableText = materialText(material.content);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState({ title: material.title, source: material.source, content: editableText ?? "" });
+  const [affected, setAffected] = useState<AffectedUsage[] | null>(null);
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState("");
+
+  async function loadAffected() {
+    setWorking(true); setError("");
+    try {
+      const usages = await window.paperweave.questionsAffectedByMaterial(material.materialId);
+      const rows = await Promise.all(usages.map(async (usage) => ({
+        ...usage,
+        source: (await window.paperweave.getQuestionDetail(usage.versionId)).content.source,
+      })));
+      setAffected(rows);
+    } catch (e) { setError(`读取受影响题失败：${errorText(e)}`); }
+    finally { setWorking(false); }
+  }
+
+  async function saveVersion() {
+    if (!draft.title.trim()) { setError("材料标题不能为空。"); return; }
+    setWorking(true); setError("");
+    try {
+      const content: Block[] = editableText === null
+        ? material.content
+        : draft.content.split("\n").map((line) => ({ type: "paragraph", runs: [{ type: "text", text: line, style: "普通" as const }] }));
+      const saved = await window.paperweave.saveMaterialVersion(material.materialId, { title: draft.title.trim(), content, source: draft.source.trim() });
+      setEditing(false);
+      onSaved(`材料第 ${saved.version} 版已保存；引用旧版的题目需逐题采用新版。`);
+      await loadAffected();
+    } catch (e) { setError(`保存材料改版失败：${errorText(e)}`); }
+    finally { setWorking(false); }
+  }
+
+  async function adopt(usage: AffectedUsage) {
+    setWorking(true); setError("");
+    try {
+      const saved = await window.paperweave.adoptMaterialVersion(usage.questionId, material.materialId, usage.latestVersionId);
+      await onAdopted(usage.questionId, saved.id, `已采用材料第 ${usage.latestVersion} 版；题目第 ${saved.version} 版回到待核。`);
+      await loadAffected();
+    } catch (e) { setError(`采用材料新版失败：${errorText(e)}`); }
+    finally { setWorking(false); }
+  }
+
   return <article className="review-material">
-    <header><strong>{material.title}</strong><span className="paper-state">{materialLabels[material.status]}</span></header>
+    <header>
+      <strong>{material.title}</strong>
+      <span className="paper-state">{materialLabels[material.status]}</span>
+      <button onClick={() => { setEditing(!editing); setError(""); }} disabled={busy || working}>编辑材料</button>
+      <button onClick={() => void loadAffected()} disabled={busy || working}>查看受影响题</button>
+    </header>
     {material.source && <p className="muted">出处：{material.source}</p>}
     <Blocks blocks={material.content} />
+    {error && <p role="alert" className="error">{error}</p>}
+    {editing && <div className="paper-grid">
+      <label>材料标题<input aria-label="材料标题" value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label>
+      <label>出处<input aria-label="材料出处" value={draft.source} onChange={(event) => setDraft({ ...draft, source: event.target.value })} /></label>
+      {editableText === null
+        ? <p className="muted">正文含公式或图片，改版时保留原正文，只更新标题与出处。</p>
+        : <label>正文<textarea aria-label="材料正文" value={draft.content} onChange={(event) => setDraft({ ...draft, content: event.target.value })} /></label>}
+      <div className="paper-inline">
+        <button className="primary" onClick={() => void saveVersion()} disabled={working || busy}>保存为新版本</button>
+        <button onClick={() => setEditing(false)} disabled={working}>取消编辑</button>
+      </div>
+    </div>}
+    {affected !== null && <div className="review-affected">
+      <h4>仍引用旧版的题目</h4>
+      {affected.length === 0 ? <p className="muted">没有题目仍引用旧版材料。</p> : <ul>
+        {affected.map((usage) => <li key={usage.questionId}>
+          <span>原卷第 {usage.source.pdfPage} 页 题 {usage.source.originalNumber} · 题目第 {usage.version} 版 · 材料第 {usage.materialVersion} 版</span>
+          <button onClick={() => void adopt(usage)} disabled={working || busy}>采用新版（材料第 {usage.latestVersion} 版）</button>
+        </li>)}
+      </ul>}
+    </div>}
     {material.status === "draft" && <button onClick={() => onAdvance("pending")} disabled={busy}>提交材料待核</button>}
     {material.status === "pending" && <button className="primary" onClick={() => onAdvance("approved")} disabled={busy}>通过材料审核</button>}
   </article>;

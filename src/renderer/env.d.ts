@@ -99,6 +99,9 @@ declare global {
       saveIntake(input: { examId: string; sectionId: string; questionId?: string; content: QuestionContent; classification: Classification; submit?: boolean }): Promise<SaveIntakeResult>;
       saveIntakeFigure(dataUrl: string): Promise<{ id: string; url: string }>;
       createMaterial(input: { title: string; content: Block[]; source: string }): Promise<{ id: string; materialId: string; version: number; title: string; content: Block[]; source: string; status: ReviewStatus; createdAt: string }>;
+      saveMaterialVersion(materialId: string, input: { title: string; content: Block[]; source: string }): Promise<{ id: string; materialId: string; version: number; title: string; content: Block[]; source: string; status: ReviewStatus; createdAt: string }>;
+      questionsAffectedByMaterial(materialId: string): Promise<{ questionId: string; versionId: string; version: number; materialVersion: number; latestVersionId: string; latestVersion: number }[]>;
+      adoptMaterialVersion(questionId: string, materialId: string, materialVersionId: string): Promise<{ id: string; questionId: string; version: number; contentStatus: ReviewStatus; answerStatus: AnswerStatus }>;
       setMaterialStatus(versionId: string, status: ReviewStatus): Promise<void>;
       chooseBackupDestination(): Promise<{ folder: string } | null>;
       createBackup(): Promise<BackupSummary>;
