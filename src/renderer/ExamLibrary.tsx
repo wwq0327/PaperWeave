@@ -10,7 +10,7 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export default function ExamLibrary({ onBack }: { onBack: () => void }) {
+export default function ExamLibrary({ onBack, onOpenExam }: { onBack: () => void; onOpenExam: (examId: string) => void }) {
   const [exams, setExams] = useState<ExamRecord[]>([]);
   const [examId, setExamId] = useState("");
   const [detail, setDetail] = useState<ExamDetailView | null>(null);
@@ -117,6 +117,7 @@ export default function ExamLibrary({ onBack }: { onBack: () => void }) {
           </div>
           <div className="paper-actions">
             <button onClick={() => void openExam(exam.id)} disabled={busy || exam.id === examId}>查看</button>
+            <button onClick={() => onOpenExam(exam.id)} disabled={busy}>进入录题</button>
           </div>
         </li>)}
       </ul>}

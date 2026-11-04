@@ -6,6 +6,7 @@ import { questionToBlocks, type AiQuestion } from "../shared/ai";
 import { volumeSections, type Volume } from "../shared/volume";
 import AiPanel from "./AiPanel";
 import ExamLibrary from "./ExamLibrary";
+import IntakeWorkbench from "./IntakeWorkbench";
 import PaperWorkbench from "./PaperWorkbench";
 import "./editor.css";
 
@@ -47,7 +48,8 @@ function Preview({ draft, cache, volume }: { draft: Draft; cache: Record<string,
   })}{sections.answer && <section className="answer"><h2>参考答案</h2><p className="preview-text">{sections.answer}</p></section>}</section>;
 }
 export default function App() {
-  const [tab, setTab] = useState<"editor" | "paper" | "exams">("editor");
+  const [tab, setTab] = useState<"editor" | "paper" | "exams" | "intake">("editor");
+  const [intakeExamId, setIntakeExamId] = useState("");
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saved, setSaved] = useState("");
   const [message, setMessage] = useState("");
@@ -147,7 +149,8 @@ export default function App() {
     }
   }
   if (tab === "paper") return <PaperWorkbench onBack={() => setTab("editor")} />;
-  if (tab === "exams") return <ExamLibrary onBack={() => setTab("editor")} />;
+  if (tab === "exams") return <ExamLibrary onBack={() => setTab("editor")} onOpenExam={(examId) => { setIntakeExamId(examId); setTab("intake"); }} />;
+  if (tab === "intake" && intakeExamId) return <IntakeWorkbench examId={intakeExamId} onBack={() => setTab("exams")} />;
   if (!draft) return <main><h1>拾题成卷</h1><p role={error ? "alert" : undefined}>{error || "正在读取草稿…"}</p></main>;
   const dirty = JSON.stringify(draft) !== saved;
   const sourcePages = [...new Set(draft.sources.flatMap((source) => source.pages))].sort((a, b) => a - b);

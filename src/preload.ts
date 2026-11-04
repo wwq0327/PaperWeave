@@ -52,4 +52,9 @@ contextBridge.exposeInMainWorld("paperweave", {
   attachExamFile: (examId: string, role: string) => ipcRenderer.invoke("exam:attach", examId, role),
   addExamSection: (examId: string, title: string, subject?: string) => ipcRenderer.invoke("exam:addSection", examId, title, subject),
   getExamFile: (fileId: string) => ipcRenderer.invoke("exam:fileData", fileId),
+  listExamQuestions: (examId: string) => ipcRenderer.invoke("exam:questions", examId),
+  saveIntake: (input: unknown) => ipcRenderer.invoke("intake:save", input),
+  saveIntakeFigure: (dataUrl: string) => ipcRenderer.invoke("intake:saveFigure", dataUrl),
+  createMaterial: (input: unknown) => ipcRenderer.invoke("question:createMaterial", input),
+  setMaterialStatus: (versionId: string, status: string) => ipcRenderer.invoke("question:setMaterialStatus", versionId, status),
 });

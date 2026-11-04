@@ -10,11 +10,12 @@ import {
   type ExamFileRecord,
   type ExamFileRole,
   type ExamInput,
+  type ExamQuestionSummary,
   type ExamRecord,
   type ExamSectionRecord,
   type OriginalFileRecord,
 } from "../shared/exam";
-import type { Stage } from "../shared/question";
+import { isQuestionContent, type AnswerStatus, type ReviewStatus, type Stage } from "../shared/question";
 
 const MAX_PDF_BYTES = 100 * 1024 * 1024;
 const PDF_HEADER = Buffer.from("%PDF-");
@@ -62,6 +63,20 @@ interface SectionRow {
   subject: string;
   position: number;
 }
+
+interface QuestionRow {
+  question_id: string;
+  version_id: string;
+  version: number;
+  section_id: string | null;
+  content_status: string;
+  answer_status: string;
+  content: string;
+  search_text: string;
+}
+
+const reviewStatuses = new Set(["draft", "pending", "approved"]);
+const answerStatuses = new Set(["missing", "pending", "approved"]);
 
 function validExamInput(value: unknown): ExamInput {
   const problem = examInputProblem(value);
@@ -183,8 +198,41 @@ export class ExamStore {
     });
   }
 
-  addSection(examId: string, title: unknown, subject?: unknown): ExamSectionRecord {
-    const exam = this.requireExam(examId);
+  /** 该考试已关联题目的最新版本，按关联顺序返回。 */
+  listQuestions(examId: string): ExamQuestionSummary[] {
+    if (typeof examId !== "string" || !examId) throw new Error("考试标识无效");
+    return this.db.read((sqlite) => {
+      if (sqlite.prepare("SELECT 1 FROM exams WHERE id = ?").get(examId) === undefined) throw new Error("考试不存在");
+      const rows = sqlite.prepare(`
+        SELECT qe.question_id, qe.section_id, qv.id AS version_id, qv.version,
+          qv.content_status, qv.answer_status, qv.content, qv.search_text
+        FROM question_exams qe
+        JOIN question_versions qv ON qv.question_id = qe.question_id
+        JOIN (SELECT question_id, MAX(version) AS version FROM question_versions GROUP BY question_id) latest
+          ON latest.question_id = qv.question_id AND latest.version = qv.version
+        WHERE qe.exam_id = ?
+        ORDER BY qe.created_at, qv.created_at
+      `).all(examId) as unknown as QuestionRow[];
+      return rows.map((row) => {
+        let content: unknown;
+        try { content = JSON.parse(row.content); } catch { throw new Error("题目内容损坏，已保留原数据"); }
+        if (!isQuestionContent(content)) throw new Error("题目内容损坏，已保留原数据");
+        if (!reviewStatuses.has(row.content_status) || !answerStatuses.has(row.answer_status)) throw new Error("题目审核状态损坏");
+        return {
+          questionId: row.question_id,
+          versionId: row.version_id,
+          version: row.version,
+          sectionId: row.section_id,
+          contentStatus: row.content_status as ReviewStatus,
+          answerStatus: row.answer_status as AnswerStatus,
+          preview: row.search_text.replace(/\s+/g, " ").trim().slice(0, 120),
+          source: content.source,
+        };
+      });
+    });
+  }
+
+  addSection(examId: string, title: unknown, subject?: unknown): ExamSectionRecord {    const exam = this.requireExam(examId);
     if (typeof title !== "string" || !title.trim() || title.length > 200) throw new Error("分部标题无效");
     if (subject !== undefined && (typeof subject !== "string" || subject.length > 200)) throw new Error("分部学科无效");
     return this.db.transaction((sqlite) => {

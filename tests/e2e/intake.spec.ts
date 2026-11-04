@@ -1,0 +1,104 @@
+import { test, expect, _electron as electron, type Page } from "@playwright/test";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+const entry = path.resolve(".vite/build/main.cjs");
+const fixture = path.resolve("tests/fixtures/two-pages.pdf");
+
+async function closeApp(app: Awaited<ReturnType<typeof electron.launch>>) {
+  await app.evaluate(({ app: electronApp }) => { electronApp.exit(0); }).catch(() => undefined);
+  await app.close().catch(() => undefined);
+}
+
+async function dragOnPage(page: Page) {
+  const view = page.locator(".intake-page-view");
+  await view.scrollIntoViewIfNeeded();
+  const box = await view.boundingBox();
+  if (!box) throw new Error("原卷页面未显示");
+  const startX = box.x + box.width * 0.12;
+  const startY = box.y + Math.min(90, box.height * 0.18);
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.88, startY + Math.min(170, box.height * 0.32), { steps: 6 });
+  await page.mouse.up();
+}
+
+async function importExam(page: Page, app: Awaited<ReturnType<typeof electron.launch>>) {
+  await page.getByRole("button", { name: "考试原卷" }).click();
+  await page.getByLabel("考试标题").fill("九年级数学单元卷");
+  await page.getByLabel("年份").fill("2026");
+  await page.getByLabel("来源").fill("自制样题");
+  await app.evaluate(({ dialog }, target) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] });
+  }, fixture);
+  await page.getByRole("button", { name: "选择 PDF 并导入" }).click();
+  await expect(page.getByText("已导入「九年级数学单元卷」。", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "进入录题" }).click();
+  await expect(page.getByRole("region", { name: "原卷预览" })).toBeVisible();
+  await expect(page.getByAltText("原卷第 1 页")).toBeVisible({ timeout: 15000 });
+}
+
+test("导入原卷、裁图录题、保存草稿并在重开后继续编辑与定位原页", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-intake-"));
+  let app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`] });
+  try {
+    let page = await app.firstWindow();
+    await importExam(page, app);
+
+    await page.getByLabel("原卷页码", { exact: true }).fill("2");
+    await page.getByLabel("原题号").fill("1");
+    await page.getByLabel("知识点（逗号分隔）").fill("一元二次方程");
+    await page.getByLabel("题干 文字 1", { exact: true }).fill("合成题：观察下图。");
+    await page.getByLabel("小问 1 题干 文字 1", { exact: true }).fill("求 $x$ 的值。");
+    await page.getByLabel("小问号").fill("(1)");
+    await page.getByLabel("原分值").fill("4");
+
+    const answerGroup = page.getByRole("group", { name: "小问 1 答案" });
+    await answerGroup.getByRole("button", { name: "添加文字" }).click();
+    await page.getByLabel("小问 1 答案 文字 1", { exact: true }).fill("4");
+
+    const scoringGroup = page.getByRole("group", { name: "小问 1 评分点" });
+    await scoringGroup.getByRole("button", { name: "添加评分点" }).click();
+    await scoringGroup.getByLabel("说明").fill("答案正确");
+    await scoringGroup.getByLabel("分值").fill("4");
+
+    const promptGroup = page.getByRole("group", { name: "小问 1 题干" });
+    await promptGroup.getByRole("button", { name: "插入裁图" }).click();
+    await expect(page.getByText("拖动页面选区，裁图将插入：", { exact: false })).toBeVisible();
+    await dragOnPage(page);
+    await expect(page.getByText("裁图已插入当前编辑目标。", { exact: true })).toBeVisible();
+    await expect(promptGroup.locator("img")).toBeVisible();
+    expect(readdirSync(path.join(dir, "attachments"))).toHaveLength(1);
+
+    await page.getByRole("button", { name: "保存草稿" }).click();
+    await expect(page.getByText("草稿已保存（版本 1）。", { exact: true })).toBeVisible();
+    await expect(page.locator("section[aria-label='本卷题目']")).toContainText("合成题：观察下图。");
+
+    await closeApp(app);
+    app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`] });
+    page = await app.firstWindow();
+    await page.getByRole("button", { name: "考试原卷" }).click();
+    await page.getByRole("button", { name: "进入录题" }).click();
+    await expect(page.getByRole("region", { name: "原卷预览" })).toBeVisible();
+    await page.locator("section[aria-label='本卷题目']").getByRole("button", { name: "编辑" }).click();
+    await expect(page.getByText("已打开题目（版本 1）。", { exact: true })).toBeVisible();
+
+    await expect(page.getByLabel("小问 1 题干 文字 1", { exact: true })).toHaveValue("求 $x$ 的值。");
+    await expect(page.getByLabel("小问 1 答案 文字 1", { exact: true })).toHaveValue("4");
+    await expect(page.getByLabel("原卷页码", { exact: true })).toHaveValue("2");
+    await expect(page.getByLabel("原卷页码跳转")).toHaveValue("2");
+    await expect(page.getByAltText("原卷第 2 页")).toBeVisible({ timeout: 15000 });
+    await page.getByRole("button", { name: "上一页" }).click();
+    await expect(page.getByLabel("原卷页码跳转")).toHaveValue("1");
+    await page.locator("section[aria-label='本卷题目']").getByRole("button", { name: "定位原页" }).click();
+    await expect(page.getByLabel("原卷页码跳转")).toHaveValue("2");
+    const reopenedGroup = page.getByRole("group", { name: "小问 1 题干" });
+    await expect(reopenedGroup.locator("img")).toBeVisible();
+    await expect(page.getByRole("group", { name: "小问 1 评分点" }).getByLabel("说明")).toHaveValue("答案正确");
+    await expect(page.getByRole("group", { name: "小问 1 评分点" }).getByLabel("分值")).toHaveValue("4");
+  } finally {
+    await closeApp(app);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

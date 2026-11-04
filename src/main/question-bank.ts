@@ -142,6 +142,25 @@ export class QuestionBank {
     });
   }
 
+  /** 内容版本与分类在同一事务内保存；分类无效时不产生新版本。 */
+  saveQuestionVersionWithClassification(questionId: string, content: unknown, classification: unknown): QuestionVersionRecord {
+    const valid = this.validQuestion(content);
+    const validClassification = this.validClassification(classification);
+    return this.db.transaction((sqlite) => {
+      const row = this.latestQuestionRow(sqlite, questionId);
+      if (row === undefined) throw new Error("题目不存在");
+      const previous = this.questionRecord(row);
+      this.writeClassification(sqlite, questionId, validClassification);
+      this.ensureMaterials(sqlite, valid);
+      return this.insertQuestionVersion(sqlite, {
+        questionId,
+        version: previous.version + 1,
+        content: valid,
+        ...this.savedStatuses(previous),
+      });
+    });
+  }
+
   getQuestionVersion(versionId: string): QuestionVersionRecord | undefined {
     const row = this.db.read((sqlite) => sqlite.prepare("SELECT * FROM question_versions WHERE id = ?").get(versionId));
     return row === undefined ? undefined : this.questionRecord(row);
