@@ -26,6 +26,14 @@ export function registerPaper(db: Database, currentWindow: () => BrowserWindow |
     if (typeof value !== "string" || !value) throw new Error(`${name}无效`);
     return value;
   };
+  const finalizeOptions = (value: unknown): { confirmAnswerGap: boolean } => {
+    if (value === undefined) return { confirmAnswerGap: false };
+    if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("定稿选项无效");
+    const record = value as Record<string, unknown>;
+    if (!Object.keys(record).every((key) => key === "confirmAnswerGap")) throw new Error("定稿选项包含未知字段");
+    if (record.confirmAnswerGap !== undefined && typeof record.confirmAnswerGap !== "boolean") throw new Error("答案待补确认无效");
+    return { confirmAnswerGap: record.confirmAnswerGap === true };
+  };
   const requirePending = (event: Electron.IpcMainInvokeEvent, id: unknown) => {
     const win = permitted(event);
     if (!pending || text(id, "操作标识") !== pending.id || pending.owner !== event.sender.id) throw new Error("组卷定稿操作无效或已结束");
@@ -142,18 +150,19 @@ export function registerPaper(db: Database, currentWindow: () => BrowserWindow |
     return finalizer.listFinalizations(text(paperId, "试卷标识"));
   });
 
-  ipcMain.handle("paper:checkFinalize", (event, paperId: unknown) => {
+  ipcMain.handle("paper:checkFinalize", (event, paperId: unknown, options: unknown) => {
     permitted(event);
-    return finalizer.check(text(paperId, "试卷标识"));
+    return finalizer.check(text(paperId, "试卷标识"), finalizeOptions(options));
   });
-  ipcMain.handle("paper:beginFinalize", async (event, paperId: unknown): Promise<BeginFinalizationView> => {
+  ipcMain.handle("paper:beginFinalize", async (event, paperId: unknown, options: unknown): Promise<BeginFinalizationView> => {
     const win = permitted(event);
     if (busy) throw new Error("正在生成组卷 PDF，请稍候");
-    const check = finalizer.check(text(paperId, "试卷标识"));
+    const checkOptions = finalizeOptions(options);
+    const check = finalizer.check(text(paperId, "试卷标识"), checkOptions);
     if (!check.ready) return { status: "blocked", check: { ready: check.ready, blockers: check.blockers, notices: check.notices, references: check.references } };
     const choice = await dialog.showOpenDialog(win, { title: "选择组卷双卷保存位置", properties: ["openDirectory", "createDirectory"] });
     if (choice.canceled || !choice.filePaths[0]) return { status: "canceled" };
-    const prepared = finalizer.prepare(text(paperId, "试卷标识"), choice.filePaths[0]);
+    const prepared = finalizer.prepare(text(paperId, "试卷标识"), choice.filePaths[0], checkOptions);
     let student;
     try {
       student = paperVolume(prepared.snapshot, "student");

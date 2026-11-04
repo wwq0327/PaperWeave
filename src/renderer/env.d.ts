@@ -77,8 +77,8 @@ declare global {
       setPaperItemScoring(itemId: string, scoring: PaperScoring): Promise<PaperItemView>;
       confirmPaperScoreConflict(itemId: string, key: string): Promise<PaperItemView>;
       listPaperFinalizations(paperId: string): Promise<FinalizationRecordView[]>;
-      checkPaperFinalize(paperId: string): Promise<FinalizationCheckView>;
-      beginPaperFinalize(paperId: string): Promise<BeginFinalizationView>;
+      checkPaperFinalize(paperId: string, options?: { confirmAnswerGap?: boolean }): Promise<FinalizationCheckView>;
+      beginPaperFinalize(paperId: string, options?: { confirmAnswerGap?: boolean }): Promise<BeginFinalizationView>;
       capturePaperStudent(id: string): Promise<void>;
       getPaperTeacherVolume(id: string): Promise<VolumePaper>;
       capturePaperTeacher(id: string): Promise<{ studentPath: string; teacherPath: string; openErrors: string[] }>;

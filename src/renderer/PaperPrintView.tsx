@@ -129,6 +129,7 @@ export default function PaperPrintView({ paper, onReady, onCancel }: { paper: Vo
               {material.content ? <Blocks blocks={material.content as QuestionBlock[]} images={images} figureLabel={() => undefined} /> : <p role="alert">材料缺失</p>}
             </section>)}
             <header className="paper-item-head"><strong>第 {item.number} 题（{item.score} 分）</strong></header>
+            {item.answerGap && <p className="paper-answer-gap">答案或评分待补</p>}
             <Blocks blocks={item.stem} images={images} figureLabel={figureLabel} />
             {item.subQuestions.map((sub) => <div key={sub.id} className="paper-sub">
               <p className="paper-sub-label">{sub.label}</p>
