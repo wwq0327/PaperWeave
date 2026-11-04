@@ -1,0 +1,14 @@
+:root { font: 16px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; color: #202923; background: #f4f6f2; }
+* { box-sizing: border-box; }
+body { margin: 0; } main { max-width: 1000px; margin: auto; padding: 28px 24px 80px; }
+header, .block-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+h1 { margin: 0; font-size: 28px; } header p { margin: 4px 0; color: #617367; }
+button { cursor: pointer; border: 1px solid #b5c4b8; background: white; color: #203b2b; border-radius: 6px; padding: 7px 12px; font: inherit; }
+button:disabled { opacity: .45; cursor: default; } header button { background: #225c3d; color: white; border-color: #225c3d; }
+.toolbar, .block-head div { display: flex; gap: 8px; flex-wrap: wrap; } .intro, .muted { color: #536158; }
+.block { background: white; padding: 18px; margin: 14px 0; border: 1px solid #dbe4db; border-radius: 10px; }
+.block-head { margin-bottom: 12px; } label { display: block; color: #344c3b; } input, textarea, select { display: block; width: 100%; margin: 5px 0 10px; padding: 8px; border: 1px solid #bdcbbf; border-radius: 5px; font: inherit; color: #202923; } textarea { min-height: 70px; resize: vertical; }
+.run { display: flex; gap: 12px; align-items: end; padding: 10px 0; border-top: 1px solid #edf1ec; } .run label:first-child { flex: 1; } .run button { margin-bottom: 10px; } img { max-width: 100%; max-height: 420px; object-fit: contain; display: block; }
+.table-scroll { overflow-x: auto; } table { border-collapse: collapse; } td { border: 1px solid #bac8bc; padding: 4px; } td input { min-width: 120px; margin: 0; } .error, [role=alert] { color: #a32727; } .katex-display { overflow-x: auto; overflow-y: hidden; }
+
+.preview { margin-top: 32px; padding: 22px; background: white; border: 1px solid #bdcbbf; border-radius: 10px; } .preview h2 { margin-top: 0; font-size: 19px; } .preview-text { white-space: pre-wrap; } .preview td { padding: 6px 12px; min-width: 60px; }

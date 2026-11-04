@@ -1,0 +1,57 @@
+import { test, expect, _electron as electron } from "@playwright/test";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+const entry = path.resolve(".vite/build/main.cjs");
+test("界面编辑中文、样式、公式、图片与表格，保存后重开", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-editor-"));
+  const image = path.join(dir, "自制图片.png");
+  writeFileSync(image, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a1sAAAAASUVORK5CYII=", "base64"));
+  let app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`] });
+  try {
+    await app.evaluate(({ dialog }, filename) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [filename] }); }, image);
+    let window = await app.firstWindow();
+    await expect(window.getByRole("heading", { name: "编辑草稿" })).toBeVisible();
+    await window.getByLabel("文本 1").fill("请计算：");
+    await window.getByLabel("样式").selectOption("粗体");
+    await window.getByRole("button", { name: "添加行内公式" }).click();
+    await window.getByLabel("行内公式 2").fill("x^2");
+    await window.getByRole("button", { name: "添加独立公式" }).click();
+    await window.getByLabel("LaTeX 公式").fill("\\frac{1}{2}");
+    await expect(window.locator(".katex").first()).toBeVisible();
+    await window.getByRole("button", { name: "添加图片" }).click();
+    await expect(window.getByRole("img", { name: "题图" }).first()).toBeVisible();
+    await window.getByLabel("图片说明").fill("自制图");
+    await window.getByRole("button", { name: "添加表格" }).click();
+    await window.getByLabel("第 1 行第 1 列").fill("数量");
+    await window.getByLabel("第 2 行第 2 列").fill("三");
+    await expect(window.getByRole("region", { name: "内容预览" }).locator("strong")).toHaveText("请计算：");
+    await window.getByRole("button", { name: "保存草稿" }).click();
+    await expect(window.getByText("草稿已保存到本机。", { exact: false })).toBeVisible();
+    await app.close();
+    app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`] });
+    window = await app.firstWindow();
+    await expect(window.getByLabel("文本 1")).toHaveValue("请计算：");
+    await expect(window.getByLabel("样式")).toHaveValue("粗体");
+    await expect(window.getByLabel("行内公式 2")).toHaveValue("x^2");
+    await expect(window.getByLabel("LaTeX 公式")).toHaveValue("\\frac{1}{2}");
+    await expect(window.getByRole("img", { name: "自制图" }).first()).toBeVisible();
+    await expect(window.getByLabel("第 1 行第 1 列")).toHaveValue("数量");
+    await expect(window.getByLabel("第 2 行第 2 列")).toHaveValue("三");
+    await window.getByLabel("LaTeX 公式").fill("\\frac{3}{4}");
+    await window.getByRole("button", { name: "保存草稿" }).click();
+    await expect(window.getByText("草稿已保存到本机。", { exact: false })).toBeVisible();
+    await window.reload();
+    await expect(window.getByLabel("LaTeX 公式")).toHaveValue("\\frac{3}{4}");
+    const rejected = await window.evaluate(async () => { try { await (globalThis as unknown as { paperweave: { saveDraft: (value: unknown) => Promise<void> } }).paperweave.saveDraft({ version: 1, blocks: [{ type: "script", html: "<script>1</script>" }] }); return false; } catch { return true; } });
+    expect(rejected).toBe(true);
+    await app.close();
+    const attachments = path.join(dir, "attachments");
+    rmSync(path.join(attachments, readdirSync(attachments)[0]));
+    app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`] });
+    window = await app.firstWindow();
+    await expect(window.getByRole("alert")).toContainText("读取失败");
+    await expect(window.getByRole("button", { name: "保存草稿" })).toHaveCount(0);
+  } finally { await app.close(); rmSync(dir, { recursive: true, force: true }); }
+});

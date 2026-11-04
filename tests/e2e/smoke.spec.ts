@@ -2,7 +2,8 @@ import { test, expect, _electron as electron } from "@playwright/test";
 import { spawn } from "node:child_process";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { cpSync, rmSync } from "node:fs";
+import { cpSync, rmSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 const execFileAsync = promisify(execFile);
@@ -16,7 +17,8 @@ const BUILT_MAIN = path.join(".vite", "build", "main.cjs");
 const MAC_APP = path.join("out", "PaperWeave-darwin-arm64", "PaperWeave.app");
 
 async function launchOffline(entry: string) {
-  const app = await electron.launch({ args: [path.resolve(entry)] });
+  const dataDir = mkdtempSync(path.join(tmpdir(), "paperweave-smoke-"));
+  const app = await electron.launch({ args: [path.resolve(entry), `--user-data-dir=${dataDir}`] });
   const requests: string[] = [];
   // 只拦 http(s)，放行 file:// —— 页面文档本身经 file:// 加载，全拦会阻止应用启动
   await app.context().route(
@@ -26,14 +28,14 @@ async function launchOffline(entry: string) {
       return route.abort();
     },
   );
-  return { app, requests };
+  return { app, requests, dataDir };
 }
 
 test("断网启动：窗口打开、零网络请求、桥可用、渲染进程无 Node", async () => {
-  const { app, requests } = await launchOffline(BUILT_MAIN);
+  const { app, requests, dataDir } = await launchOffline(BUILT_MAIN);
   const window = await app.firstWindow();
   await expect(window).toHaveTitle("拾题成卷 PaperWeave");
-  await expect(window.getByText(/Electron \d+\./)).toBeVisible(); // 版本由桥经 IPC 渲染
+  await expect(window.getByRole("heading", { name: "编辑草稿" })).toBeVisible();
   const probe = await window.evaluate(() => ({
     bridge: typeof (window as unknown as { paperweave?: { getRuntimeVersions?: unknown } }).paperweave
       ?.getRuntimeVersions === "function",
@@ -42,8 +44,8 @@ test("断网启动：窗口打开、零网络请求、桥可用、渲染进程�
   expect(probe.bridge).toBe(true);
   expect(probe.nodeInRenderer).toBe("undefined");
   expect(requests).toEqual([]); // Review Focus 1：零请求
-  await window.screenshot({ path: path.join("tests", "e2e", "evidence", "smoke-offline.png") });
   await app.close();
+  rmSync(dataDir, { recursive: true, force: true });
 });
 
 test("打包产物从中文路径启动并存活", async () => {
@@ -58,7 +60,7 @@ test("打包产物从中文路径启动并存活", async () => {
   const debugPort = 9300 + Math.floor(Math.random() * 500);
   const child = spawn(
     path.resolve(path.join(copiedApp, "Contents", "MacOS", "PaperWeave")),
-    [`--remote-debugging-port=${debugPort}`],
+    [`--remote-debugging-port=${debugPort}`, `--user-data-dir=${path.resolve(zhDir, "user-data")}`],
     { stdio: ["ignore", "pipe", "pipe"] },
   );
   let stderr = "";

@@ -25,7 +25,7 @@ M0 已启动。Issue #1「工程脚手架——Electron 双平台安装包与断
 - Windows x64 zip 交叉构建通过；安装与启动**待补验**（无 Windows 硬件，补验方式见 `docs/基线记录.md`）
 - 依赖版本基线已建：`docs/基线记录.md`（Electron 45.2.2 / 内置 Node 24.22.2 / Chrome 156.0.8078.80 等，精确锁定）
 - 检查入口：`npm run check`（typecheck + 单测）、`npm run check:artifacts`（安装包基本检查）、`npm run test:e2e`
-- Issue #2–#10 未动；实施计划与执行台账在 `docs/superpowers/plans/2026-11-04-electron-scaffold.md` 与 `.superpowers/sdd/`（后者为 gitignored 草稿）
+- Issue #2、#3 已在本地推进，#4 已实现部分编辑流程；尚未推送或合并。实施计划与执行台账在 `docs/superpowers/plans/2026-11-04-electron-scaffold.md` 与 `.superpowers/sdd/`（后者为 gitignored 草稿）。
 
 ## 节奏决定（2026-11-04 用户指示）
 
@@ -35,7 +35,8 @@ M0 已启动。Issue #1「工程脚手架——Electron 双平台安装包与断
 ## 本次接续（2026-11-04）
 
 - Issue #2：在 `docs/基线记录.md` 增加本机 CPU/内存、规模与耗时目标、AI 输入限额和可复测步骤；均为测试目标，相关功能与规模实测尚待完成。数据库驱动、编辑器、PDF.js、KaTeX 和打印设置需随对应任务补充。Windows 仍待补验。
-- Issue #3：实现 SQLite 数据库初始化和版本骨架，macOS 打包应用的隔离库建库与重开检查通过；Windows 待补验。尚未实现题库模型、未来版本迁移及备份恢复。接下来是 Issue #4 编辑器，完成前不要把当前空壳称为可录题产品。
+- Issue #3：实现 SQLite 数据库初始化和版本骨架，macOS 打包应用的隔离库建库与重开检查通过；Windows 待补验。尚未实现题库模型及备份恢复。
+- Issue #4：本地分支实现单份受控编辑草稿、公式预览、图片和基础表格，界面自动化保存重开通过；格式范围及未引用图片的限制见基线记录。导出一致性尚未实现或验证，Issue 保持开放。接下来对接 Issue #5 的 PDF 生成、预览和打印，再从真实编辑结果验证导出，不得用预置 HTML 代替。
 
 ## 接着讨论
 

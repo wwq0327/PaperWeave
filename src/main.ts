@@ -1,9 +1,11 @@
 import { app, BrowserWindow, dialog } from "electron";
 import { join } from "node:path";
 import { Database } from "./main/database";
+import { registerEditor } from "./main/editor";
 import { createMainWindow } from "./main/window";
 
 let database: Database | undefined;
+let mainWindow: BrowserWindow | undefined;
 app.whenReady().then(() => {
   try {
     database = new Database(join(app.getPath("userData"), "paperweave.sqlite"));
@@ -12,11 +14,12 @@ app.whenReady().then(() => {
     app.quit();
     return;
   }
-  createMainWindow();
+  registerEditor(database, app.getPath("userData"), () => mainWindow);
+  mainWindow = createMainWindow();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow();
+      mainWindow = createMainWindow();
     }
   });
 });
