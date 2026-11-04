@@ -34,7 +34,7 @@ contextBridge.exposeInMainWorld("paperweave", {
   getPaper: (paperId: string) => ipcRenderer.invoke("paper:get", paperId),
   addPaperSection: (paperId: string, title: string) => ipcRenderer.invoke("paper:addSection", paperId, title),
   removePaperSection: (sectionId: string) => ipcRenderer.invoke("paper:removeSection", sectionId),
-  addBasketItemToPaper: (paperId: string, sectionId: string, basketItemId: string) => ipcRenderer.invoke("paper:addBasketItem", paperId, sectionId, basketItemId),
+  addBasketItemToPaper: (paperId: string, sectionId: string, basketItemId: string, score?: number) => ipcRenderer.invoke("paper:addBasketItem", paperId, sectionId, basketItemId, score),
   removePaperItem: (itemId: string) => ipcRenderer.invoke("paper:removeItem", itemId),
   movePaperItem: (itemId: string, sectionId: string, position: number) => ipcRenderer.invoke("paper:moveItem", itemId, sectionId, position),
   setPaperItemScore: (itemId: string, score: number) => ipcRenderer.invoke("paper:setItemScore", itemId, score),

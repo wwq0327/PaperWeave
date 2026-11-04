@@ -538,3 +538,90 @@ test("答案待补：未确认时阻断定稿，确认后教师卷逐题标注�
     rmSync(outDir, { recursive: true, force: true });
   }
 });
+
+
+/** 只选缺原分值的小问，用于验证教师补填卷内分值后入卷。 */
+function missingScoreContent(): QuestionContent {
+  return {
+    stem: [],
+    subQuestions: [
+      {
+        id: "fill-1",
+        originalLabel: "(1)",
+        prompt: [paragraph("求 f(1) 的值。")],
+        explanation: [],
+        options: [],
+        slots: [],
+        answers: [],
+        scoring: [{ id: "fill-score-1", description: "结果正确", score: 5, slotIds: [] }],
+        originalScore: null,
+        materialIds: [],
+        dependsOn: [],
+      },
+      {
+        id: "fill-2",
+        originalLabel: "(2)",
+        prompt: [paragraph("说明函数的单调性。")],
+        explanation: [],
+        options: [],
+        slots: [],
+        answers: [],
+        scoring: [{ id: "fill-score-2", description: "结论正确", score: 5, slotIds: [] }],
+        originalScore: 5,
+        materialIds: [],
+        dependsOn: [],
+      },
+    ],
+    materials: [],
+    selection: { mode: "all" },
+    source: { section: "数学·解答题", pdfPage: 5, originalNumber: "19" },
+  };
+}
+
+function seedMissingScore(dir: string): void {
+  const db = new Database(path.join(dir, "paperweave.sqlite"));
+  const bank = new QuestionBank(db);
+  const version = bank.createQuestion(missingScoreContent());
+  bank.setClassification(version.questionId, {
+    stage: "初中",
+    subject: "数学",
+    grade: "九年级",
+    examType: "单元测",
+    year: "2026",
+    sourceName: "自制样题",
+    questionType: "解答题",
+    knowledgePoints: ["函数"],
+  });
+  db.close();
+}
+
+test("缺少原分值时提示补填，填写后按教师分值入卷并标记待调整", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-missing-score-"));
+  seedMissingScore(dir);
+  const app = await electron.launch({ args: [path.resolve(".vite/build/main.cjs"), `--user-data-dir=${dir}`] });
+  try {
+    const page = await app.firstWindow();
+    await page.getByRole("button", { name: "题库与组卷" }).click();
+    await expect(page.getByRole("heading", { name: "题库与组卷" })).toBeVisible();
+    const card = page.locator(".paper-card", { hasText: "求 f(1) 的值。" });
+    await card.getByRole("button", { name: "查看小问/答案" }).click();
+    const detail = page.getByRole("region", { name: "题目详情" });
+    await detail.locator("li", { hasText: "求 f(1) 的值。" }).getByRole("button", { name: "加入此小问" }).click();
+    await expect(page.getByText("已加入题篮。")).toBeVisible();
+
+    await page.getByLabel("标题", { exact: true }).fill("补分数学卷");
+    await page.getByRole("button", { name: "创建试卷" }).click();
+    await page.getByRole("button", { name: "添加小节" }).click();
+    await page.getByRole("region", { name: "题篮" }).getByRole("button", { name: "加入试卷" }).click();
+    await expect(page.getByLabel("补填卷内分值")).toBeVisible();
+
+    await page.getByLabel("补填卷内分值").fill("7");
+    await page.getByRole("region", { name: "题篮" }).getByRole("button", { name: "加入试卷" }).click();
+    await expect(page.getByText("已加入试卷。")).toBeVisible();
+    await expect(page.getByText("总分 7 分")).toBeVisible();
+    await expect(page.locator("article.paper-item-edit").locator(".paper-state")).toHaveText("待调整");
+  } finally {
+    await closeApp(app);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

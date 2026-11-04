@@ -121,7 +121,22 @@ test("默认分值：整题取组选答总分，小问集合取原分值合计�
   missing.subQuestions[1].originalScore = null;
   const missingVersion = addQuestion(bank, missing);
   const missingSubset = addSub(basket, missingVersion, "part-2");
-  expect(() => paper.addBasketItem(mathPaper.id, mathSection.id, missingSubset.id)).toThrow("原分值缺失，请补填");
+  expect(() => paper.addBasketItem(mathPaper.id, mathSection.id, missingSubset.id)).toThrow("请填写卷内分值");
+  const filled = paper.addBasketItem(mathPaper.id, mathSection.id, missingSubset.id, 7);
+  expect(filled).toMatchObject({ score: 7, scoringState: "needsAdjustment" });
+});
+
+test("组选答候选分值不同时可由教师填写卷内分值入卷并标记待调整", () => {
+  const { bank, basket, paper } = open();
+  const created = paper.createPaper({ title: "语文卷", stage: "初中", subject: "语文", grade: "九年级" });
+  const section = paper.addSection(created.id, "写作");
+  const content = exercise();
+  content.subQuestions[1].originalScore = 20;
+  const version = addQuestion(bank, content, "语文");
+  const item = addWhole(basket, version);
+  expect(() => paper.addBasketItem(created.id, section.id, item.id)).toThrow("请填写卷内分值");
+  const filled = paper.addBasketItem(created.id, section.id, item.id, 25);
+  expect(filled).toMatchObject({ score: 25, scoringState: "needsAdjustment" });
 });
 
 test("卷内改分进入 needsAdjustment，调整评分点或只输出答案后解除", () => {

@@ -146,6 +146,8 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
   const [sectionTitle, setSectionTitle] = useState("解答题");
   const [creating, setCreating] = useState(false);
   const [scores, setScores] = useState<Record<string, string>>({});
+  const [scorePrompt, setScorePrompt] = useState<{ basketItemId: string; message: string } | null>(null);
+  const [scoreInput, setScoreInput] = useState("");
   const [targets, setTargets] = useState<Record<string, string>>({});
   const [scoringDrafts, setScoringDrafts] = useState<Record<string, ScoringDraft[]>>({});
   const [message, setMessage] = useState("");
@@ -228,11 +230,23 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
     if (!paper) return;
     const sectionId = targets[basketItemId] ?? paper.sections[0]?.id;
     if (!sectionId) { setError("请先在试卷中新建小节。"); return; }
+    const raw = scorePrompt?.basketItemId === basketItemId ? scoreInput.trim() : "";
+    const scoreOverride = raw === "" ? undefined : Number(raw);
+    if (scoreOverride !== undefined && !Number.isFinite(scoreOverride)) { setError("卷内分值必须是数字。"); return; }
     try {
-      await window.paperweave.addBasketItemToPaper(paper.paper.id, sectionId, basketItemId);
+      await window.paperweave.addBasketItemToPaper(paper.paper.id, sectionId, basketItemId, scoreOverride);
+      setScorePrompt(null);
+      setScoreInput("");
       await loadPaper(paper.paper.id);
       setMessage("已加入试卷。");
-    } catch (e) { setError(`加入试卷失败：${errorText(e)}`); }
+    } catch (e) {
+      const reason = errorText(e);
+      setError(`加入试卷失败：${reason}`);
+      if (reason.includes("请填写卷内分值")) {
+        setScorePrompt({ basketItemId, message: reason });
+        setScoreInput("");
+      }
+    }
   }
   async function mutate(action: () => Promise<unknown>, success: string) {
     setError(""); setMessage("");
@@ -467,6 +481,11 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
           <button onClick={() => void addItem(item.id)} disabled={!paper || paper.sections.length === 0}>加入试卷</button>
           <button onClick={() => void window.paperweave.removeBasketItem(item.id).then(loadBasket).catch((e: unknown) => setError(`移除题篮项失败：${errorText(e)}`))}>移除</button>
         </div>
+        {scorePrompt?.basketItemId === item.id && <div className="paper-inline" aria-label="卷内分值补填提示">
+          <p role="alert">{scorePrompt.message}</p>
+          <label>卷内分值<input aria-label="补填卷内分值" type="number" min="0" step="0.5" value={scoreInput} onChange={(e) => setScoreInput(e.target.value)} /></label>
+          <span className="muted">填写后再次点「加入试卷」。</span>
+        </div>}
       </li>)}</ul>}
     </section>
 

@@ -164,7 +164,7 @@ export class Paper {
     });
   }
 
-  addBasketItem(paperId: string, sectionId: string, basketItemId: string): PaperItemRecord {
+  addBasketItem(paperId: string, sectionId: string, basketItemId: string, scoreOverride?: number): PaperItemRecord {
     return this.db.transaction((sqlite) => {
       const paper = this.paperRow(sqlite, paperId);
       const section = this.sectionRow(sqlite, sectionId);
@@ -181,8 +181,17 @@ export class Paper {
       if (classification.stage !== paper.stage || classification.grade !== paper.grade) throw new Error("题目学段或年级与试卷不一致");
 
       const subQuestionIds = JSON.parse(basket.sub_question_ids) as string[];
-      const score = paperDefaultScore(version.content, subQuestionIds);
-      if (score.conflict !== null) throw new Error(score.conflict);
+      if (scoreOverride !== undefined && (!Number.isFinite(scoreOverride) || scoreOverride < 0 || scoreOverride > 1000)) {
+        throw new Error("卷内分值必须是 0 到 1000 之间的数字");
+      }
+      const defaultScore = paperDefaultScore(version.content, subQuestionIds);
+      let itemScore: number;
+      if (defaultScore.conflict !== null) {
+        if (scoreOverride === undefined) throw new Error(`${defaultScore.conflict}；请填写卷内分值后加入`);
+        itemScore = Math.round(scoreOverride * 100) / 100;
+      } else {
+        itemScore = scoreOverride === undefined ? defaultScore.score : Math.round(scoreOverride * 100) / 100;
+      }
       const next = sqlite.prepare("SELECT COALESCE(MAX(position), 0) + 1 AS position FROM paper_items WHERE section_id = ?").get(sectionId) as { position: number };
       const row: ItemRow = {
         id: randomUUID(),
@@ -192,7 +201,7 @@ export class Paper {
         question_id: basket.question_id,
         question_version_id: basket.question_version_id,
         sub_question_ids: JSON.stringify(subQuestionIds),
-        score: score.score,
+        score: itemScore,
         blank_space: "medium",
         scoring: JSON.stringify({ mode: "original" } satisfies PaperScoring),
         score_conflict_confirmations: "[]",

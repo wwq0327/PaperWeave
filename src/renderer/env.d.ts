@@ -69,7 +69,7 @@ declare global {
       getPaper(paperId: string): Promise<PaperDetailView>;
       addPaperSection(paperId: string, title: string): Promise<{ id: string; paperId: string; title: string; position: number }>;
       removePaperSection(sectionId: string): Promise<void>;
-      addBasketItemToPaper(paperId: string, sectionId: string, basketItemId: string): Promise<PaperItemView>;
+      addBasketItemToPaper(paperId: string, sectionId: string, basketItemId: string, score?: number): Promise<PaperItemView>;
       removePaperItem(itemId: string): Promise<void>;
       movePaperItem(itemId: string, sectionId: string, position: number): Promise<void>;
       setPaperItemScore(itemId: string, score: number): Promise<PaperItemView>;
