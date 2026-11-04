@@ -40,6 +40,20 @@ Electron + Node.js + TypeScript + React + Vite；SQLite + 本地文件目录；P
 - 关键依赖（Electron、数据库驱动、PDF.js、KaTeX 等）版本在 M0 固定，目标值与实测值分开记录
 - 学科内容判断（题意、标签、答案、评分、纸样效果）交给用户，agent 提供具体题号和原卷页供判断
 
+## Superpowers 技能链
+
+开发流程显式走 superpowers 技能：
+
+- 需求澄清 → superpowers:brainstorming（遵循上层"沟通方式"：先给最合理方案，再问是否调整）
+- 多步任务定方案 → superpowers:writing-plans
+- 执行计划 → superpowers:executing-plans / superpowers:subagent-driven-development
+- 写实现 → superpowers:test-driven-development（对应"每阶段先写会失败的测试或验收步骤"）
+- 分支隔离 → superpowers:using-git-worktrees
+- 声称完成前 → superpowers:verification-before-completion（对应"验证"一节）
+- 合并收尾 → superpowers:requesting-code-review / superpowers:finishing-a-development-branch
+
+本文档规则优先于技能默认行为；冲突时以本文为准。
+
 ## 授权与自动执行（2026-11-04 用户确认）
 
 - 开发 agent 按 Issue 驱动自主循环，过程不打扰用户：拆目标 → 建 Issue → 分支 → 先写测试再实现 → 自测 → PR（证据+验收状态）→ 合并 → 下一条
