@@ -62,6 +62,12 @@ M0 已启动。Issue #1「工程脚手架——Electron 双平台安装包与断
 
 - Issue #31 题库检索与选题依赖（2026-11-04，分支 `feat/31-question-search`）：新增分类标注（学段、学科、年级、考试类型、学年、来源、题型、知识点），分类挂在题目身份上，可修改且不生成新版本、不改变审核状态；题目版本新增可搜索文本，只收题组指令、小问题干与选项，答案、解析、评分点与材料正文不进检索；`QuestionBank.searchQuestions` 支持分类组合、知识点、关键词与内容／答案审核状态筛选，只取每题最新版本，默认 50 条、上限 200；`selectionDependencies` 返回直接与传递前问、共享材料、组选答候选和题组指令依赖，并判定小问是否独立可用。数据版本 3 → 4，旧题目与审核状态保留，分类列默认空，新增知识点表与索引。`npm run check` 85 项通过（含 v3 → v4 迁移与自制夹具），`npm run test:e2e` 25 项通过（打包应用在数据版本 4 上启动并完成现有流程回归）。无界面、无 IPC、无题篮与组卷；真实题库规模、Windows 与 M1 阶段验收未完成。经 PR #32 合并，Issue #31 已关闭。
 
+- Issue #4 多页导出一致性（2026-11-05，PR #35）：新增 80 行长文与 30 行表格的多页导出断言，提取每页文本并逐行核对（CJK 康熙部首经 NFKC 归一），确认全部行跨页保留、表格按行分页；`npm run check` 与 `npm run test:e2e` 通过。本机另用打包应用生成学生／教师双卷 PDF，`lp` 以 A4 100% 发送到 HP Smart Tank 580/590（任务 71），纸面视觉确认仍待用户。Issue #4 已关闭。
+
+- Issue #33 打包数据库核验适配（2026-11-05，PR #34）：`scripts/test-packaged-database.mjs` 不再硬编码数据版本，改为从 `src/main/database.ts` 读取 `DATA_VERSION`；清理改为主进程退出后重试删除，避免 `ENOTEMPTY` 竞态。打包应用建库、写入、重开与 SQLite 3.53.4 核验通过（数据版本 5 已复测）。Issue #33 已关闭。
+
+- Issue #36 题目模型 v5（2026-11-05，分支 `feat/36-question-model-v5`）：新增 `SubQuestion.originalScore`（0–1000 或 `null`）与 `materialIds`（必须在题组材料池中存在）；`selectionScore` 原分值优先、缺失回退评分点；`selectionDependencies.materialIds` 只返回当前小问材料；图片块支持同题唯一的 `figureId`；文本块支持 `subQuestion`／`material`／`figure` 引用节点，`fallback` 非空，两遍校验目标存在性；`hasContent` 与 `buildSearchText` 识别引用节点。数据版本 4 → 5：存量内容按评分点合计补原分值、按整组材料补小问材料，迁移失败整体回滚并保留 `user_version=4`；新增 `basket_items`、`papers`、`paper_sections`、`paper_items`、`paper_finalizations` 表。设计规格见 `docs/组卷与引用设计-V1.md`。`npm run check` 95 项、`npm run test:e2e` 25 项、`npm run test:packaged-db` 通过。经 PR #41 合并后关闭 Issue #36。
+
 ## M0 待用户确认或授权（2026-11-04）
 
 M0 的代码与自动化部分已推进到当前可做边界。以下需用户参与，暂不自行执行：
