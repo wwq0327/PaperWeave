@@ -196,11 +196,11 @@ export async function runWorkflow(harness, { fixture, examTitle, paperTitle, exp
   await view.scrollIntoViewIfNeeded();
   const box = await view.boundingBox();
   if (!box) throw new Error("原卷页面未显示");
-  const startX = box.x + box.width * 0.12;
+  const startX = box.x + box.width * 0.35;
   const startY = box.y + Math.min(90, box.height * 0.18);
   await page.mouse.move(startX, startY);
   await page.mouse.down();
-  await page.mouse.move(box.x + box.width * 0.88, startY + Math.min(170, box.height * 0.32), { steps: 6 });
+  await page.mouse.move(box.x + box.width * 0.64, startY + Math.min(120, box.height * 0.24), { steps: 6 });
   await page.mouse.up();
   await page.getByText("裁图已插入当前编辑目标。", { exact: true }).waitFor();
   await page.getByRole("button", { name: "提交待核" }).click();

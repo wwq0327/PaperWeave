@@ -66,12 +66,14 @@ export default function PaperPrintView({ paper, onReady, onCancel }: { paper: Vo
   const imageIds = useMemo(() => collectImageIds(paper), [paper]);
   const [images, setImages] = useState<Record<string, string>>({});
   const [failed, setFailed] = useState<string[]>([]);
+  const [oversize, setOversize] = useState<string[]>([]);
   const fired = useRef(false);
 
   useEffect(() => {
     let live = true;
     setImages({});
     setFailed([]);
+    setOversize([]);
     fired.current = false;
     Promise.all(imageIds.map(async (id) => {
       try {
@@ -95,6 +97,25 @@ export default function PaperPrintView({ paper, onReady, onCancel }: { paper: Vo
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
       await document.fonts.ready;
       for (const image of document.querySelectorAll<HTMLImageElement>(".paper-sheet img")) await image.decode().catch(() => undefined);
+      const width = 170 * 96 / 25.4;
+      const height = 257 * 96 / 25.4;
+      const problems: string[] = [];
+      for (const image of document.querySelectorAll<HTMLImageElement>(".paper-sheet img")) {
+        if (!image.naturalWidth || !image.naturalHeight) continue;
+        // 打印样式取消图片的屏幕尺寸限制，按原始像素以 96dpi 映射到 A4。
+        if (image.naturalWidth > width || image.naturalHeight > height) {
+          const label = image.closest("article.paper-item")?.getAttribute("aria-label") ?? "题图";
+          problems.push(`${label}的图片超出 A4 可打印区域，请先裁小或更换图片`);
+        }
+      }
+      for (const element of document.querySelectorAll<HTMLElement>(".paper-sheet .katex, .paper-sheet tr")) {
+        const rect = element.getBoundingClientRect();
+        if (rect.width > width + 1 || rect.height > height + 1 || element.scrollWidth > width + 1) {
+          const label = element.closest("article.paper-item")?.getAttribute("aria-label") ?? "内容";
+          problems.push(`${label}的公式或表格超出 A4 可打印区域，请调整后重试`);
+        }
+      }
+      if (problems.length > 0) { setOversize([...new Set(problems)]); return; }
       onReady();
     })();
   }, [ready, onReady]);
@@ -105,7 +126,10 @@ export default function PaperPrintView({ paper, onReady, onCancel }: { paper: Vo
 
   return <main className="preview paper-print">
     <div className="paper-status no-print">
-      {failed.length > 0 ? <p role="alert">图片无法读取，不能生成 PDF。可取消后检查附件。</p> : <p>{ready ? "正在生成 PDF…" : "正在准备图片与字体…"}</p>}
+      {failed.length > 0 ? <p role="alert">图片无法读取，不能生成 PDF。可取消后检查附件。</p> : oversize.length > 0 ? <div role="alert">
+        <p>以下内容超出 A4 可打印区域，不能自动缩小生成 PDF，请先调整后重试。</p>
+        <ul>{oversize.map((problem) => <li key={problem}>{problem}</li>)}</ul>
+      </div> : <p>{ready ? "正在生成 PDF…" : "正在准备图片与字体…"}</p>}
       <button onClick={onCancel}>取消定稿</button>
     </div>
     <article className="paper-sheet" aria-label={`${paper.paper.title}${paper.paper.subject}`}>
