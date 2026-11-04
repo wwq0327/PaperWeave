@@ -6,6 +6,7 @@ import { questionToBlocks, type AiQuestion } from "../shared/ai";
 import { volumeSections, type Volume } from "../shared/volume";
 import AiPanel from "./AiPanel";
 import ExamLibrary from "./ExamLibrary";
+import ImportWorkbench from "./ImportWorkbench";
 import IntakeWorkbench from "./IntakeWorkbench";
 import PaperWorkbench from "./PaperWorkbench";
 import "./editor.css";
@@ -48,7 +49,7 @@ function Preview({ draft, cache, volume }: { draft: Draft; cache: Record<string,
   })}{sections.answer && <section className="answer"><h2>参考答案</h2><p className="preview-text">{sections.answer}</p></section>}</section>;
 }
 export default function App() {
-  const [tab, setTab] = useState<"editor" | "paper" | "exams" | "intake">("editor");
+  const [tab, setTab] = useState<"editor" | "paper" | "exams" | "intake" | "import">("editor");
   const [intakeExamId, setIntakeExamId] = useState("");
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saved, setSaved] = useState("");
@@ -151,12 +152,13 @@ export default function App() {
   if (tab === "paper") return <PaperWorkbench onBack={() => setTab("editor")} />;
   if (tab === "exams") return <ExamLibrary onBack={() => setTab("editor")} onOpenExam={(examId) => { setIntakeExamId(examId); setTab("intake"); }} />;
   if (tab === "intake" && intakeExamId) return <IntakeWorkbench examId={intakeExamId} onBack={() => setTab("exams")} />;
+  if (tab === "import") return <ImportWorkbench onBack={() => setTab("editor")} />;
   if (!draft) return <main><h1>拾题成卷</h1><p role={error ? "alert" : undefined}>{error || "正在读取草稿…"}</p></main>;
   const dirty = JSON.stringify(draft) !== saved;
   const sourcePages = [...new Set(draft.sources.flatMap((source) => source.pages))].sort((a, b) => a - b);
   const sourceUncertain = [...new Set(draft.sources.flatMap((source) => source.uncertain))];
   return <main onPasteCapture={paste}>
-    <nav className="paper-tabs" aria-label="功能切换"><strong>录题草稿</strong><button onClick={() => setTab("exams")}>考试原卷</button><button onClick={() => setTab("paper")}>题库与组卷</button></nav>
+    <nav className="paper-tabs" aria-label="功能切换"><strong>录题草稿</strong><button onClick={() => setTab("exams")}>考试原卷</button><button onClick={() => setTab("paper")}>题库与组卷</button><button onClick={() => setTab("import")}>旧库迁入</button></nav>
     <fieldset disabled={exporting} className="editor-controls">
     <header><div><h1>编辑草稿</h1><p>本地试用版 · 内容需要自行核对</p></div><button onClick={save} disabled={saving || !dirty}>{saving ? "保存中…" : "保存草稿"}</button></header>
     <p className="intro">按顺序添加内容。文本可分成多段以设置样式；公式使用 LaTeX。表格仅支持纯文字，不支持合并单元格。复杂格式请保留清晰裁图或手工改写并核对。</p>
