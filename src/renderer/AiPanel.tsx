@@ -243,7 +243,7 @@ export default function AiPanel({ onAdopt }: { onAdopt: (questions: AiQuestion[]
     {resultError && <p className="error" role="alert">{resultError}{canRetry && <button onClick={requestConfirmation}>重试生成</button>} <button onClick={() => { setResultError(""); setCanRetry(false); }}>关闭提示</button></p>}
 
     {result && <section className="ai-result" aria-label="AI 草稿结果">
-      <div className="ai-result-head"><h3>待核草稿（{result.questions.length} 题）</h3><button onClick={() => adopt(result.questions)}>全部采纳</button></div>
+      <div className="ai-result-head"><h3>待核草稿（{result.questions.length} 题）</h3><button onClick={() => adopt(result.questions)} disabled={adopted.length >= result.questions.length}>全部采纳</button></div>
       {result.notes.map((note, index) => <p key={index} className="muted">说明：{note}</p>)}
       {result.questions.map((question, index) => {
         const done = adopted.includes(index);

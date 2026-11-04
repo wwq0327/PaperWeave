@@ -175,6 +175,26 @@ test("超时、格式错误、取消与重复提交都保留人工输入", async
   }
 });
 
+test("全部采纳后按钮失效，重复采纳不会产生重复题目或答案", async () => {
+  const dir = tempDir();
+  const app = await launch(dir, "ok");
+  try {
+    const window = await app.firstWindow();
+    await send(window, "重复采纳防护", "3");
+    await expect(window.getByRole("heading", { name: "待核草稿（2 题）" })).toBeVisible();
+    const adoptAll = window.getByRole("button", { name: "全部采纳" });
+    await adoptAll.click();
+    await expect(adoptAll).toBeDisabled();
+    await expect(window.getByRole("status").first()).toContainText("已采纳 2 题");
+
+    const answerValue = await window.getByLabel("教师参考答案（仅供教师卷样张使用）").inputValue();
+    expect(answerValue.split("固定响应答案：B").length - 1).toBe(1);
+  } finally {
+    await closeApp(app);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("密钥只进入本机加密文件，不回显，也不进入题库", async () => {
   const dir = tempDir();
   let app = await launch(dir, "ok");

@@ -91,6 +91,28 @@ test("扫描页拖选跨页多区域，按顺序确认发送并采纳", async ()
   }
 });
 
+test("重新打开同页数 PDF 后第 1 页仍正常渲染", async () => {
+  const dir = tempDir();
+  const app = await launch(dir, "ok");
+  try {
+    const window = await app.firstWindow();
+    await window.getByRole("tab", { name: "裁图输入" }).click();
+    await mockPdf(app, fixture("two-pages.pdf"));
+    await window.getByRole("button", { name: "选择 PDF 并选取裁图" }).click();
+    await expect(window.getByRole("img", { name: "原卷第 1 页" })).toBeVisible();
+
+    // 页数相同且停留在第 1 页时，渲染仍应重新触发（回归：视图空白、拖选无响应）。
+    await mockPdf(app, fixture("two-pages.pdf"));
+    await window.getByRole("button", { name: "选择 PDF 并选取裁图" }).click();
+    await expect(window.getByRole("img", { name: "原卷第 1 页" })).toBeVisible();
+    await dragRegion(window);
+    await expect(window.locator(".ai-selection-list li")).toHaveCount(1);
+  } finally {
+    await closeApp(app);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("无选区时阻止发送；扫描件提示按裁图处理；主进程拒绝非 data URL 裁图", async () => {
   const dir = tempDir();
   const app = await launch(dir, "ok");
