@@ -5,6 +5,7 @@ const DATA_VERSION = 7;
 /** 主进程持有的唯一数据库写入口；不向渲染进程暴露 SQL。 */
 export class Database {
   private readonly db: DatabaseSync;
+  private maintenanceReason: string | null = null;
 
   constructor(path: string) {
     this.db = new DatabaseSync(path);
@@ -261,6 +262,7 @@ export class Database {
 
   /** 同一连接上的事务入口；供题库等主进程模块使用，嵌套调用由调用方避免。 */
   transaction<T>(fn: (db: DatabaseSync) => T): T {
+    this.assertWritable();
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const result = fn(this.db);
@@ -270,6 +272,37 @@ export class Database {
       this.db.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  /** 备份等维护操作期间拒绝新的写入，读取与数据库快照不受影响。 */
+  beginMaintenance(reason: string): void {
+    if (this.maintenanceReason !== null) throw new Error(`已有维护操作进行中：${this.maintenanceReason}`);
+    this.maintenanceReason = reason;
+  }
+
+  endMaintenance(): void {
+    this.maintenanceReason = null;
+  }
+
+  get maintenance(): string | null {
+    return this.maintenanceReason;
+  }
+
+  private assertWritable(): void {
+    if (this.maintenanceReason !== null) throw new Error(`${this.maintenanceReason}进行中，暂不可编辑`);
+  }
+
+  dataVersion(): number {
+    return (this.db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
+  }
+
+  integrityCheck(): string {
+    return (this.db.prepare("PRAGMA integrity_check").get() as { integrity_check: string }).integrity_check;
+  }
+
+  /** 生成一致的数据库快照；路径通过绑定参数传入，不能在事务中运行。 */
+  snapshotTo(path: string): void {
+    this.db.prepare("VACUUM INTO ?").run(path);
   }
 
   /** 只读查询入口；不开始写事务。 */
@@ -282,6 +315,7 @@ export class Database {
   }
 
   setSetting(key: string, value: string): void {
+    this.assertWritable();
     this.db.prepare("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
   }
 
@@ -290,6 +324,7 @@ export class Database {
   }
 
   saveDraft(document: string): void {
+    this.assertWritable();
     this.db.prepare("INSERT INTO editor_drafts (id, document) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET document = excluded.document").run("m0", document);
   }
 

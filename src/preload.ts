@@ -64,4 +64,8 @@ contextBridge.exposeInMainWorld("paperweave", {
   saveIntakeFigure: (dataUrl: string) => ipcRenderer.invoke("intake:saveFigure", dataUrl),
   createMaterial: (input: unknown) => ipcRenderer.invoke("question:createMaterial", input),
   setMaterialStatus: (versionId: string, status: string) => ipcRenderer.invoke("question:setMaterialStatus", versionId, status),
+  chooseBackupDestination: () => ipcRenderer.invoke("backup:chooseDestination"),
+  createBackup: () => ipcRenderer.invoke("backup:create"),
+  chooseBackupSource: () => ipcRenderer.invoke("backup:chooseSource"),
+  restoreBackup: () => ipcRenderer.invoke("backup:restore"),
 });
