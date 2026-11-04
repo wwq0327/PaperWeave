@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import katex from "katex";
 import type { ExamDetailView, ExamQuestionSummary } from "../shared/exam";
 import type { Block } from "../shared/document";
-import { blankSubQuestion, buildContent, contentToForm, newIntakeForm, type IntakeBlock, type IntakeForm, type IntakeMaterial, type IntakeSubQuestion } from "../shared/intake";
+import { blankSubQuestion, buildContent, contentToForm, newIntakeForm, type IntakeBlock, type IntakeDuplicateSummary, type IntakeForm, type IntakeMaterial, type IntakeSubQuestion } from "../shared/intake";
 import type { Classification, QuestionBlock, QuestionContent, ReviewStatus, Stage } from "../shared/question";
 import BlockListEditor from "./BlockListEditor";
 import ExamPdfPanel from "./ExamPdfPanel";
@@ -59,6 +59,7 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
   const [materialForm, setMaterialForm] = useState({ title: "", content: "", source: "" });
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [duplicate, setDuplicate] = useState<{ summary: IntakeDuplicateSummary; submit: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
 
   function beginNew(detail: ExamDetailView) {
@@ -80,6 +81,7 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
     setForm(newIntakeForm(classification, section.title));
     setSectionId(section.id);
     setEditing(null);
+    setDuplicate(null);
     setPage(1);
     setCropTarget(null);
     setKnowledgeText("");
@@ -112,6 +114,7 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
       setForm(converted.form);
       setKnowledgeText(converted.form.classification.knowledgePoints.join("，"));
       setEditing({ questionId: detail.questionId, versionId: detail.versionId, version: detail.version });
+      setDuplicate(null);
       const matched = summary.sectionId ?? exam?.sections.find((section) => section.title === detail.content.source.section)?.id ?? exam?.sections[0]?.id ?? "";
       setSectionId(matched);
       setPage(detail.content.source.pdfPage);
@@ -222,7 +225,7 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
     }));
   }
 
-  async function save(submit: boolean) {
+  async function save(submit: boolean, revisionOf?: string) {
     if (!form) return;
     setError(""); setMessage("");
     const result = buildContent(form);
@@ -235,11 +238,16 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
       const saved = await window.paperweave.saveIntake({
         examId,
         sectionId,
-        questionId: editing?.questionId,
+        questionId: revisionOf ?? editing?.questionId,
         content: result.content,
         classification: form.classification,
         submit,
       });
+      if (!saved.saved) {
+        setDuplicate({ summary: saved.duplicate, submit });
+        return;
+      }
+      setDuplicate(null);
       setEditing({ questionId: saved.questionId, versionId: saved.versionId, version: saved.version });
       setQuestions(await window.paperweave.listExamQuestions(examId));
       setMessage(submit ? `已提交待核（版本 ${saved.version}）。` : `草稿已保存（版本 ${saved.version}）。`);
@@ -247,6 +255,19 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
     } catch (e) {
       setError(`保存失败：${errorText(e)}。当前编辑内容仍在界面上。`);
     } finally { setBusy(false); }
+  }
+
+  function editDuplicate() {
+    if (!duplicate) return;
+    const target = questions.find((question) => question.questionId === duplicate.summary.questionId);
+    if (!target) { setError("题目列表已变化，请重新载入本卷题目。"); setDuplicate(null); return; }
+    setDuplicate(null);
+    void loadQuestion(target);
+  }
+
+  function reviseDuplicate() {
+    if (!duplicate) return;
+    void save(duplicate.submit, duplicate.summary.questionId);
   }
 
   const paper = exam?.files.find((file) => file.role === "paper");
@@ -266,6 +287,16 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
     </header>
     {message && <p role="status" className="paper-message">{message}</p>}
     {error && <p role="alert" className="error">{error} <button onClick={() => setError("")}>关闭</button></p>}
+    {duplicate && <section role="alertdialog" aria-label="重复题提示" className="paper-panel intake-duplicate">
+      <h2>发现同号题</h2>
+      <p>本卷同一分部已有原题号「{duplicate.summary.source.originalNumber || "未填"}」的题目：{duplicate.summary.preview || "（无题干预览）"}</p>
+      <p className="muted">原卷第 {duplicate.summary.source.pdfPage} 页 · 版本 {duplicate.summary.version} · {statusLabels[duplicate.summary.contentStatus]} · 答案{answerLabels[duplicate.summary.answerStatus]}</p>
+      <div className="paper-actions">
+        <button className="primary" onClick={editDuplicate} disabled={busy}>继续编辑已有题</button>
+        <button onClick={reviseDuplicate} disabled={busy}>建立修订版</button>
+        <button onClick={() => setDuplicate(null)} disabled={busy}>取消</button>
+      </div>
+    </section>}
 
     <div className="intake-grid">
       <aside className="intake-left">

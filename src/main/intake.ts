@@ -1,4 +1,5 @@
 import { answerPresent, type SaveIntakeResult } from "../shared/intake";
+import { classificationProblem, questionContentProblem, type QuestionContent } from "../shared/question";
 import type { ExamStore } from "./exams";
 import type { QuestionBank } from "./question-bank";
 
@@ -22,6 +23,27 @@ export class Intake {
     const exam = this.exams.getExam(examId);
     if (!exam.sections.some((section) => section.id === sectionId)) throw new Error("考试分部不存在");
     const submit = value.submit === true;
+    if (value.questionId === undefined) {
+      const contentProblem = questionContentProblem(value.content);
+      if (contentProblem !== null) throw new Error(`题目结构无效：${contentProblem}`);
+      const classificationIssue = value.classification === undefined ? null : classificationProblem(value.classification);
+      if (classificationIssue !== null) throw new Error(classificationIssue);
+      const duplicate = this.exams.findDuplicate(examId, sectionId, (value.content as QuestionContent).source.originalNumber);
+      if (duplicate !== undefined) {
+        return {
+          saved: false,
+          duplicate: {
+            questionId: duplicate.questionId,
+            versionId: duplicate.versionId,
+            version: duplicate.version,
+            contentStatus: duplicate.contentStatus,
+            answerStatus: duplicate.answerStatus,
+            preview: duplicate.preview,
+            source: duplicate.source,
+          },
+        };
+      }
+    }
     let record;
     if (value.questionId !== undefined) {
       const questionId = text(value.questionId, "题目标识");
@@ -37,6 +59,7 @@ export class Intake {
       latest = this.bank.getQuestionVersion(record.id) ?? latest;
     }
     return {
+      saved: true,
       questionId: latest.questionId,
       versionId: latest.id,
       version: latest.version,
