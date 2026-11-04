@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import { emptyDraft, isDraft, type Block, type Draft, type Inline, type TextStyle } from "../shared/document";
+import { volumeSections, type Volume } from "../shared/volume";
 import "./editor.css";
 
 const styles: TextStyle[] = ["普通", "粗体", "斜体", "下划线", "上标", "下标"];
@@ -32,13 +33,14 @@ function TextPreview({ text, style }: { text: string; style: TextStyle }) {
   if (style === "下标") return <sub>{text}</sub>;
   return <>{text}</>;
 }
-function Preview({ draft, cache }: { draft: Draft; cache: Record<string, string> }) {
-  return <section className="preview" aria-label="内容预览"><h2>内容预览</h2>{draft.blocks.map((block, index) => {
+function Preview({ draft, cache, volume }: { draft: Draft; cache: Record<string, string>; volume: Volume }) {
+  const sections = volumeSections(draft, volume);
+  return <section className="preview" aria-label="内容预览"><h2 className="preview-title">内容预览</h2>{sections.blocks.map((block, index) => {
     if (block.type === "paragraph") return <p key={index} className="preview-text">{block.runs.map((run, i) => run.type === "text" ? <TextPreview key={i} {...run} /> : <Formula key={i} latex={run.latex} />)}</p>;
     if (block.type === "formula") return <Formula key={index} latex={block.latex} display />;
     if (block.type === "image") return <ImageView key={index} id={block.id} alt={block.alt} cache={cache} />;
     return <div className="table-scroll" key={index}><table><tbody>{block.rows.map((row, y) => <tr key={y}>{row.map((cell, x) => <td key={x}>{cell}</td>)}</tr>)}</tbody></table></div>;
-  })}</section>;
+  })}{sections.answer && <section className="answer"><h2>参考答案</h2><p className="preview-text">{sections.answer}</p></section>}</section>;
 }
 export default function App() {
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -47,6 +49,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [volume, setVolume] = useState<Volume>("student");
   const [imageCache, setImageCache] = useState<Record<string, string>>({});
   useEffect(() => { window.paperweave.loadDraft().then((value) => { if (!isDraft(value)) throw Error("草稿格式不受支持"); setDraft(value); setSaved(JSON.stringify(value)); }).catch((e: unknown) => setError(`读取失败：${String(e)}。原数据已保留。`)); }, []);
   useEffect(() => { const handler = (event: BeforeUnloadEvent) => { if (draft && JSON.stringify(draft) !== saved) { event.preventDefault(); event.returnValue = ""; } }; window.addEventListener("beforeunload", handler); return () => window.removeEventListener("beforeunload", handler); }, [draft, saved]);
@@ -64,31 +67,59 @@ export default function App() {
     try { const picked = await window.paperweave.chooseImage(); if (!picked) return; setImageCache((old) => ({ ...old, [picked.id]: picked.url })); append({ type: "image", id: picked.id, alt: "" }); }
     catch (e) { setError(`无法添加图片：${String(e)}`); }
   }
+  async function ensurePreviewReady(current: Draft) {
+    // 等待卷切换与界面渲染落定，再检查预览实际使用的字体、图片和尺寸。
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    await document.fonts.ready;
+    if ([...document.fonts].some((font) => font.status === "error")) throw Error("字体加载失败，请重试");
+    const preview = document.querySelector<HTMLElement>(".preview");
+    if (!preview || preview.querySelector("[data-invalid-formula]")) throw Error("存在空白或无法渲染的公式，请先修改");
+    if (preview.querySelectorAll("img").length !== current.blocks.filter((block) => block.type === "image").length) throw Error("图片尚未加载或读取失败，请稍后重试");
+    const width = 170 * 96 / 25.4;
+    const height = 257 * 96 / 25.4;
+    for (const image of preview.querySelectorAll("img")) {
+      await image.decode();
+      if (!image.naturalWidth || !image.naturalHeight) throw Error("图片无法读取");
+      if (image.naturalWidth > width || image.naturalHeight > height) throw Error("图片超过 A4 可打印区域，请先调整图片尺寸后重新添加");
+    }
+    for (const element of preview.querySelectorAll<HTMLElement>(".katex, tr")) {
+      const rect = element.getBoundingClientRect();
+      if (rect.width > width + 1 || rect.height > height + 1 || element.scrollWidth > width + 1) throw Error("公式或表格超出 A4 可打印区域，请调整后重试");
+    }
+  }
   async function exportPdf() {
+    if (!draft) return;
     setExporting(true); setError(""); setMessage("");
     try {
-      // 等待界面进入不可编辑状态，再检查预览实际使用的字体、图片和尺寸。
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      await document.fonts.ready;
-      if ([...document.fonts].some((font) => font.status === "error")) throw Error("字体加载失败，请重试");
-      const preview = document.querySelector<HTMLElement>(".preview");
-      if (!preview || preview.querySelector("[data-invalid-formula]")) throw Error("存在空白或无法渲染的公式，请先修改");
-      if (preview.querySelectorAll("img").length !== draft?.blocks.filter((block) => block.type === "image").length) throw Error("图片尚未加载或读取失败，请稍后重试");
-      const width = 170 * 96 / 25.4;
-      const height = 257 * 96 / 25.4;
-      for (const image of preview.querySelectorAll("img")) {
-        await image.decode();
-        if (!image.naturalWidth || !image.naturalHeight) throw Error("图片无法读取");
-        if (image.naturalWidth > width || image.naturalHeight > height) throw Error("图片超过 A4 可打印区域，请先调整图片尺寸后重新添加");
-      }
-      for (const element of preview.querySelectorAll<HTMLElement>(".katex, tr")) {
-        const rect = element.getBoundingClientRect();
-        if (rect.width > width + 1 || rect.height > height + 1 || element.scrollWidth > width + 1) throw Error("公式或表格超出 A4 可打印区域，请调整后重试");
-      }
+      await ensurePreviewReady(draft);
       const result = await window.paperweave.exportPdf();
       if (!result.canceled) setMessage(result.openError ? `PDF 已保存，但无法自动打开：${result.openError}` : "PDF 已保存并打开。打印时请选择 A4 和 100% 缩放，避免自动缩放。");
     } catch (e) { setError(`无法生成 PDF：${String(e)}。草稿仍在。`); }
     finally { setExporting(false); }
+  }
+  async function exportDualPdf() {
+    if (!draft) return;
+    setExporting(true); setError(""); setMessage("");
+    let id: string | null = null;
+    try {
+      id = await window.paperweave.beginPdfPair();
+      if (!id) return;
+      setVolume("student");
+      await ensurePreviewReady(draft);
+      await window.paperweave.captureStudentPdf(id);
+      setVolume("teacher");
+      await ensurePreviewReady(draft);
+      const result = await window.paperweave.finishPdfPair(id);
+      id = null;
+      const failed = result.openErrors.filter(Boolean);
+      setMessage(failed.length ? `双卷已保存，但有文件无法自动打开：${failed.join("；")}` : "学生卷与教师答案卷已保存并打开。打印时请选择 A4 和 100% 缩放。");
+    } catch (e) {
+      if (id) await window.paperweave.cancelPdfPair(id).catch(() => undefined);
+      setError(`无法生成双卷：${String(e)}。草稿仍在。`);
+    } finally {
+      setVolume("student");
+      setExporting(false);
+    }
   }
   function paste(event: React.ClipboardEvent) {
     if (event.clipboardData.types.includes("text/html") || [...event.clipboardData.items].some((item) => item.kind === "file")) {
@@ -119,7 +150,8 @@ export default function App() {
     {!draft.blocks.length && <p>暂无内容，可从上方添加段落。</p>}
     <section className="block"><label>教师参考答案（仅供教师卷样张使用）<textarea value={draft.teacherAnswer} onChange={(e) => setDraft((old) => old && ({ ...old, teacherAnswer: e.target.value }))} /></label><p className="muted">目前仅支持纯文本，答案与题号的自动对应及评分尚未实现。</p></section>
     <button onClick={exportPdf} disabled={saving}>{exporting ? "正在生成 PDF…" : "生成并预览草稿 PDF"}</button>
+    <button onClick={exportDualPdf} disabled={saving}>{exporting ? "正在生成 PDF…" : "生成学生卷与教师答案卷"}</button>
     </fieldset>
-    <Preview draft={draft} cache={imageCache} />
+    <Preview draft={draft} cache={imageCache} volume={volume} />
   </main>;
 }
