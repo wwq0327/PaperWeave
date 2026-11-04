@@ -257,11 +257,14 @@ test("题库检索到双卷定稿：依赖确认、改分、阻断、学生卷�
     const blockers = page.locator(".paper-blockers");
     await expect(blockers).toContainText("第 2 题：原评分不适用于当前分值，待调整");
     await expect(blockers).toContainText("内嵌分值「6 分」尚未确认");
+    await expect(blockers).toContainText("第 2 题：卷内分值已改，图片中的旧分值需人工核对");
     await expect(page.getByText("总分 16 分")).toBeVisible();
 
     await mathItem.locator(".paper-conflict", { hasText: "「6 分」" }).getByRole("button", { name: "确认保留" }).click();
     await mathItem.getByRole("button", { name: "仅输出参考答案" }).click();
     await expect(page.getByText("评分状态已更新。")).toBeVisible();
+    await mathItem.locator(".paper-conflict", { hasText: "图片中的旧分值" }).getByRole("button", { name: "确认已核对" }).click();
+    await expect(page.getByText("待核项已确认。")).toBeVisible();
     await page.getByRole("button", { name: "检查定稿" }).click();
     await expect(page.getByText("定稿检查通过。")).toBeVisible();
 
@@ -371,6 +374,8 @@ test("题库检索到双卷定稿：依赖确认、改分、阻断、学生卷�
     await adjustedItem.getByRole("button", { name: "保存评分点" }).click();
     await expect(page.getByText("评分状态已更新。")).toBeVisible();
     await expect(adjustedItem.locator(".paper-state")).toHaveText("已调整");
+    await adjustedItem.locator(".paper-conflict", { hasText: "图片中的旧分值" }).getByRole("button", { name: "确认已核对" }).click();
+    await expect(page.getByText("待核项已确认。")).toBeVisible();
     await page.getByRole("button", { name: "检查定稿" }).click();
     await expect(page.getByText("定稿检查通过。")).toBeVisible();
 
@@ -755,6 +760,95 @@ function seedOversizeFigure(dir: string): void {
   bank.setAnswerStatus(version.id, "approved");
   db.close();
 }
+
+/** 一道含未结构化文字引用与题图的题，用于验证定稿前的逐项人工确认。 */
+function seedPendingReferences(dir: string): void {
+  mkdirSync(path.join(dir, "attachments"), { recursive: true });
+  const figure = png;
+  const imageId = createHash("sha256").update(figure).digest("hex");
+  writeFileSync(path.join(dir, "attachments", imageId), figure);
+  const db = new Database(path.join(dir, "paperweave.sqlite"));
+  const bank = new QuestionBank(db);
+  const content: QuestionContent = {
+    stem: [paragraph("结合第(1)问的结论作答。")],
+    subQuestions: [{
+      id: "pending-1",
+      originalLabel: "(1)",
+      prompt: [{ type: "image", id: imageId, alt: "示意图" }],
+      explanation: [],
+      options: [],
+      slots: [],
+      answers: [{ slotId: null, blocks: [paragraph("参考答案")], variants: [] }],
+      scoring: [{ id: "pending-score", description: "作答正确", score: 5, slotIds: [] }],
+      originalScore: 5,
+      materialIds: [],
+      dependsOn: [],
+    }],
+    materials: [],
+    selection: { mode: "all" },
+    source: { section: "数学·解答题", pdfPage: 6, originalNumber: "17" },
+  };
+  const version = bank.createQuestion(content);
+  bank.setClassification(version.questionId, {
+    stage: "初中",
+    subject: "数学",
+    grade: "九年级",
+    examType: "单元测",
+    year: "2026",
+    sourceName: "自制样题",
+    questionType: "解答题",
+    knowledgePoints: ["综合"],
+  });
+  bank.setContentStatus(version.id, "pending");
+  bank.setContentStatus(version.id, "approved");
+  bank.setAnswerStatus(version.id, "pending");
+  bank.setAnswerStatus(version.id, "approved");
+  db.close();
+}
+
+test("文字引用与图片旧分值逐项确认后才可定稿", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-pending-"));
+  const outDir = mkdtempSync(path.join(tmpdir(), "paperweave-pending-out-"));
+  seedPendingReferences(dir);
+  const app = await electron.launch({ args: [path.resolve(".vite/build/main.cjs"), `--user-data-dir=${dir}`] });
+  try {
+    await app.evaluate(({ dialog, shell }, target) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] });
+      shell.openPath = async () => "";
+    }, outDir);
+    const page = await app.firstWindow();
+    await page.getByRole("button", { name: "题库与组卷" }).click();
+    await page.locator(".paper-card", { hasText: "结合第(1)问的结论作答。" }).getByRole("button", { name: "整题入篮" }).click();
+    await expect(page.getByText("已加入题篮。")).toBeVisible();
+    await page.getByLabel("标题", { exact: true }).fill("待核数学卷");
+    await page.getByRole("button", { name: "创建试卷" }).click();
+    await page.getByRole("button", { name: "添加小节" }).click();
+    await page.getByRole("region", { name: "题篮" }).getByRole("button", { name: "加入试卷" }).click();
+    const item = page.locator("article.paper-item-edit");
+    await item.getByLabel("卷内分值").fill("3");
+    await item.getByRole("button", { name: "改分" }).click();
+    await expect(page.getByText("卷内分值已更新。")).toBeVisible();
+    await item.getByRole("button", { name: "仅输出参考答案" }).click();
+    await expect(page.getByText("评分状态已更新。")).toBeVisible();
+
+    await page.getByRole("button", { name: "检查定稿" }).click();
+    const blockers = page.locator(".paper-blockers");
+    await expect(blockers).toContainText("第 1 题：文字引用「第(1)问」未结构化，需确认");
+    await expect(blockers).toContainText("第 1 题：卷内分值已改，图片中的旧分值需人工核对");
+
+    await item.locator(".paper-conflict", { hasText: "文字引用" }).getByRole("button", { name: "确认已核对" }).click();
+    await expect(page.getByText("待核项已确认。")).toBeVisible();
+    await item.locator(".paper-conflict", { hasText: "图片中的旧分值" }).getByRole("button", { name: "确认已核对" }).click();
+    await expect(item.locator(".paper-conflict", { hasText: "图片中的旧分值" })).toContainText("已确认。");
+
+    await page.getByRole("button", { name: "检查定稿" }).click();
+    await expect(page.getByText("定稿检查通过。")).toBeVisible();
+  } finally {
+    await closeApp(app);
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});
 
 test("组卷定稿遇到超出 A4 可打印区域的题图时提示调整，不生成 PDF", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "paperweave-oversize-"));

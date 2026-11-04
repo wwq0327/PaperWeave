@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
-import { paperDefaultScore, paperScoringState, scoreConflicts, type PaperScoring } from "../../../src/shared/paper";
-import { exercise, math, paragraph } from "../fixtures/questions";
+import { paperDefaultScore, paperScoringState, pendingChecks, scoreConflicts, type PaperScoring } from "../../../src/shared/paper";
+import { exercise, math, paragraph, referenceGroup } from "../fixtures/questions";
 
 const points = (score: number) => [{ id: "p1", description: "要点", score, slotIds: [] }];
 
@@ -67,4 +67,37 @@ test("扫描题组题干中的旧分值，包含整题原总分", () => {
     { subQuestionId: null, value: 10, text: "10 分", key: "item|10|10 分" },
   ]);
   expect(scoreConflicts(content, ["part-1"], 8)).toEqual([]);
+});
+
+test("文字中的题号、图号与材料号引用列为待核，结构化引用不重复列出", () => {
+  const content = math();
+  content.subQuestions[0].prompt = [paragraph("第(1)问中，结合图 2 与材料二作答，观察下图。")];
+  const checks = pendingChecks(content, ["part-1"], 4);
+  expect(checks.map(({ kind, text }) => ({ kind, text }))).toEqual([
+    { kind: "textReference", text: "第(1)问" },
+    { kind: "textReference", text: "图 2" },
+    { kind: "textReference", text: "材料二" },
+    { kind: "textReference", text: "下图" },
+  ]);
+  expect(new Set(checks.map((check) => check.key)).size).toBe(4);
+  expect(pendingChecks(referenceGroup(), ["ref-1", "ref-2"], 10)).toEqual([]);
+});
+
+test("含图题卷内改分后列出图片旧分值待核，未改分时不列", () => {
+  const content = math();
+  content.subQuestions[0].prompt.push({ type: "image", id: "img-1", alt: "示意图" });
+  expect(pendingChecks(content, ["part-1"], 4)).toEqual([]);
+  const checks = pendingChecks(content, ["part-1"], 3);
+  expect(checks).toHaveLength(1);
+  expect(checks[0]).toMatchObject({ kind: "imageScore", subQuestionId: null, text: "图片中的旧分值需人工核对" });
+});
+
+test("确认键随内容与卷内分值变化而失效", () => {
+  const content = math();
+  content.subQuestions[0].prompt = [paragraph("第(1)问的结论是否成立。")];
+  const before = pendingChecks(content, ["part-1"], 4)[0].key;
+  content.subQuestions[0].prompt.push(paragraph("补充说明。"));
+  const afterContent = pendingChecks(content, ["part-1"], 4)[0].key;
+  expect(afterContent).not.toBe(before);
+  expect(pendingChecks(content, ["part-1"], 3)[0].key).not.toBe(afterContent);
 });

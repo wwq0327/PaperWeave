@@ -3,10 +3,13 @@ import type { DatabaseSync } from "node:sqlite";
 import {
   paperDefaultScore,
   paperScoringState,
+  pendingChecks,
   scoreConflicts,
   type BlankSpace,
   type PaperScoring,
   type PaperScoringState,
+  type PendingCheck,
+  type PendingMaterial,
   type ScoreConflict,
 } from "../shared/paper";
 import type { QuestionContent, ScoringPoint, Stage } from "../shared/question";
@@ -36,6 +39,10 @@ export interface ConfirmedScoreConflict extends ScoreConflict {
   confirmed: boolean;
 }
 
+export interface ConfirmedPendingCheck extends PendingCheck {
+  confirmed: boolean;
+}
+
 export interface PaperItemRecord {
   id: string;
   paperId: string;
@@ -51,6 +58,7 @@ export interface PaperItemRecord {
   scoringState: PaperScoringState;
   scoreConflictConfirmations: string[];
   scoreConflicts: ConfirmedScoreConflict[];
+  pendingChecks: ConfirmedPendingCheck[];
   content: QuestionContent;
   createdAt: string;
 }
@@ -295,7 +303,8 @@ export class Paper {
       const version = this.bank.getQuestionVersion(item.question_version_id);
       if (version === undefined) throw new Error("题目版本不存在");
       const conflicts = scoreConflicts(version.content, JSON.parse(item.sub_question_ids) as string[], item.score);
-      if (!conflicts.some((conflict) => conflict.key === key)) throw new Error("分值冲突不存在");
+      const pending = this.pendingChecksFor(version.content, JSON.parse(item.sub_question_ids) as string[], item.score);
+      if (!conflicts.some((conflict) => conflict.key === key) && !pending.some((check) => check.key === key)) throw new Error("待核项不存在");
       const confirmations = this.parseConfirmations(item.score_conflict_confirmations);
       if (!confirmations.includes(key)) confirmations.push(key);
       sqlite.prepare("UPDATE paper_items SET score_conflict_confirmations = ? WHERE id = ?").run(JSON.stringify(confirmations), itemId);
@@ -354,9 +363,22 @@ export class Paper {
         ...conflict,
         confirmed: confirmations.includes(conflict.key),
       })),
+      pendingChecks: this.pendingChecksFor(content, subQuestionIds, row.score).map((check) => ({
+        ...check,
+        confirmed: confirmations.includes(check.key),
+      })),
       content,
       createdAt: row.created_at,
     };
+  }
+
+  private pendingChecksFor(content: QuestionContent, subQuestionIds: string[], score: number): PendingCheck[] {
+    const materials: PendingMaterial[] = [];
+    for (const reference of content.materials) {
+      const material = this.bank.getMaterialVersion(reference.versionId);
+      if (material !== undefined) materials.push({ materialId: reference.materialId, content: material.content });
+    }
+    return pendingChecks(content, subQuestionIds, score, materials);
   }
 
   private paperRow(sqlite: DatabaseSync, paperId: string): PaperRecord {

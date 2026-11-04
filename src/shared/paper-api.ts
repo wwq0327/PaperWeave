@@ -1,6 +1,6 @@
 import type { BasketSelection } from "./basket";
 import type { Block } from "./document";
-import type { BlankSpace, PaperScoring, PaperScoringState, ScoreConflict } from "./paper";
+import type { BlankSpace, PaperScoring, PaperScoringState, PendingCheck, ScoreConflict } from "./paper";
 import type { PaperSnapshot, ResolvedReference, VolumePaper } from "./paper-layout";
 import type { AnswerStatus, Classification, QuestionContent, ReviewStatus, SourcePosition, Stage } from "./question";
 
@@ -73,6 +73,7 @@ export interface PaperItemView {
   defaultScore: number;
   scoringState: PaperScoringState;
   scoreConflicts: (ScoreConflict & { confirmed: boolean })[];
+  pendingChecks: (PendingCheck & { confirmed: boolean })[];
   content: QuestionContent;
   createdAt: string;
 }

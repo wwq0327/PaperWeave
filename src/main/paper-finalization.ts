@@ -100,6 +100,12 @@ export class PaperFinalizer {
       for (const conflict of item.scoreConflicts) {
         if (!conflict.confirmed) blockers.push(`${label}：内嵌分值「${conflict.text}」尚未确认`);
       }
+      for (const pending of item.pendingChecks) {
+        if (pending.confirmed) continue;
+        blockers.push(pending.kind === "imageScore"
+          ? `${label}：卷内分值已改，图片中的旧分值需人工核对`
+          : `${label}：文字引用「${pending.text}」未结构化，需确认`);
+      }
       const readiness = this.bank.checkReady(item.questionVersionId, { confirmAnswerGap: options.confirmAnswerGap ?? false });
       blockers.push(...readiness.blockers.map((blocker) => `${label}（${page}）：${blocker}`));
       notices.push(...readiness.notices.map((notice) => `${label}：${notice}`));
