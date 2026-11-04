@@ -46,6 +46,7 @@ M0 已启动。Issue #1「工程脚手架——Electron 双平台安装包与断
 - 草稿级双卷生成（2026-11-04）：设计见 `docs/双卷生成设计-V1.md`；`src/shared/volume.ts` 按卷返回允许字段（学生卷 `answer` 恒为 `null`），界面新增「生成学生卷与教师答案卷」，导出时依次切学生/教师视图再打印，教师卷末尾附「参考答案」节。E2E 新增界面双卷用例，`npm run check`（12 项）与 `npm run test:e2e`（7 项）通过；人工用 `pdftotext` 核验：学生卷无「参考答案」，教师卷含「参考答案：3 个苹果。」。仍无按题号/评分关联、纸样、安装包内导出与 Windows 未验，Issue #5 不关闭。
 - 双卷中断恢复（2026-11-04）：新增 `src/main/pdf-journal.ts`（`app_settings.pdf.pending` 操作日志）与 `src/main/pdf-recovery.ts`；启动时删除只含两份预期 PDF 的 `.paperweave-<id>.pending`，已完成定稿目录一律保留，含非预期文件则保留并弹窗提示。E2E 覆盖启动清理与记录清除。`npm run check`（18 项）与 `npm run test:e2e`（8 项）通过。纸样、安装包内导出与 Windows 仍未验，Issue #5 不关闭。
 - 用户要求每完成一个开发步骤就更新本交接并提交相关代码。上述 #2–#5 提交已推送并按栈顺序经 PR #12–#15 合并入 main（merge commit，未 squash，保留逐 Issue 提交）；草稿级双卷经 PR #16、中断恢复经 PR #17 合并。各 Issue 均未关闭，待完成项见各 PR 正文与上文。
+- Issue #6 AI 文字输入（2026-11-04，分支 `feat/6-ai-text`）：主进程用 `pdfjs-dist` 6.5.438 提取 PDF 逐页纯文字，教师勾选页面、修改并确认后才发送；固定响应用 `PAPERWEAVE_AI_FAKE` 自动化验证，真实请求支持 Anthropic 兼容端点、120 秒超时与取消。密钥经 `safeStorage` 加密单独存放，不回显、不入数据库。草稿按纯文本渲染，含待核项与原卷页码；采纳后进入编辑区，答案只写教师参考答案，仍可人工修改保存。`npm run check` 38 项、`npm run test:e2e` 13 项通过。仍缺：真实模型调用与南充九年级语文卷第 3–4 页样本（样本不在仓库，真实调用需当次授权与费用确认）、真实文字卷提取、安装包内 AI 流程人工验收、Windows、页码持久化（草稿 v2 无来源页码字段）；Issue #6 保持 OPEN，裁图输入属 #7。
 
 ## 接着讨论
 
