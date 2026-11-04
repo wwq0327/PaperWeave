@@ -26,6 +26,25 @@ export function registerAi(db: Database, root: string, currentWindow: () => Brow
   };
   const publicConfig = () => ({ ...parseAiConfig(db.getSetting(configKey)), hasKey: keyExists(root) });
   const inFlight = new Map<string, AbortController>();
+  const choosePdf = async () => {
+    const win = currentWindow();
+    if (!win) throw new Error("窗口已关闭");
+    const result = await dialog.showOpenDialog(win, { title: "选择原卷 PDF", properties: ["openFile"], filters: [{ name: "PDF", extensions: ["pdf"] }] });
+    if (result.canceled || !result.filePaths[0]) return null;
+    const path = result.filePaths[0];
+    const file = await open(path, "r");
+    let data: Buffer;
+    try {
+      const info = await file.stat();
+      if (!info.isFile() || info.size === 0 || info.size > maxPdfBytes) throw new Error("请选择不超过 50 MiB 的有效 PDF");
+      data = Buffer.alloc(info.size);
+      const { bytesRead } = await file.read(data, 0, data.length, 0);
+      if (bytesRead !== data.length) throw new Error("PDF 读取不完整，请重试");
+    } finally {
+      await file.close();
+    }
+    return { name: basename(path), data };
+  };
 
   ipcMain.handle("ai:getConfig", (event) => {
     permitted(event);
@@ -91,23 +110,17 @@ export function registerAi(db: Database, root: string, currentWindow: () => Brow
 
   ipcMain.handle("ai:extractPdf", async (event) => {
     permitted(event);
-    const win = currentWindow();
-    if (!win) throw new Error("窗口已关闭");
-    const result = await dialog.showOpenDialog(win, { title: "选择原卷 PDF", properties: ["openFile"], filters: [{ name: "PDF", extensions: ["pdf"] }] });
-    if (result.canceled || !result.filePaths[0]) return null;
-    const path = result.filePaths[0];
-    const file = await open(path, "r");
-    let data: Buffer;
-    try {
-      const info = await file.stat();
-      if (!info.isFile() || info.size === 0 || info.size > maxPdfBytes) throw new Error("请选择不超过 50 MiB 的有效 PDF");
-      data = Buffer.alloc(info.size);
-      const { bytesRead } = await file.read(data, 0, data.length, 0);
-      if (bytesRead !== data.length) throw new Error("PDF 读取不完整，请重试");
-    } finally {
-      await file.close();
-    }
-    const extracted = await extractPdfText(new Uint8Array(data));
-    return { name: basename(path), ...extracted };
+    const picked = await choosePdf();
+    if (!picked) return null;
+    const extracted = await extractPdfText(new Uint8Array(picked.data));
+    return { name: picked.name, ...extracted };
+  });
+
+  ipcMain.handle("ai:loadPdf", async (event) => {
+    permitted(event);
+    const picked = await choosePdf();
+    if (!picked) return null;
+    const extracted = await extractPdfText(new Uint8Array(picked.data));
+    return { name: picked.name, data: new Uint8Array(picked.data), ...extracted };
   });
 }

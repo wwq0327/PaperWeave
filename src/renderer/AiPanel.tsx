@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
 import { AI_LIMITS, isAiDraft, normalizeAiInput, type AiDraft, type AiInput, type AiQuestion } from "../shared/ai";
 import type { AiConfig } from "../shared/ai-config";
+import AiImageInput, { type AiImageSelection } from "./AiImageInput";
+import { messageOf } from "./messages";
 
 type PdfPages = { name: string; pages: { page: number; text: string }[]; hasText: boolean };
 type PublicConfig = AiConfig & { hasKey: boolean };
-
-const messageOf = (error: unknown) =>
-  String(error instanceof Error ? error.message : error).replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
 
 export default function AiPanel({ onAdopt }: { onAdopt: (questions: AiQuestion[]) => void }) {
   const [config, setConfig] = useState<PublicConfig | null>(null);
@@ -18,6 +17,9 @@ export default function AiPanel({ onAdopt }: { onAdopt: (questions: AiQuestion[]
   const [selectedPages, setSelectedPages] = useState<number[]>([]);
   const [manualPage, setManualPage] = useState("1");
   const [text, setText] = useState("");
+  const [mode, setMode] = useState<"text" | "image">("text");
+  const [images, setImages] = useState<AiImageSelection[]>([]);
+  const [imageNote, setImageNote] = useState("");
   const [confirming, setConfirming] = useState(false);
   const [sending, setSending] = useState(false);
   const [requestId, setRequestId] = useState<string | null>(null);
@@ -94,9 +96,24 @@ export default function AiPanel({ onAdopt }: { onAdopt: (questions: AiQuestion[]
 
   function requestConfirmation() {
     setResultMessage(""); setResultError("");
-    const checked = normalizeAiInput({ mode: "text", text, pages: inputPages() });
+    const checked = buildInput();
     if (!checked.ok) { setResultError(checked.error); return; }
     setConfirming(true);
+  }
+
+  function buildInput(): { ok: true; input: AiInput } | { ok: false; error: string } {
+    if (mode === "image") return normalizeAiInput({ mode: "images", images: images.map(({ dataUrl, page }) => ({ dataUrl, page })), note: imageNote });
+    return normalizeAiInput({ mode: "text", text, pages: inputPages() });
+  }
+
+  function switchMode(next: "text" | "image") {
+    if (sending) return;
+    setMode(next); setConfirming(false); setResult(null); setAdopted([]);
+    setResultMessage(""); setResultError("");
+  }
+
+  function changeImages(next: AiImageSelection[]) {
+    setImages(next); setConfirming(false); setResult(null); setAdopted([]);
   }
 
   function inputPages(): number[] {
@@ -106,7 +123,7 @@ export default function AiPanel({ onAdopt }: { onAdopt: (questions: AiQuestion[]
   }
 
   async function send() {
-    const checked = normalizeAiInput({ mode: "text", text, pages: inputPages() });
+    const checked = buildInput();
     if (!checked.ok) { setResultError(checked.error); setConfirming(false); return; }
     const id = crypto.randomUUID();
     setRequestId(id); setSending(true); setResultError(""); setResultMessage("");
@@ -140,11 +157,16 @@ export default function AiPanel({ onAdopt }: { onAdopt: (questions: AiQuestion[]
 
   const chars = [...text].length;
   const pagesLabel = inputPages();
+  const imagePages = [...new Set(images.map((image) => image.page))];
   const localInsecure = config && /^http:\/\//.test(config.baseUrl) && !/^http:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(config.baseUrl);
 
-  return <section className="ai-panel" aria-label="AI 文字草稿">
-    <h2>AI 文字草稿</h2>
-    <p className="muted">先在本机提取或粘贴文字，确认发送内容后才调用模型。草稿必须对照原卷逐题核对；不确定处会标为待核。</p>
+  return <section className="ai-panel" aria-label="AI 草稿">
+    <h2>AI 草稿</h2>
+    <p className="muted">从本机提取文字或拖选裁图，确认发送内容后才调用模型。草稿必须对照原卷逐题核对；不确定处会标为待核。</p>
+    <div className="ai-modes" role="tablist" aria-label="AI 输入方式">
+      <button role="tab" aria-selected={mode === "text"} className={mode === "text" ? "active" : ""} onClick={() => switchMode("text")} disabled={sending}>文字输入</button>
+      <button role="tab" aria-selected={mode === "image"} className={mode === "image" ? "active" : ""} onClick={() => switchMode("image")} disabled={sending}>裁图输入</button>
+    </div>
 
     <details className="ai-settings">
       <summary>模型服务与密钥设置</summary>
@@ -161,35 +183,54 @@ export default function AiPanel({ onAdopt }: { onAdopt: (questions: AiQuestion[]
       {configError && <p className="error" role="alert">{configError}</p>}
     </details>
 
-    <div className="toolbar">
-      <button onClick={choosePdf}>选择 PDF 并提取文字</button>
-      {pdf && <span className="muted">{pdf.name}</span>}
-    </div>
-
-    {pdf && <>
-      <div className="ai-pages" aria-label="选择原卷页">
-        {pdf.pages.map((page) => <label key={page.page} className={page.text ? "ai-page" : "ai-page empty"}>
-          <input type="checkbox" checked={selectedPages.includes(page.page)} disabled={!page.text} onChange={() => togglePage(page.page)} />
-          第 {page.page} 页{page.text ? `（${[...page.text].length} 字）` : "（无可提取文字）"}
-        </label>)}
+    {mode === "text" && <>
+      <div className="toolbar">
+        <button onClick={choosePdf} disabled={sending}>选择 PDF 并提取文字</button>
+        {pdf && <span className="muted">{pdf.name}</span>}
       </div>
-      <div className="toolbar"><button onClick={() => applyPages()} disabled={!selectedPages.length}>载入所选页文字</button><span className="muted">发送页码：{selectedPages.length ? selectedPages.join("、") : "未选择"}</span></div>
+
+      {pdf && <>
+        <div className="ai-pages" aria-label="选择原卷页">
+          {pdf.pages.map((page) => <label key={page.page} className={page.text ? "ai-page" : "ai-page empty"}>
+            <input type="checkbox" checked={selectedPages.includes(page.page)} disabled={!page.text} onChange={() => togglePage(page.page)} />
+            第 {page.page} 页{page.text ? `（${[...page.text].length} 字）` : "（无可提取文字）"}
+          </label>)}
+        </div>
+        <div className="toolbar"><button onClick={() => applyPages()} disabled={!selectedPages.length}>载入所选页文字</button><span className="muted">发送页码：{selectedPages.length ? selectedPages.join("、") : "未选择"}</span></div>
+      </>}
+
+      {!pdf && <label>原卷页码（手工粘贴文字时填写）<input type="number" min={1} max={2000} value={manualPage} onChange={(e) => { setManualPage(e.target.value); setConfirming(false); }} /></label>}
+
+      <label>待处理文字（{chars} / {AI_LIMITS.textChars} 字）
+        <textarea className="ai-text" value={text} onChange={(e) => { setText(e.target.value); setConfirming(false); setResult(null); setAdopted([]); }} placeholder="从 PDF 提取后会自动填入；也可以直接粘贴已确认的纯文字。" />
+      </label>
+      {chars > AI_LIMITS.textChars && <p className="error" role="alert">文字超过 {AI_LIMITS.textChars} 字，请取消勾选部分页面或按题分批提交。</p>}
     </>}
 
-    {!pdf && <label>原卷页码（手工粘贴文字时填写）<input type="number" min={1} max={2000} value={manualPage} onChange={(e) => { setManualPage(e.target.value); setConfirming(false); }} /></label>}
-
-    <label>待处理文字（{chars} / {AI_LIMITS.textChars} 字）
-      <textarea className="ai-text" value={text} onChange={(e) => { setText(e.target.value); setConfirming(false); setResult(null); setAdopted([]); }} placeholder="从 PDF 提取后会自动填入；也可以直接粘贴已确认的纯文字。" />
-    </label>
-    {chars > AI_LIMITS.textChars && <p className="error" role="alert">文字超过 {AI_LIMITS.textChars} 字，请取消勾选部分页面或按题分批提交。</p>}
+    {mode === "image" && <AiImageInput
+      selections={images}
+      onChange={changeImages}
+      note={imageNote}
+      onNoteChange={(value) => { setImageNote(value); setConfirming(false); }}
+      onError={setResultError}
+      disabled={sending}
+    />}
 
     {!confirming && <button onClick={requestConfirmation} disabled={sending}>生成 AI 草稿…</button>}
 
     {confirming && <section className="ai-confirm" aria-label="发送前确认">
       <h3>确认发送内容</h3>
-      <p>服务：{config?.baseUrl || "未读取"} · 模型：{config?.textModel || "未设置"} · 页码：{pagesLabel.length ? pagesLabel.join("、") : "无效"}</p>
-      <p>本次只发送下方文字，不会上传整份 PDF、题库或其他文件。</p>
-      <pre className="ai-input-preview">{text}</pre>
+      <p>服务：{config?.baseUrl || "未读取"} · 模型：{(mode === "text" ? config?.textModel : config?.imageModel) || "未设置"} · {mode === "text" ? `页码：${pagesLabel.length ? pagesLabel.join("、") : "无效"}` : `裁图：${images.length} 张（第 ${imagePages.join("、")} 页）`}</p>
+      <p>{mode === "text" ? "本次只发送下方文字，不会上传整份 PDF、题库或其他文件。" : "本次只发送下方裁图，不会上传整份 PDF、题库或其他文件。"}</p>
+      {mode === "text"
+        ? <pre className="ai-input-preview">{text}</pre>
+        : <>
+          <div className="ai-input-images">{images.map((image, index) => <figure key={index}>
+            <img src={image.dataUrl} alt={`发送裁图 ${index + 1}`} />
+            <figcaption>第 {image.page} 页 · {Math.ceil(image.bytes / 1024)} KiB</figcaption>
+          </figure>)}</div>
+          {imageNote.trim() && <p className="muted">补充说明：{imageNote}</p>}
+        </>}
       <div className="toolbar">
         <button className="primary" onClick={send} disabled={sending}>{sending ? "正在生成…（最多 120 秒）" : "确认发送并生成草稿"}</button>
         <button onClick={() => setConfirming(false)} disabled={sending}>返回修改</button>

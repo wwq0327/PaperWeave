@@ -102,6 +102,12 @@ export async function requestAiDraft(
   if (!response.ok) {
     if (response.status === 401 || response.status === 403) throw new Error("模型密钥无效或无权访问，请在设置中检查");
     if (response.status === 429) throw new Error("模型服务访问频繁，请稍后再试");
+    if (response.status === 400) {
+      const detail = await response.text().catch(() => "");
+      if (/image|vision|multimodal|图像|视觉/i.test(detail)) {
+        throw new Error("当前图像模型无法处理裁图，请换用支持图像输入的模型或改手工录入");
+      }
+    }
     if (response.status >= 500) throw new Error("模型服务暂时不可用，请稍后重试");
     throw new Error(`模型服务返回 ${response.status}`);
   }

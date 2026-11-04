@@ -107,3 +107,14 @@ test("主动取消与超时分别报错，人工草稿不会因此丢失", async
     await hanging.close();
   }
 });
+
+test("图像模型不支持图像输入时，提示换模型或手工录入", async () => {
+  const server = await startServer(() => ({ status: 400, json: { error: { message: "This model does not support image input" } } }));
+  const png = "data:image/png;base64," + Buffer.alloc(8, 1).toString("base64");
+  try {
+    await expect(requestAiDraft({ ...config, baseUrl: server.url }, "sk-test", { mode: "images", images: [{ dataUrl: png, page: 7 }] }))
+      .rejects.toThrow("支持图像");
+  } finally {
+    await server.close();
+  }
+});

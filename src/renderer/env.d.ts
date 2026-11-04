@@ -25,6 +25,7 @@ declare global {
       generateAiDraft(requestId: string, input: AiInput): Promise<AiDraft>;
       cancelAiDraft(requestId: string): Promise<boolean>;
       extractPdfText(): Promise<{ name: string; pages: { page: number; text: string }[]; hasText: boolean } | null>;
+      loadPdfForImages(): Promise<{ name: string; data: Uint8Array; pages: { page: number; text: string }[]; hasText: boolean } | null>;
     };
   }
 }
