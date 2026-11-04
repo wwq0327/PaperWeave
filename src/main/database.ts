@@ -86,6 +86,11 @@ export class Database {
     }
   }
 
+  /** 只读查询入口；不开始写事务。 */
+  read<T>(fn: (db: DatabaseSync) => T): T {
+    return fn(this.db);
+  }
+
   getSetting(key: string): string | undefined {
     return (this.db.prepare("SELECT value FROM app_settings WHERE key = ?").get(key) as { value: string } | undefined)?.value;
   }
