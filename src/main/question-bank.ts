@@ -117,13 +117,34 @@ export class QuestionBank {
   createQuestion(content: unknown, classification?: unknown): QuestionVersionRecord {
     const valid = this.validQuestion(content);
     const validClassification = classification === undefined ? undefined : this.validClassification(classification);
-    return this.db.transaction((sqlite) => {
-      const questionId = randomUUID();
-      sqlite.prepare("INSERT INTO questions (id, created_at) VALUES (?, ?)").run(questionId, new Date().toISOString());
-      if (validClassification) this.writeClassification(sqlite, questionId, validClassification);
-      this.ensureMaterials(sqlite, valid);
-      return this.insertQuestionVersion(sqlite, { questionId, version: 1, content: valid, contentStatus: "draft", answerStatus: "missing" });
-    });
+    return this.db.transaction((sqlite) => this.insertNewQuestion(sqlite, valid, validClassification, "draft", "missing"));
+  }
+
+  /** 旧库导入用：在调用方事务内新建题目并指定初始审核状态。 */
+  createQuestionWithin(
+    sqlite: DatabaseSync,
+    content: unknown,
+    classification: unknown,
+    contentStatus: ReviewStatus,
+    answerStatus: AnswerStatus,
+  ): QuestionVersionRecord {
+    const valid = this.validQuestion(content);
+    const validClassification = classification === undefined ? undefined : this.validClassification(classification);
+    return this.insertNewQuestion(sqlite, valid, validClassification, contentStatus, answerStatus);
+  }
+
+  private insertNewQuestion(
+    sqlite: DatabaseSync,
+    content: QuestionContent,
+    classification: Classification | undefined,
+    contentStatus: ReviewStatus,
+    answerStatus: AnswerStatus,
+  ): QuestionVersionRecord {
+    const questionId = randomUUID();
+    sqlite.prepare("INSERT INTO questions (id, created_at) VALUES (?, ?)").run(questionId, new Date().toISOString());
+    if (classification) this.writeClassification(sqlite, questionId, classification);
+    this.ensureMaterials(sqlite, content);
+    return this.insertQuestionVersion(sqlite, { questionId, version: 1, content, contentStatus, answerStatus });
   }
 
   saveQuestionVersion(questionId: string, content: unknown): QuestionVersionRecord {
@@ -144,20 +165,29 @@ export class QuestionBank {
 
   /** 内容版本与分类在同一事务内保存；分类无效时不产生新版本。 */
   saveQuestionVersionWithClassification(questionId: string, content: unknown, classification: unknown): QuestionVersionRecord {
+    return this.db.transaction((sqlite) => this.saveQuestionVersionWithin(sqlite, questionId, content, classification));
+  }
+
+  /** 旧库导入用：在调用方事务内追加版本，可指定新版本状态。 */
+  saveQuestionVersionWithin(
+    sqlite: DatabaseSync,
+    questionId: string,
+    content: unknown,
+    classification: unknown,
+    statuses?: { contentStatus: ReviewStatus; answerStatus: AnswerStatus },
+  ): QuestionVersionRecord {
     const valid = this.validQuestion(content);
     const validClassification = this.validClassification(classification);
-    return this.db.transaction((sqlite) => {
-      const row = this.latestQuestionRow(sqlite, questionId);
-      if (row === undefined) throw new Error("题目不存在");
-      const previous = this.questionRecord(row);
-      this.writeClassification(sqlite, questionId, validClassification);
-      this.ensureMaterials(sqlite, valid);
-      return this.insertQuestionVersion(sqlite, {
-        questionId,
-        version: previous.version + 1,
-        content: valid,
-        ...this.savedStatuses(previous),
-      });
+    const row = this.latestQuestionRow(sqlite, questionId);
+    if (row === undefined) throw new Error("题目不存在");
+    const previous = this.questionRecord(row);
+    this.writeClassification(sqlite, questionId, validClassification);
+    this.ensureMaterials(sqlite, valid);
+    return this.insertQuestionVersion(sqlite, {
+      questionId,
+      version: previous.version + 1,
+      content: valid,
+      ...(statuses ?? this.savedStatuses(previous)),
     });
   }
 
@@ -281,20 +311,32 @@ export class QuestionBank {
 
   createMaterial(input: unknown): MaterialVersionRecord {
     const valid = this.validMaterial(input);
-    return this.db.transaction((sqlite) => {
-      const materialId = randomUUID();
-      sqlite.prepare("INSERT INTO materials (id, created_at) VALUES (?, ?)").run(materialId, new Date().toISOString());
-      return this.insertMaterialVersion(sqlite, { materialId, version: 1, ...valid, status: "draft" });
-    });
+    return this.db.transaction((sqlite) => this.createMaterialWithin(sqlite, valid, "draft"));
+  }
+
+  /** 旧库导入用：在调用方事务内新建材料并指定初始状态。 */
+  createMaterialWithin(sqlite: DatabaseSync, input: unknown, status: ReviewStatus): MaterialVersionRecord {
+    const valid = this.validMaterial(input);
+    const materialId = randomUUID();
+    sqlite.prepare("INSERT INTO materials (id, created_at) VALUES (?, ?)").run(materialId, new Date().toISOString());
+    return this.insertMaterialVersion(sqlite, { materialId, version: 1, ...valid, status });
   }
 
   saveMaterialVersion(materialId: string, input: unknown): MaterialVersionRecord {
+    return this.db.transaction((sqlite) => this.saveMaterialVersionWithin(sqlite, materialId, input));
+  }
+
+  /** 旧库导入用：在调用方事务内追加材料版本。 */
+  saveMaterialVersionWithin(sqlite: DatabaseSync, materialId: string, input: unknown, status?: ReviewStatus): MaterialVersionRecord {
     const valid = this.validMaterial(input);
-    return this.db.transaction((sqlite) => {
-      const row = sqlite.prepare("SELECT * FROM material_versions WHERE material_id = ? ORDER BY version DESC LIMIT 1").get(materialId);
-      if (row === undefined) throw new Error("材料不存在");
-      const previous = this.materialRecord(row);
-      return this.insertMaterialVersion(sqlite, { materialId, version: previous.version + 1, ...valid, status: previous.status === "approved" ? "pending" : previous.status });
+    const row = sqlite.prepare("SELECT * FROM material_versions WHERE material_id = ? ORDER BY version DESC LIMIT 1").get(materialId);
+    if (row === undefined) throw new Error("材料不存在");
+    const previous = this.materialRecord(row);
+    return this.insertMaterialVersion(sqlite, {
+      materialId,
+      version: previous.version + 1,
+      ...valid,
+      status: status ?? (previous.status === "approved" ? "pending" : previous.status),
     });
   }
 

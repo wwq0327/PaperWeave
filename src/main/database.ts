@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 
-const DATA_VERSION = 6;
+const DATA_VERSION = 7;
 
 /** 主进程持有的唯一数据库写入口；不向渲染进程暴露 SQL。 */
 export class Database {
@@ -191,6 +191,32 @@ export class Database {
           ) STRICT;
           CREATE INDEX question_exams_exam ON question_exams(exam_id, section_id);
           PRAGMA user_version = 6
+        `);
+      }
+      if (version < 7) {
+        this.db.exec(`
+          CREATE TABLE import_batches (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            root TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            summary TEXT NOT NULL
+          ) STRICT;
+          CREATE TABLE import_records (
+            id TEXT PRIMARY KEY,
+            batch_id TEXT NOT NULL REFERENCES import_batches(id),
+            kind TEXT NOT NULL,
+            source_key TEXT NOT NULL,
+            source_hash TEXT NOT NULL,
+            target_question_id TEXT,
+            target_version_id TEXT,
+            decision TEXT NOT NULL,
+            detail TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE (kind, source_key)
+          ) STRICT;
+          CREATE INDEX import_records_source ON import_records(kind, source_key);
+          PRAGMA user_version = 7
         `);
       }
       this.db.exec("COMMIT");
