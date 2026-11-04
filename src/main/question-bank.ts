@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { isBlockList, type Block } from "../shared/document";
-import { isQuestionContent, questionContentProblem, type AnswerStatus, type QuestionContent, type ReviewStatus } from "../shared/question";
+import { isQuestionContent, questionContentProblem, questionReadiness, type AnswerStatus, type QuestionContent, type Readiness, type ReviewStatus } from "../shared/question";
 import type { Database } from "./database";
 
 export interface QuestionVersionRecord {
@@ -29,6 +29,13 @@ export interface MaterialInput {
   title: string;
   content: Block[];
   source: string;
+}
+
+export interface QuestionUsage {
+  questionId: string;
+  versionId: string;
+  version: number;
+  materialVersion: number;
 }
 
 const isReviewStatus = (value: unknown): value is ReviewStatus => value === "draft" || value === "pending" || value === "approved";
@@ -101,8 +108,7 @@ export class QuestionBank {
         questionId,
         version: previous.version + 1,
         content: valid,
-        contentStatus: previous.contentStatus === "approved" ? "pending" : previous.contentStatus,
-        answerStatus: previous.contentStatus === "approved" && previous.answerStatus === "approved" ? "pending" : previous.answerStatus,
+        ...this.savedStatuses(previous),
       });
     });
   }
@@ -175,6 +181,74 @@ export class QuestionBank {
       if (!contentTransitions[row.status].includes(status)) throw new Error(`材料审核状态不能从「${row.status}」改为「${status}」`);
       sqlite.prepare("UPDATE material_versions SET status = ? WHERE id = ?").run(status, versionId);
     });
+  }
+
+  /** 列出仍引用旧版材料的题目（只取每题最新版本）。 */
+  questionsAffectedByMaterial(materialId: string): QuestionUsage[] {
+    return this.db.read((sqlite) => {
+      const rows = sqlite.prepare(`
+        SELECT qv.question_id AS questionId, qv.id AS versionId, qv.version AS version, MAX(mv.version) AS materialVersion
+        FROM question_versions qv
+        JOIN question_material_refs ref ON ref.question_version_id = qv.id
+        JOIN material_versions mv ON mv.id = ref.material_version_id
+        JOIN (SELECT question_id, MAX(version) AS version FROM question_versions GROUP BY question_id) latest
+          ON latest.question_id = qv.question_id AND latest.version = qv.version
+        WHERE mv.material_id = ?
+        GROUP BY qv.question_id
+        HAVING MAX(mv.version) < (SELECT MAX(version) FROM material_versions WHERE material_id = ?)
+        ORDER BY qv.question_id
+      `).all(materialId, materialId) as unknown[];
+      return rows.map((row) => {
+        const value = row as { questionId: string; versionId: string; version: number; materialVersion: number };
+        return { questionId: value.questionId, versionId: value.versionId, version: value.version, materialVersion: value.materialVersion };
+      });
+    });
+  }
+
+  /** 采用指定材料版本：生成新题目版本；已审核题回到待核，旧版本保持原引用。 */
+  adoptMaterialVersion(questionId: string, materialId: string, materialVersionId: string): QuestionVersionRecord {
+    return this.db.transaction((sqlite) => {
+      const row = this.latestQuestionRow(sqlite, questionId);
+      if (row === undefined) throw new Error("题目不存在");
+      const previous = this.questionRecord(row);
+      const target = sqlite.prepare("SELECT material_id FROM material_versions WHERE id = ?").get(materialVersionId) as { material_id: string } | undefined;
+      if (target === undefined) throw new Error("材料版本不存在");
+      if (target.material_id !== materialId) throw new Error("材料版本不属于该材料");
+      if (!previous.content.materials.some((ref) => ref.materialId === materialId)) throw new Error("题目未引用该材料");
+      const content: QuestionContent = {
+        ...previous.content,
+        materials: previous.content.materials.map((ref) => ref.materialId === materialId ? { materialId, versionId: materialVersionId } : ref),
+      };
+      return this.insertQuestionVersion(sqlite, { questionId, version: previous.version + 1, content, ...this.savedStatuses(previous) });
+    });
+  }
+
+  checkReady(versionId: string, options: { confirmAnswerGap?: boolean } = {}): Readiness {
+    return this.db.read((sqlite) => {
+      const row = sqlite.prepare("SELECT * FROM question_versions WHERE id = ?").get(versionId);
+      if (row === undefined) throw new Error("题目版本不存在");
+      const record = this.questionRecord(row);
+      const materialStatuses: Record<string, ReviewStatus | undefined> = {};
+      const find = sqlite.prepare("SELECT status FROM material_versions WHERE id = ?");
+      for (const ref of record.content.materials) {
+        const material = find.get(ref.versionId) as { status: string } | undefined;
+        materialStatuses[ref.versionId] = material !== undefined && isReviewStatus(material.status) ? material.status : undefined;
+      }
+      return questionReadiness({
+        content: record.content,
+        contentStatus: record.contentStatus,
+        answerStatus: record.answerStatus,
+        confirmAnswerGap: options.confirmAnswerGap ?? false,
+        materialStatuses,
+      });
+    });
+  }
+
+  private savedStatuses(previous: QuestionVersionRecord): { contentStatus: ReviewStatus; answerStatus: AnswerStatus } {
+    return {
+      contentStatus: previous.contentStatus === "approved" ? "pending" : previous.contentStatus,
+      answerStatus: previous.contentStatus === "approved" && previous.answerStatus === "approved" ? "pending" : previous.answerStatus,
+    };
   }
 
   private validQuestion(content: unknown): QuestionContent {

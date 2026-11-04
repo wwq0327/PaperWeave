@@ -105,3 +105,110 @@ test("拒绝非法题目内容且不留下半条记录", () => {
   expect((raw.prepare("SELECT count(*) AS count FROM question_versions").get() as { count: number }).count).toBe(0);
   raw.close();
 });
+
+function approvedMaterial(bank: QuestionBank, title = "共享材料") {
+  const material = bank.createMaterial({ title, content: [paragraph("材料一")], source: "自制" });
+  bank.setMaterialStatus(material.id, "pending");
+  bank.setMaterialStatus(material.id, "approved");
+  return material;
+}
+
+function withMaterial(material: { materialId: string; id: string }, originalNumber = "15") {
+  const content = note();
+  content.source = { ...content.source, originalNumber };
+  content.materials = [{ materialId: material.materialId, versionId: material.id }];
+  return content;
+}
+
+test("一份材料被三道题引用，材料改版后三道题全部列为受影响", () => {
+  const { bank } = open();
+  const material = approvedMaterial(bank);
+  const questions = ["甲", "乙", "丙"].map((label) => bank.createQuestion(withMaterial(material, label)));
+  expect(bank.questionsAffectedByMaterial(material.materialId)).toEqual([]);
+
+  const next = bank.saveMaterialVersion(material.materialId, { title: "共享材料", content: [paragraph("材料二")], source: "自制" });
+  expect(next.version).toBe(2);
+  const affected = bank.questionsAffectedByMaterial(material.materialId);
+  expect(affected.map((item) => item.questionId).sort()).toEqual(questions.map((question) => question.questionId).sort());
+  for (const item of affected) {
+    expect(item.version).toBe(1);
+    expect(item.materialVersion).toBe(material.version);
+  }
+});
+
+test("采用新版材料后生成新版本并待核，旧版本仍引用旧材料", () => {
+  const { bank } = open();
+  const material = approvedMaterial(bank);
+  const question = bank.createQuestion(withMaterial(material));
+  bank.setContentStatus(question.id, "pending");
+  bank.setContentStatus(question.id, "approved");
+  bank.setAnswerStatus(question.id, "pending");
+  bank.setAnswerStatus(question.id, "approved");
+
+  const nextMaterial = bank.saveMaterialVersion(material.materialId, { title: "共享材料", content: [paragraph("材料二")], source: "自制" });
+  const adopted = bank.adoptMaterialVersion(question.questionId, material.materialId, nextMaterial.id);
+  expect(adopted.version).toBe(2);
+  expect(adopted.contentStatus).toBe("pending");
+  expect(adopted.answerStatus).toBe("pending");
+  expect(adopted.content.materials).toEqual([{ materialId: material.materialId, versionId: nextMaterial.id }]);
+  expect(bank.getQuestionVersion(question.id)?.content.materials[0].versionId).toBe(material.id);
+  expect(bank.getLatestQuestionVersion(question.questionId)?.id).toBe(adopted.id);
+});
+
+test("已采用新版的题目不再出现在受影响列表", () => {
+  const { bank } = open();
+  const material = approvedMaterial(bank);
+  const question = bank.createQuestion(withMaterial(material));
+  const nextMaterial = bank.saveMaterialVersion(material.materialId, { title: "共享材料", content: [paragraph("材料二")], source: "自制" });
+  expect(bank.questionsAffectedByMaterial(material.materialId)).toHaveLength(1);
+  bank.adoptMaterialVersion(question.questionId, material.materialId, nextMaterial.id);
+  expect(bank.questionsAffectedByMaterial(material.materialId)).toEqual([]);
+});
+
+test("采用不存在、不属于该材料或未引用的版本被拒绝", () => {
+  const { bank } = open();
+  const material = approvedMaterial(bank);
+  const other = approvedMaterial(bank, "另一份材料");
+  const question = bank.createQuestion(withMaterial(material));
+  expect(() => bank.adoptMaterialVersion(question.questionId, material.materialId, "missing")).toThrow("材料版本不存在");
+  expect(() => bank.adoptMaterialVersion(question.questionId, material.materialId, other.id)).toThrow("不属于该材料");
+  const unrelated = bank.createQuestion(note());
+  expect(() => bank.adoptMaterialVersion(unrelated.questionId, material.materialId, material.id)).toThrow("未引用该材料");
+});
+
+test("就绪检查接入材料状态：材料未审核阻断，确认答案待补后通过", () => {
+  const { bank } = open();
+  const material = approvedMaterial(bank);
+  bank.saveMaterialVersion(material.materialId, { title: "共享材料", content: [paragraph("材料二")], source: "自制" });
+  const question = bank.createQuestion(withMaterial(material));
+  bank.setContentStatus(question.id, "pending");
+  bank.setContentStatus(question.id, "approved");
+  bank.setAnswerStatus(question.id, "pending");
+  bank.setAnswerStatus(question.id, "approved");
+
+  // 题目引用的是已审核的旧版材料，因此材料本身不阻断；换成未审核版本后再验。
+  expect(bank.checkReady(question.id)).toEqual({ ready: true, blockers: [], notices: [], requiresAnswerConfirmation: false });
+  const nextMaterial = bank.saveMaterialVersion(material.materialId, { title: "共享材料", content: [paragraph("材料三")], source: "自制" });
+  const adopted = bank.adoptMaterialVersion(question.questionId, material.materialId, nextMaterial.id);
+  bank.setContentStatus(adopted.id, "pending");
+  bank.setContentStatus(adopted.id, "approved");
+  bank.setAnswerStatus(adopted.id, "pending");
+  bank.setAnswerStatus(adopted.id, "approved");
+  const blocked = bank.checkReady(adopted.id);
+  expect(blocked.ready).toBe(false);
+  expect(blocked.blockers).toContain(`材料「${material.materialId}」尚未审核`);
+
+  bank.setMaterialStatus(nextMaterial.id, "pending");
+  bank.setMaterialStatus(nextMaterial.id, "approved");
+  expect(bank.checkReady(adopted.id)).toEqual({ ready: true, blockers: [], notices: [], requiresAnswerConfirmation: false });
+
+  const gapQuestion = bank.createQuestion(note());
+  bank.setContentStatus(gapQuestion.id, "pending");
+  bank.setContentStatus(gapQuestion.id, "approved");
+  const unconfirmed = bank.checkReady(gapQuestion.id);
+  expect(unconfirmed.requiresAnswerConfirmation).toBe(true);
+  expect(unconfirmed.ready).toBe(false);
+  const confirmed = bank.checkReady(gapQuestion.id, { confirmAnswerGap: true });
+  expect(confirmed.ready).toBe(true);
+  expect(confirmed.notices.length).toBeGreaterThan(0);
+});
