@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import type { DatabaseSync } from "node:sqlite";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import {
@@ -79,6 +80,70 @@ async function copyWithHash(source: string, destination: string): Promise<{ size
   return { size, sha256: hash.digest("hex") };
 }
 
+interface ImageReference {
+  id: string;
+  source: string;
+}
+
+function record(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function collectBlockImages(value: unknown, source: string, into: ImageReference[]): void {
+  if (!Array.isArray(value)) return;
+  for (const block of value) {
+    if (record(block) && block.type === "image" && typeof block.id === "string") into.push({ id: block.id, source });
+  }
+}
+
+function collectContentImages(value: unknown, source: string, into: ImageReference[]): void {
+  if (!record(value)) return;
+  collectBlockImages(value.stem, source, into);
+  if (!Array.isArray(value.subQuestions)) return;
+  for (const sub of value.subQuestions) {
+    if (!record(sub)) continue;
+    collectBlockImages(sub.prompt, source, into);
+    collectBlockImages(sub.explanation, source, into);
+    if (Array.isArray(sub.options)) for (const option of sub.options) if (record(option)) collectBlockImages(option.content, source, into);
+    if (Array.isArray(sub.answers)) for (const answer of sub.answers) if (record(answer)) collectBlockImages(answer.blocks, source, into);
+  }
+}
+
+function parseContent(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function questionLabel(content: unknown, status: string, fallback: string): string {
+  const source = record(content) ? content.source : undefined;
+  if (record(source) && typeof source.originalNumber === "string" && typeof source.pdfPage === "number") {
+    return `${status === "draft" ? "草稿题" : "题"} ${source.originalNumber}（原卷第 ${source.pdfPage} 页）`;
+  }
+  return fallback;
+}
+
+/** 按题目与材料最新版本的内容字段核对配图是否存在，返回缺失来源。 */
+function missingReferencedImages(sqlite: DatabaseSync, root: string): string[] {
+  const references: ImageReference[] = [];
+  const questions = sqlite.prepare(
+    "SELECT qv.id, qv.content, qv.content_status FROM question_versions qv WHERE qv.version = (SELECT MAX(latest.version) FROM question_versions latest WHERE latest.question_id = qv.question_id)",
+  ).all() as { id: string; content: string; content_status: string }[];
+  for (const row of questions) {
+    const content = parseContent(row.content);
+    collectContentImages(content, questionLabel(content, row.content_status, `题目版本 ${row.id}`), references);
+  }
+  const materials = sqlite.prepare(
+    "SELECT mv.title, mv.content FROM material_versions mv WHERE mv.version = (SELECT MAX(latest.version) FROM material_versions latest WHERE latest.material_id = mv.material_id)",
+  ).all() as { title: string; content: string }[];
+  for (const row of materials) collectBlockImages(parseContent(row.content), `材料「${row.title}」`, references);
+  return references
+    .filter((reference) => !ATTACHMENT.test(reference.id) || !regularFile(join(root, "attachments", reference.id)))
+    .map((reference) => `${reference.source}（配图 ${reference.id.slice(0, 8)}…）`);
+}
+
 async function readManifest(directory: string, currentDataVersion: number): Promise<BackupManifest> {
   const file = join(directory, "manifest.json");
   if (!regularFile(file)) throw new Error("备份清单缺失");
@@ -135,6 +200,8 @@ export class BackupService {
     const temporary = join(destinationParent, `.${name}.tmp-${randomUUID()}`);
     this.db.beginMaintenance("备份");
     try {
+      const missingImages = this.db.read((sqlite) => missingReferencedImages(sqlite, this.userData));
+      if (missingImages.length > 0) throw new Error(`配图缺失 ${missingImages.length} 处：${missingImages.join("；")}`);
       mkdirSync(temporary, { recursive: true });
       const files: BackupFileEntry[] = [];
       const snapshot = join(temporary, BACKUP_DATABASE_PATH);
@@ -222,6 +289,8 @@ export class BackupService {
       const staged = new Database(join(staging, BACKUP_DATABASE_PATH));
       try {
         if (staged.integrityCheck() !== "ok") throw new Error("备份数据库完整性检查失败");
+        const missingImages = staged.read((sqlite) => missingReferencedImages(sqlite, staging));
+        if (missingImages.length > 0) throw new Error(`备份配图缺失 ${missingImages.length} 处：${missingImages.join("；")}`);
         const finalizations = staged.read((sqlite) => sqlite.prepare("SELECT id FROM paper_finalizations").all() as { id: string }[]);
         for (const row of finalizations) {
           if (!FINALIZATION_ID.test(row.id)) throw new Error(`备份定稿标识无效：${row.id}`);

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Database } from "../../../src/main/database";
@@ -33,6 +33,17 @@ function seed(data: string, marker: string) {
   writeFileSync(student, "%PDF-1.4\n学生卷\n");
   writeFileSync(teacher, "%PDF-1.4\n教师卷\n");
   db.transaction((sqlite) => {
+    const questionId = "20000000-0000-0000-0000-000000000001";
+    const questionVersionId = "30000000-0000-0000-0000-000000000001";
+    sqlite.prepare("INSERT INTO questions (id, created_at) VALUES (?, ?)").run(questionId, "2026-11-05T00:00:00.000Z");
+    sqlite.prepare("INSERT INTO question_versions (id, question_id, version, content, content_status, answer_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(questionVersionId, questionId, 1, JSON.stringify({
+        stem: [{ type: "image", id: attachment, alt: "配图" }],
+        subQuestions: [{ id: "sub-1", originalLabel: "(1)", prompt: [], explanation: [], options: [], slots: [], answers: [], scoring: [], originalScore: 5, materialIds: [], dependsOn: [] }],
+        materials: [],
+        selection: { mode: "all" },
+        source: { section: "合成", pdfPage: 1, originalNumber: "1" },
+      }), "approved", "approved", "2026-11-05T00:00:00.000Z");
     sqlite.prepare("INSERT INTO papers (id, title, stage, subject, grade, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .run(paperId, "合成卷", "初中", "数学", "九年级", "2026-11-05T00:00:00.000Z", "2026-11-05T00:00:00.000Z");
     sqlite.prepare("INSERT INTO paper_finalizations (id, paper_id, student_pdf, teacher_pdf, snapshot, student_sha256, teacher_sha256, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
@@ -86,6 +97,17 @@ describe("备份创建与检查", () => {
     db.close();
   });
 
+  it("题目引用的配图缺失时拒绝备份并指出题号", async () => {
+    const data = temp("paperweave-data-");
+    const { db, attachment } = seed(data, "题库 A");
+    rmSync(path.join(data, "attachments", attachment));
+    const destination = temp("paperweave-dest-");
+    const service = new BackupService(db, data, "1.0.0", clock);
+    await expect(service.create(destination)).rejects.toThrow(/配图缺失 1 处：题 1（原卷第 1 页）/);
+    expect(readdirSync(destination)).toEqual([]);
+    db.close();
+  });
+
   it("检查时拒绝缺文件、校验值不符与更高数据版本", async () => {
     const data = temp("paperweave-data-");
     const { db, attachment } = seed(data, "题库 A");
@@ -135,6 +157,30 @@ describe("恢复暂存与切换", () => {
     expect(student).not.toBe(row.student_pdf);
     restored.close();
     expect(existsSync(path.join(target, "restore-request.json"))).toBe(false);
+  });
+
+  it("备份数据引用配图但备份中缺失时拒绝恢复并保留原库", async () => {
+    const source = temp("paperweave-source-");
+    const { db, attachment } = seed(source, "题库 A");
+    const destination = temp("paperweave-dest-");
+    const backup = await new BackupService(db, source, "1.0.0", clock).create(destination);
+    db.close();
+    const backupDir = path.join(destination, backup.name);
+    const manifestPath = path.join(backupDir, "manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { files: { path: string; size: number }[]; totalBytes: number };
+    const files = manifest.files.filter((file) => file.path !== `attachments/${attachment}`);
+    writeFileSync(manifestPath, JSON.stringify({ ...manifest, files, totalBytes: files.reduce((sum, file) => sum + file.size, 0) }));
+    rmSync(path.join(backupDir, "attachments", attachment));
+
+    const target = temp("paperweave-target-");
+    const targetSeed = seed(target, "题库 B");
+    await expect(new BackupService(targetSeed.db, target, "1.0.0", clock).prepareRestore(backupDir)).rejects.toThrow(/备份配图缺失 1 处：题 1/);
+    targetSeed.db.close();
+    const old = new Database(path.join(target, "paperweave.sqlite"));
+    expect(old.getSetting("marker")).toBe("题库 B");
+    old.close();
+    expect(existsSync(path.join(target, "restore-request.json"))).toBe(false);
+    expect(readdirSync(target).some((name) => name.startsWith(".restore-staging-"))).toBe(false);
   });
 
   it("切换后新库无法打开时回滚原库并保留可启动状态", async () => {
