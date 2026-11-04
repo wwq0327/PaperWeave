@@ -117,9 +117,10 @@ export function registerPaper(db: Database, currentWindow: () => BrowserWindow |
     permitted(event);
     papers.removeSection(text(sectionId, "小节标识"));
   });
-  ipcMain.handle("paper:addBasketItem", (event, paperId: unknown, sectionId: unknown, basketItemId: unknown) => {
+  ipcMain.handle("paper:addBasketItem", (event, paperId: unknown, sectionId: unknown, basketItemId: unknown, score: unknown) => {
     permitted(event);
-    return papers.addBasketItem(text(paperId, "试卷标识"), text(sectionId, "小节标识"), text(basketItemId, "题篮项"));
+    if (score !== undefined && typeof score !== "number") throw new Error("卷内分值无效");
+    return papers.addBasketItem(text(paperId, "试卷标识"), text(sectionId, "小节标识"), text(basketItemId, "题篮项"), score as number | undefined);
   });
   ipcMain.handle("paper:removeItem", (event, itemId: unknown) => {
     permitted(event);
