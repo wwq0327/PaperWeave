@@ -17,6 +17,8 @@ export interface ParsedImage {
   id: string;
   path: string;
   alt: string;
+  /** 应用内补入的图片已写入附件池，执行导入时无需再读源文件。 */
+  saved?: boolean;
 }
 
 export interface BlockParseResult {

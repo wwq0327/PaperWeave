@@ -4,6 +4,7 @@ import { basename } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import {
   emptyImportSummary,
+  importProblemKind,
   isImportDecision,
   isImportKind,
   type ImportApplyResult,
@@ -14,10 +15,11 @@ import {
   type ImportScanView,
   type ImportStatus,
 } from "../shared/import";
+import { diffImportContent, type ImportDiffMaterial, type ImportFieldDiff } from "../shared/import-diff";
 import { buildSearchText, hasContent, type AnswerStatus, type QuestionContent } from "../shared/question";
 import type { AttachmentStore } from "./attachments";
 import type { Database } from "./database";
-import { QuestionBank } from "./question-bank";
+import { QuestionBank, type QuestionVersionRecord } from "./question-bank";
 import type { ImportCandidate, ImportMaterialSpec } from "./import-candidate";
 import { scanMathVault } from "./mathvault";
 import { scanTiku } from "./tiku";
@@ -104,6 +106,7 @@ export class ImportStore {
       const candidate = cache.candidates.get(action.sourceKey);
       if (!candidate) throw new Error(`扫描结果中没有来源：${action.sourceKey}`);
       for (const image of candidate.images) {
+        if (image.saved) continue;
         let data: Buffer;
         try { data = readFileSync(image.path); } catch { throw new Error("图片在扫描后已缺失，请重新扫描"); }
         const saved = this.attachments.save(data);
@@ -175,6 +178,7 @@ export class ImportStore {
       classification: candidate.classification,
       preview: candidate.preview,
       reasons: [...candidate.reasons],
+      problems: [...candidate.problems],
       legacyStatus: candidate.legacyStatus,
       needsProofread: candidate.needsProofread,
     };
@@ -201,7 +205,68 @@ export class ImportStore {
       incoming: status === "importable" || status === "changed" ? candidate.content : undefined,
       canRevise: status === "changed",
       needsProofread: candidate.needsProofread,
+      diff: status === "changed" && latest ? this.diffFor(latest, candidate) : undefined,
     };
+  }
+
+  /** 应用内修正单个阻断项：补图或确认移除；只重校验该条，不重跑整批。 */
+  correct(input: unknown, image?: { data: Buffer; path: string; alt: string }): ImportRow {
+    if (typeof input !== "object" || input === null || Array.isArray(input)) throw new Error("修正请求无效");
+    const value = input as Record<string, unknown>;
+    if (!Object.keys(value).every((key) => key === "scanId" || key === "sourceKey" || key === "action" || key === "problem")) throw new Error("修正请求包含未知字段");
+    if (typeof value.scanId !== "string" || !value.scanId) throw new Error("扫描标识无效");
+    if (typeof value.sourceKey !== "string" || !value.sourceKey) throw new Error("来源标识无效");
+    if (value.action !== "attachImage" && value.action !== "dropProblem") throw new Error("修正动作无效");
+    if (typeof value.problem !== "string" || !value.problem) throw new Error("阻断项无效");
+    const cache = this.scans.get(value.scanId);
+    if (!cache) throw new Error("扫描结果已失效，请重新扫描");
+    const candidate = cache.candidates.get(value.sourceKey);
+    if (!candidate) throw new Error(`扫描结果中没有来源：${value.sourceKey}`);
+    if (cache.rows.get(value.sourceKey)?.status !== "blocked") throw new Error("该来源当前没有阻断项");
+    if (!candidate.problems.includes(value.problem)) throw new Error("该阻断项已处理或不存在");
+    const kind = importProblemKind(value.problem);
+    if (kind === "other") throw new Error("该阻断项不能在应用内修正，请修改源文件后重新扫描");
+    if (value.action === "attachImage") {
+      if (kind !== "image") throw new Error("该阻断项不能用补图修正");
+      if (!image) throw new Error("未选择图片");
+      if (!candidate.content) throw new Error("该来源缺少题目内容，无法补图");
+      const saved = this.attachments.save(image.data);
+      const alt = image.alt || "补入图片";
+      const block = { type: "image" as const, id: saved.id, alt };
+      const target = candidate.content.subQuestions[0]?.prompt ?? candidate.content.stem;
+      target.push(block);
+      candidate.images.push({ id: saved.id, path: image.path, alt, saved: true });
+      candidate.corrections.push(`补图：${value.problem}`);
+    } else {
+      candidate.corrections.push(`确认移除：${value.problem}`);
+    }
+    candidate.problems = candidate.problems.filter((entry) => entry !== value.problem);
+    candidate.reasons = candidate.reasons.filter((entry) => entry !== value.problem);
+    candidate.blocked = candidate.problems.length > 0;
+    const updated = this.annotate(cache.kind, candidate);
+    cache.rows.set(candidate.sourceKey, updated);
+    return updated;
+  }
+
+  private diffFor(latest: QuestionVersionRecord, candidate: ImportCandidate): ImportFieldDiff[] {
+    const beforeMaterials: ImportDiffMaterial[] = latest.content.materials.map((ref) => {
+      const version = this.bank.getMaterialVersion(ref.versionId);
+      return { title: version?.title ?? "", blocks: version?.content ?? [] };
+    });
+    return diffImportContent(
+      {
+        number: latest.content.source.originalNumber,
+        classification: this.bank.getQuestionClassification(latest.questionId) ?? candidate.classification,
+        content: latest.content,
+        materials: beforeMaterials,
+      },
+      {
+        number: candidate.originalNumber,
+        classification: candidate.classification,
+        content: candidate.content!,
+        materials: candidate.materials.map((material) => ({ title: material.title, blocks: material.content })),
+      },
+    );
   }
 
   private checkAction(row: ImportRow, action: ImportApplyRow["action"], acknowledgeProofread: boolean): void {
@@ -279,6 +344,7 @@ export class ImportStore {
       originalNumber: candidate.originalNumber,
       pdfPage: candidate.pdfPage,
       targetStatus: row.status,
+      ...(candidate.corrections.length > 0 ? { corrections: candidate.corrections } : {}),
       ...(candidate.needsProofread ? { proofread: acknowledged ? "acknowledged" : "not_acknowledged" } : {}),
     });
     this.upsertRecord(sqlite, batchId, kind, candidate.sourceKey, candidate.sourceHash, questionId, versionId, decision, detail);

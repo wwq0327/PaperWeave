@@ -18,11 +18,12 @@ afterEach(() => { for (const dir of directories.splice(0)) rmSync(dir, { recursi
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 
-function questionFile(overrides: { image?: string; passage?: string; body?: string; answer?: string } = {}): string {
+function questionFile(overrides: { image?: string | null; passage?: string; body?: string; answer?: string; questionType?: string } = {}): string {
   const passageLink = overrides.passage === undefined ? "  - \"[[R2024-TEST-01]]\"" : overrides.passage === "" ? " []" : `  - "[[${overrides.passage}]]"`;
+  const imageLine = overrides.image === null ? "" : `![合成示意图](../../images/${overrides.image ?? "fig.png"})\n\n`;
   return `---
 题目编号: Q2024-TEST-002
-题型: 阅读理解
+题型: ${overrides.questionType ?? "阅读理解"}
 板块: 文学类文本
 来源: 自制样题
 年份: 2024
@@ -36,11 +37,9 @@ tags: [合成, 阅读]
 
 ## 题目正文
 
-阅读下面的合成材料，完成下面小题。
+${overrides.body ?? "阅读下面的合成材料，完成下面小题。"}
 
-![合成示意图](../../images/${overrides.image ?? "fig.png"})
-
-（1）合成第一问。（4分）
+${imageLine}（1）合成第一问。（4分）
 
 （2）合成第二问。（6分）
 
@@ -167,6 +166,78 @@ test("缺图、材料失链与解析失败逐条列入阻断原因", () => {
   expect(broken?.status).toBe("blocked");
   expect(broken?.reasons.join("；")).toContain("frontmatter");
   expect(scan.summary.blocked).toBe(2);
+});
+
+test("缺图阻断项补图后单条重新校验可导入，其余条目不受影响", () => {
+  const { db, store, bank } = open();
+  const { root, wiki } = makeTiku();
+  writeFileSync(join(wiki, "by-type", "04-文学类文本", "Q2024-TEST-002.md"), questionFile({ image: "missing.png" }));
+  const scan = store.scan("tiku", root);
+  const blocked = scan.rows.find((row) => row.sourceKey === "Q2024-TEST-002")!;
+  expect(blocked.status).toBe("blocked");
+  expect(blocked.problems).toEqual(["缺图：../../images/missing.png"]);
+  const problem = blocked.problems![0];
+  const corrected = store.correct(
+    { scanId: scan.scanId, sourceKey: blocked.sourceKey, action: "attachImage", problem },
+    { data: png, path: join(wiki, "images", "fig.png"), alt: "补入示意图" },
+  );
+  expect(corrected.status).toBe("importable");
+  expect(corrected.problems).toEqual([]);
+  expect(corrected.reasons.join("；")).not.toContain("缺图");
+  expect(corrected.incoming?.subQuestions[0].prompt.some((block) => block.type === "image" && block.alt === "补入示意图")).toBe(true);
+  const result = store.apply({ scanId: scan.scanId, rows: [{ sourceKey: blocked.sourceKey, action: "import" }] });
+  expect(result).toMatchObject({ imported: 1, revised: 0, skipped: 0 });
+  expect(bank.searchQuestions({ keyword: "合成第一问" })).toHaveLength(1);
+  expect(db.read((sqlite) => (sqlite.prepare("SELECT count(*) AS count FROM questions").get() as { count: number }).count)).toBe(1);
+  const record = db.read((sqlite) => sqlite.prepare("SELECT detail FROM import_records WHERE kind = 'tiku' AND source_key = ?").get(blocked.sourceKey) as { detail: string });
+  expect(JSON.parse(record.detail).corrections).toEqual(["补图：缺图：../../images/missing.png"]);
+});
+
+test("材料失链确认不带材料后单条导入，未修正的阻断仍被拒绝", () => {
+  const { store, bank } = open();
+  const { root, wiki } = makeTiku();
+  writeFileSync(join(wiki, "by-type", "04-文学类文本", "Q2024-TEST-002.md"), questionFile({ passage: "R2024-MISSING" }));
+  const scan = store.scan("tiku", root);
+  const blocked = scan.rows.find((row) => row.sourceKey === "Q2024-TEST-002")!;
+  expect(blocked.status).toBe("blocked");
+  const problem = blocked.problems!.find((item) => item.startsWith("材料失链"))!;
+  expect(problem).toBe("材料失链：R2024-MISSING");
+  expect(() => store.apply({ scanId: scan.scanId, rows: [{ sourceKey: blocked.sourceKey, action: "import" }] })).toThrow("阻断");
+  expect(() => store.correct(
+    { scanId: scan.scanId, sourceKey: blocked.sourceKey, action: "attachImage", problem },
+    { data: png, path: join(wiki, "images", "fig.png"), alt: "补图" },
+  )).toThrow("补图");
+  const corrected = store.correct({ scanId: scan.scanId, sourceKey: blocked.sourceKey, action: "dropProblem", problem });
+  expect(corrected.status).toBe("importable");
+  const result = store.apply({ scanId: scan.scanId, rows: [{ sourceKey: blocked.sourceKey, action: "import" }] });
+  expect(result.imported).toBe(1);
+  const found = bank.searchQuestions({ keyword: "合成第一问" })[0];
+  const detail = bank.getQuestionVersion(found.versionId);
+  expect(detail?.content.materials).toEqual([]);
+});
+
+test("来源变化时给出字段级差异：题干、答案、分类、材料与图片分别标记", () => {
+  const { store } = open();
+  const { root, wiki } = makeTiku();
+  const first = store.scan("tiku", root);
+  store.apply({ scanId: first.scanId, rows: [{ sourceKey: "Q2024-TEST-002", action: "import" }] });
+  writeFileSync(join(wiki, "by-type", "04-文学类文本", "Q2024-TEST-002.md"), questionFile({
+    image: null,
+    questionType: "现代文阅读",
+    body: "修改后的合成题干。",
+    answer: "（1）修改后的答案一。\n\n（2）合成答案二。",
+  }));
+  writeFileSync(join(wiki, "passages", "R2024-TEST-01.md"), "---\npassage_title: 合成材料\n---\n修改后的材料正文。\n");
+  const row = store.scan("tiku", root).rows.find((entry) => entry.sourceKey === "Q2024-TEST-002")!;
+  expect(row.status).toBe("changed");
+  const diff = row.diff ?? [];
+  expect(diff.some((item) => item.field === "题号")).toBe(false);
+  expect(diff.find((item) => item.field === "分类")).toMatchObject({ change: "modified" });
+  expect(diff.find((item) => item.field === "题干")?.before).toContain("阅读下面的合成材料");
+  expect(diff.find((item) => item.field === "题干")?.after).toContain("修改后的合成题干");
+  expect(diff.find((item) => item.field === "答案")?.after).toContain("修改后的答案一");
+  expect(diff.find((item) => item.field === "材料")?.after).toContain("修改后的材料正文");
+  expect(diff.find((item) => item.field === "图片")).toMatchObject({ change: "removed" });
 });
 
 test("执行导入：题目待核、答案待核、材料关联与配图落库，旧状态只入记录", () => {

@@ -1,4 +1,6 @@
 import { BrowserWindow, dialog, ipcMain } from "electron";
+import { readFileSync } from "node:fs";
+import { basename } from "node:path";
 import { isImportKind } from "../shared/import";
 import type { Database } from "./database";
 import { AttachmentStore } from "./attachments";
@@ -27,6 +29,25 @@ export function registerImports(db: Database, root: string, currentWindow: () =>
   ipcMain.handle("import:apply", (event, input: unknown) => {
     permitted(event);
     return store.apply(input);
+  });
+  ipcMain.handle("import:correct", async (event, input: unknown) => {
+    const win = permitted(event);
+    const action = typeof input === "object" && input !== null && !Array.isArray(input)
+      ? (input as Record<string, unknown>).action
+      : undefined;
+    if (action !== "attachImage") return { status: "corrected" as const, row: store.correct(input) };
+    const result = await dialog.showOpenDialog(win, {
+      title: "选择补入的图片",
+      properties: ["openFile"],
+      filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg"] }],
+    });
+    if (result.canceled || !result.filePaths[0]) return { status: "canceled" as const };
+    let data: Buffer;
+    try { data = readFileSync(result.filePaths[0]); } catch { throw new Error("读取图片失败，请重新选择"); }
+    return {
+      status: "corrected" as const,
+      row: store.correct(input, { data, path: result.filePaths[0], alt: basename(result.filePaths[0]) }),
+    };
   });
   ipcMain.handle("import:history", (event) => {
     permitted(event);

@@ -21,6 +21,10 @@ export interface ImportCandidate {
   classification: Classification;
   preview: string;
   reasons: string[];
+  /** 可逐条修正或确认移除的阻断原因；解析失败等不可修正项不在此列。 */
+  problems: string[];
+  /** 应用内已做的修正，随导入记录写入 detail 供追溯。 */
+  corrections: string[];
   legacyStatus?: string;
   blocked: boolean;
   needsProofread: boolean;

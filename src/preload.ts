@@ -60,6 +60,7 @@ contextBridge.exposeInMainWorld("paperweave", {
   listExamQuestions: (examId: string) => ipcRenderer.invoke("exam:questions", examId),
   scanImports: (kind: string) => ipcRenderer.invoke("import:scan", kind),
   applyImports: (input: unknown) => ipcRenderer.invoke("import:apply", input),
+  correctImport: (input: unknown) => ipcRenderer.invoke("import:correct", input),
   listImportBatches: () => ipcRenderer.invoke("import:history"),
   saveIntake: (input: unknown) => ipcRenderer.invoke("intake:save", input),
   saveIntakeFigure: (dataUrl: string) => ipcRenderer.invoke("intake:saveFigure", dataUrl),

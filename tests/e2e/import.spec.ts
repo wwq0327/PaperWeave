@@ -1,5 +1,5 @@
 import { test, expect, _electron as electron } from "@playwright/test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -52,6 +52,56 @@ test("扫描 Tiku 预览、导入自制题目，再次扫描全部跳过重复",
     await page.getByRole("button", { name: "扫描 Tiku 根目录" }).click();
     await expect(page.getByText(/可导入 0 · 完全重复 2/)).toBeVisible();
     await expect(page.getByRole("region", { name: "迁入预览" })).toContainText("完全重复");
+  } finally {
+    await closeApp(app);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("缺图题目在应用内补图后导入；来源变化显示字段差异并建立修订版", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-import-fix-"));
+  const source = path.join(dir, "tiku-broken");
+  cpSync(path.resolve("tests/fixtures/tiku-broken"), source, { recursive: true });
+  const image = path.resolve("tests/fixtures/tiku-mini/wiki/images/figure.png");
+  const app = await electron.launch({ args: [entry, `--user-data-dir=${path.join(dir, "data")}`] });
+  try {
+    const page = await app.firstWindow();
+    await page.getByRole("button", { name: "旧库迁入" }).click();
+    await app.evaluate(({ dialog }, targets) => {
+      dialog.showOpenDialog = (async (_window: unknown, options?: { properties?: string[] }) => {
+        const pickDirectory = options?.properties?.includes("openDirectory") === true;
+        return { canceled: false, filePaths: [pickDirectory ? targets.directory : targets.image] };
+      }) as typeof dialog.showOpenDialog;
+    }, { directory: source, image });
+    await page.getByRole("button", { name: "扫描 Tiku 根目录" }).click();
+    const preview = page.getByRole("region", { name: "迁入预览" });
+    await expect(preview).toBeVisible();
+    await expect(page.getByText(/可导入 0 · 完全重复 0/)).toBeVisible();
+    await expect(page.getByText(/阻断 1/)).toBeVisible();
+    await expect(preview).toContainText("缺图：../../images/missing.png");
+
+    await preview.getByRole("button", { name: "选择图片补入" }).click();
+    await expect(page.getByText("已处理「缺图：../../images/missing.png」，该条已重新校验为可导入。", { exact: true })).toBeVisible();
+    await expect(page.getByText(/可导入 1 · 完全重复 0/)).toBeVisible();
+    await expect(page.getByText(/阻断 0/)).toBeVisible();
+    await page.getByRole("button", { name: "执行导入" }).click();
+    await expect(page.getByText("导入完成：新增 1，修订 0，保留 0。", { exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "迁入批次" })).toContainText("tiku-broken");
+
+    const questionFile = path.join(source, "wiki/by-type/01-积累与运用/Q2025-TEST-003.md");
+    const updated = readFileSync(questionFile, "utf8")
+      .replace("合成缺图题", "修改后的缺图题")
+      .replace(/!\[合成缺图\]\(\.\.\/\.\.\/images\/missing\.png\)\n\n/, "");
+    writeFileSync(questionFile, updated);
+    await page.getByRole("button", { name: "扫描 Tiku 根目录" }).click();
+    await expect(page.getByText(/可导入 0 · 完全重复 0/)).toBeVisible();
+    await expect(page.getByText(/来源变化 1/)).toBeVisible();
+    await expect(preview).toContainText("题干（修改）");
+    await expect(preview).toContainText("修改后的缺图题");
+    await expect(preview).toContainText("图片（删除）");
+    await page.getByLabel("建立修订版").check();
+    await page.getByRole("button", { name: "执行导入" }).click();
+    await expect(page.getByText("导入完成：新增 0，修订 1，保留 0。", { exact: true })).toBeVisible();
   } finally {
     await closeApp(app);
     rmSync(dir, { recursive: true, force: true });
