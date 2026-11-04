@@ -66,7 +66,9 @@ M0 已启动。Issue #1「工程脚手架——Electron 双平台安装包与断
 
 - Issue #33 打包数据库核验适配（2026-11-05，PR #34）：`scripts/test-packaged-database.mjs` 不再硬编码数据版本，改为从 `src/main/database.ts` 读取 `DATA_VERSION`；清理改为主进程退出后重试删除，避免 `ENOTEMPTY` 竞态。打包应用建库、写入、重开与 SQLite 3.53.4 核验通过（数据版本 5 已复测）。Issue #33 已关闭。
 
-- Issue #36 题目模型 v5（2026-11-05，分支 `feat/36-question-model-v5`）：新增 `SubQuestion.originalScore`（0–1000 或 `null`）与 `materialIds`（必须在题组材料池中存在）；`selectionScore` 原分值优先、缺失回退评分点；`selectionDependencies.materialIds` 只返回当前小问材料；图片块支持同题唯一的 `figureId`；文本块支持 `subQuestion`／`material`／`figure` 引用节点，`fallback` 非空，两遍校验目标存在性；`hasContent` 与 `buildSearchText` 识别引用节点。数据版本 4 → 5：存量内容按评分点合计补原分值、按整组材料补小问材料，迁移失败整体回滚并保留 `user_version=4`；新增 `basket_items`、`papers`、`paper_sections`、`paper_items`、`paper_finalizations` 表。设计规格见 `docs/组卷与引用设计-V1.md`。`npm run check` 95 项、`npm run test:e2e` 25 项、`npm run test:packaged-db` 通过。经 PR #41 合并后关闭 Issue #36。
+- Issue #36 题目模型 v5（2026-11-05，分支 `feat/36-question-model-v5`）：新增 `SubQuestion.originalScore`（0–1000 或 `null`）与 `materialIds`（必须在题组材料池中存在）；`selectionScore` 原分值优先、缺失回退评分点；`selectionDependencies.materialIds` 只返回当前小问材料；图片块支持同题唯一的 `figureId`；文本块支持 `subQuestion`／`material`／`figure` 引用节点，`fallback` 非空，两遍校验目标存在性；`hasContent` 与 `buildSearchText` 识别引用节点。数据版本 4 → 5：存量内容按评分点合计补原分值、按整组材料补小问材料，迁移失败整体回滚并保留 `user_version=4`；新增 `basket_items`、`papers`、`paper_sections`、`paper_items`、`paper_finalizations` 表。设计规格见 `docs/组卷与引用设计-V1.md`。`npm run check` 95 项、`npm run test:e2e` 25 项、`npm run test:packaged-db` 通过。经 PR #41 合并，Issue #36 已关闭。
+
+- M0 验收补强（2026-11-05，分支 `fix/m0-verification-gaps`）：草稿格式升至 v3，采纳 AI 草稿时保存原卷页码与待核项，保存重开后仍显示「原卷来源」；双卷 E2E 解析两份 PDF 文本，断言学生卷不含「参考答案」与答案正文、教师卷包含答案，取代仅比较字节的弱断言；#35 已补多页逐行内容核对。`npm run check` 97 项、`npm run test:e2e` 25 项通过。真实模型调用、实体纸样、Windows 与安装包人工验收仍待用户。
 
 ## M0 待用户确认或授权（2026-11-04）
 
