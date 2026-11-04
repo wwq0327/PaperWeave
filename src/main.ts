@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog } from "electron";
 import { join } from "node:path";
 import { Database } from "./main/database";
+import { registerAi } from "./main/ai";
 import { registerEditor } from "./main/editor";
 import { parseJournal } from "./main/pdf-journal";
 import { recoverPendingOperations } from "./main/pdf-recovery";
@@ -32,6 +33,7 @@ app.whenReady().then(async () => {
     dialog.showErrorBox("清理未完成的 PDF 操作失败", `原文件未被删除，可稍后重试。\n${String(error)}`);
   }
   registerEditor(db, app.getPath("userData"), () => mainWindow);
+  registerAi(db, app.getPath("userData"), () => mainWindow);
   registerPdf(db, () => mainWindow);
   mainWindow = createMainWindow();
 

@@ -32,3 +32,20 @@ button:disabled { opacity: .45; cursor: default; } header button { background: #
   .preview .katex-display { overflow: visible; break-inside: avoid; }
 }
 .editor-controls { border: 0; padding: 0; margin: 0; min-width: 0; }
+
+.ai-panel { background: #fff; border: 1px solid #c9d6c9; border-radius: 10px; padding: 18px; margin: 18px 0; }
+.ai-panel h2 { margin: 0 0 6px; font-size: 20px; } .ai-panel h3 { font-size: 16px; margin: 12px 0 8px; }
+.ai-settings { margin: 12px 0; } .ai-settings summary { cursor: pointer; color: #225c3d; }
+.ai-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+.ai-text { min-height: 160px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.ai-pages { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.ai-page { display: flex; align-items: center; gap: 6px; border: 1px solid #dbe4db; border-radius: 6px; padding: 4px 8px; font-size: 13px; width: auto; }
+.ai-page input { width: auto; margin: 0; }
+.ai-page.empty { color: #8a978c; }
+.ai-confirm { border: 1px solid #d8c48f; background: #fffaf0; padding: 14px; border-radius: 8px; margin: 12px 0; }
+.ai-input-preview { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow: auto; background: #fff; border: 1px solid #e2d7bb; padding: 10px; font: 13px/1.5 ui-monospace, Menlo, monospace; }
+button.primary { background: #225c3d; color: #fff; border-color: #225c3d; }
+.ai-result { margin-top: 16px; } .ai-result-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.ai-question { border-top: 1px solid #dbe4db; padding: 10px 0; } .ai-question header { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.ai-question p { margin: 4px 0; } .uncertain { color: #9a5b00; background: #fff4e0; padding: 6px 8px; border-radius: 5px; }
+@media (max-width: 700px) { .ai-grid { grid-template-columns: 1fr; } }
