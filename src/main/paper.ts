@@ -126,6 +126,21 @@ export class Paper {
     return paper;
   }
 
+  listPapers(): PaperRecord[] {
+    return this.db.read((sqlite) => {
+      const rows = sqlite.prepare("SELECT * FROM papers ORDER BY updated_at DESC, id").all() as unknown as PaperRow[];
+      return rows.map((row) => ({
+        id: row.id,
+        title: row.title,
+        stage: row.stage,
+        subject: row.subject,
+        grade: row.grade,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }));
+    });
+  }
+
   addSection(paperId: string, title: string): PaperSectionRecord {
     if (typeof title !== "string" || !title.trim() || title.length > 200) throw new Error("小节标题无效");
     return this.db.transaction((sqlite) => {
@@ -234,6 +249,18 @@ export class Paper {
       sqlite.prepare("UPDATE paper_items SET score = ?, scoring = ? WHERE id = ?").run(roundScore(score), JSON.stringify(scoring), itemId);
       this.touch(sqlite, item.paper_id);
       return this.itemRecord({ ...item, score: roundScore(score), scoring: JSON.stringify(scoring) }, version.content);
+    });
+  }
+
+  setItemBlankSpace(itemId: string, blankSpace: BlankSpace): PaperItemRecord {
+    if (!(["none", "small", "medium", "large"] as const).includes(blankSpace)) throw new Error("留白档位无效");
+    return this.db.transaction((sqlite) => {
+      const item = this.itemRow(sqlite, itemId);
+      const version = this.bank.getQuestionVersion(item.question_version_id);
+      if (version === undefined) throw new Error("题目版本不存在");
+      sqlite.prepare("UPDATE paper_items SET blank_space = ? WHERE id = ?").run(blankSpace, itemId);
+      this.touch(sqlite, item.paper_id);
+      return this.itemRecord({ ...item, blank_space: blankSpace }, version.content);
     });
   }
 

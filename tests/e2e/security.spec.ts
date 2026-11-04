@@ -84,9 +84,7 @@ test("渲染进程无 Node、隔离与沙箱生效，跨窗口调用被拒绝", 
     });
     expect(probe.globals).toEqual(["process:undefined", "require:undefined", "module:undefined", "ipcRenderer:undefined", "Buffer:undefined", "electron:undefined"]);
     expect(probe.keys).toEqual([
-      "beginPdfPair", "cancelAiDraft", "cancelPdfPair", "captureStudentPdf", "chooseImage", "clearAiKey", "exportPdf",
-      "extractPdfText", "finishPdfPair", "generateAiDraft", "getAiConfig", "getImage", "getRuntimeVersions", "loadDraft",
-      "loadPdfForImages", "platform", "saveAiConfig", "saveAiKey", "saveDraft",
+      "addBasketItemToPaper", "addPaperSection", "addToBasket", "beginPaperFinalize", "beginPdfPair", "cancelAiDraft", "cancelPaperFinalize", "cancelPdfPair", "capturePaperStudent", "captureStudentPdf", "checkPaperFinalize", "chooseImage", "clearAiKey", "clearBasket", "confirmPaperScoreConflict", "createPaper", "exportPdf", "extractPdfText", "finishPaperFinalize", "finishPdfPair", "generateAiDraft", "getAiConfig", "getImage", "getPaper", "getPaperTeacherVolume", "getQuestionDetail", "getRuntimeVersions", "listBasket", "listPaperFinalizations", "listPapers", "loadDraft", "loadPdfForImages", "movePaperItem", "platform", "removeBasketItem", "removePaperItem", "removePaperSection", "reprintPaper", "saveAiConfig", "saveAiKey", "saveDraft", "searchQuestions", "setPaperItemBlankSpace", "setPaperItemScore", "setPaperItemScoring",
     ]);
 
     const denied = await app.evaluate(async ({ BrowserWindow }, preloadPath) => {
@@ -103,6 +101,10 @@ test("渲染进程无 Node、隔离与沙箱生效，跨窗口调用被拒绝", 
             await attempt(() => bridge.saveDraft({ version: 2, blocks: [], teacherAnswer: "" })),
             await attempt(() => bridge.getRuntimeVersions()),
             await attempt(() => bridge.getImage("a".repeat(64))),
+            await attempt(() => bridge.searchQuestions({})),
+            await attempt(() => bridge.listBasket()),
+            await attempt(() => bridge.getPaper("00000000-0000-0000-0000-000000000000")),
+            await attempt(() => bridge.beginPaperFinalize("00000000-0000-0000-0000-000000000000")),
           ];
         })()`);
       } finally {
@@ -112,6 +114,10 @@ test("渲染进程无 Node、隔离与沙箱生效，跨窗口调用被拒绝", 
     expect(denied[0]).toContain("无权访问编辑器");
     expect(denied[1]).toContain("无权读取运行信息");
     expect(denied[2]).toContain("无权访问编辑器");
+    expect(denied[3]).toContain("无权访问组卷功能");
+    expect(denied[4]).toContain("无权访问组卷功能");
+    expect(denied[5]).toContain("无权访问组卷功能");
+    expect(denied[6]).toContain("无权访问组卷功能");
   } finally {
     await closeApp(app);
     rmSync(dir, { recursive: true, force: true });

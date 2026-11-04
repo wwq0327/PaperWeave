@@ -175,6 +175,16 @@ test("内嵌旧分值列为冲突，逐项确认后才标记已确认", () => {
   expect(paper.getPaper(created.id).sections[0].items[0].scoreConflicts).toEqual([{ ...conflict, confirmed: true }]);
 });
 
+test("卷内留白可调，未知档位被拒绝", () => {
+  const { bank, basket, paper } = open();
+  const created = paper.createPaper({ title: "数学卷", stage: "初中", subject: "数学", grade: "九年级" });
+  const section = paper.addSection(created.id, "解答题");
+  const version = addQuestion(bank, math());
+  const item = paper.addBasketItem(created.id, section.id, addWhole(basket, version).id);
+  expect(paper.setItemBlankSpace(item.id, "large").blankSpace).toBe("large");
+  expect(() => paper.setItemBlankSpace(item.id, "huge" as never)).toThrow("留白档位无效");
+});
+
 test("题目顺序稳定、跨小节移动与删除后重新编号，总分随卷内分值更新", () => {
   const { bank, basket, paper } = open();
   const created = paper.createPaper({ title: "数学卷", stage: "初中", subject: "数学", grade: "九年级" });

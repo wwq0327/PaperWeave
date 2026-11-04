@@ -1,7 +1,21 @@
 /// <reference types="vite/client" />
 import type { AiDraft, AiInput } from "../shared/ai";
 import type { AiConfig } from "../shared/ai-config";
+import type { BasketSelection } from "../shared/basket";
 import type { Draft } from "../shared/document";
+import type {
+  BeginFinalizationView,
+  BasketItemView,
+  FinalizationCheckView,
+  FinalizationRecordView,
+  PaperDetailView,
+  PaperItemView,
+  PaperRecordView,
+  QuestionDetailView,
+  QuestionSearchView,
+} from "../shared/paper-api";
+import type { BlankSpace, PaperScoring } from "../shared/paper";
+import type { VolumePaper } from "../shared/paper-layout";
 import type { RuntimeVersions } from "../shared/versions";
 
 declare global {
@@ -26,6 +40,32 @@ declare global {
       cancelAiDraft(requestId: string): Promise<boolean>;
       extractPdfText(): Promise<{ name: string; pages: { page: number; text: string }[]; hasText: boolean } | null>;
       loadPdfForImages(): Promise<{ name: string; data: Uint8Array; pages: { page: number; text: string }[]; hasText: boolean } | null>;
+      searchQuestions(filter: unknown): Promise<QuestionSearchView[]>;
+      getQuestionDetail(versionId: string): Promise<QuestionDetailView>;
+      listBasket(): Promise<BasketItemView[]>;
+      addToBasket(questionId: string, versionId: string, subQuestionId: string | null, confirm?: boolean): Promise<{ status: "confirmation_required"; selection: BasketSelection } | { status: "added"; item: BasketItemView }>;
+      removeBasketItem(id: string): Promise<void>;
+      clearBasket(): Promise<void>;
+      listPapers(): Promise<PaperRecordView[]>;
+      createPaper(input: { title: string; stage: "小学" | "初中" | "高中"; subject: string; grade: string }): Promise<PaperRecordView>;
+      getPaper(paperId: string): Promise<PaperDetailView>;
+      addPaperSection(paperId: string, title: string): Promise<{ id: string; paperId: string; title: string; position: number }>;
+      removePaperSection(sectionId: string): Promise<void>;
+      addBasketItemToPaper(paperId: string, sectionId: string, basketItemId: string): Promise<PaperItemView>;
+      removePaperItem(itemId: string): Promise<void>;
+      movePaperItem(itemId: string, sectionId: string, position: number): Promise<void>;
+      setPaperItemScore(itemId: string, score: number): Promise<PaperItemView>;
+      setPaperItemBlankSpace(itemId: string, blankSpace: BlankSpace): Promise<PaperItemView>;
+      setPaperItemScoring(itemId: string, scoring: PaperScoring): Promise<PaperItemView>;
+      confirmPaperScoreConflict(itemId: string, key: string): Promise<PaperItemView>;
+      listPaperFinalizations(paperId: string): Promise<FinalizationRecordView[]>;
+      checkPaperFinalize(paperId: string): Promise<FinalizationCheckView>;
+      beginPaperFinalize(paperId: string): Promise<BeginFinalizationView>;
+      capturePaperStudent(id: string): Promise<void>;
+      getPaperTeacherVolume(id: string): Promise<VolumePaper>;
+      finishPaperFinalize(id: string): Promise<{ record: FinalizationRecordView; openErrors: string[] }>;
+      cancelPaperFinalize(id: string): Promise<void>;
+      reprintPaper(id: string): Promise<{ studentPath: string; teacherPath: string; openErrors: string[] }>;
     };
   }
 }
