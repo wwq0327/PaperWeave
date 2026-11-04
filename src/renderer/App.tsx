@@ -14,10 +14,15 @@ function Formula({ latex, display = false }: { latex: string; display?: boolean 
   } catch { return <span role="alert" data-invalid-formula>公式无法渲染，请检查表达式。</span>; }
 }
 function ImageView({ id, alt, cache }: { id: string; alt: string; cache: Record<string, string> }) {
-  const [url, setUrl] = useState(cache[id]);
-  const [error, setError] = useState(false);
-  useEffect(() => { let live = true; window.paperweave.getImage(id).then((v) => { if (live) setUrl(v); }).catch(() => { if (live) setError(true); }); return () => { live = false; }; }, [id]);
-  return error ? <p role="alert">图片无法读取，请勿覆盖原草稿。</p> : url ? <img src={url} alt={alt || "题图"} /> : <span>正在读取图片…</span>;
+  const [loaded, setLoaded] = useState<{ id: string; url: string } | null>(null);
+  const [failedId, setFailedId] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    window.paperweave.getImage(id).then((url) => { if (live) setLoaded({ id, url }); }).catch(() => { if (live) setFailedId(id); });
+    return () => { live = false; };
+  }, [id]);
+  const url = loaded?.id === id ? loaded.url : cache[id];
+  return failedId === id ? <p role="alert">图片无法读取，请勿覆盖原草稿。</p> : url ? <img src={url} alt={alt || "题图"} /> : <span>正在读取图片…</span>;
 }
 function TextPreview({ text, style }: { text: string; style: TextStyle }) {
   if (style === "粗体") return <strong>{text}</strong>;

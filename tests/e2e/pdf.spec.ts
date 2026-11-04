@@ -40,6 +40,11 @@ test("从实际编辑内容生成并打开同一份 A4 PDF；错误公式不生�
     await app.evaluate(({ dialog }, filename) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [filename] }); }, oversized);
     await page.getByRole("button", { name: "添加图片" }).click();
     await expect(page.getByRole("img", { name: "题图" })).toHaveCount(4);
+    await page.getByRole("region", { name: "内容 5" }).getByRole("button", { name: "上移" }).click();
+    await page.getByRole("region", { name: "内容 4" }).getByRole("button", { name: "上移" }).click();
+    const previewImages = page.getByRole("region", { name: "内容预览" }).getByRole("img");
+    await expect(previewImages.nth(0)).toHaveAttribute("src", `data:image/png;base64,${bigData}`);
+    await expect(previewImages.nth(1)).toHaveAttribute("src", `data:image/png;base64,${imageData}`);
     await page.getByRole("button", { name: "生成并预览草稿 PDF" }).click();
     await expect(page.getByText(/图片超过 A4 可打印区域/)).toBeVisible();
   } finally { await app.evaluate(({ app: electronApp }) => { electronApp.exit(0); }).catch(() => undefined); await app.close().catch(() => undefined); rmSync(dir, { recursive: true, force: true }); }
