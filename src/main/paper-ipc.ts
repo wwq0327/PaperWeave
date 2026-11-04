@@ -5,6 +5,7 @@ import { Paper } from "./paper";
 import { PaperFinalizer } from "./paper-finalization";
 import { QuestionBank } from "./question-bank";
 import { paperVolume, type PaperSnapshot } from "../shared/paper-layout";
+import type { AnswerStatus, ReviewStatus } from "../shared/question";
 import type { BeginFinalizationView, QuestionDetailView } from "../shared/paper-api";
 
 /** 题库、题篮、组卷与定稿的 IPC 面；不暴露 SQL，所有通道校验发送方主窗口。 */
@@ -45,6 +46,8 @@ export function registerPaper(db: Database, currentWindow: () => BrowserWindow |
       questionId: version.questionId,
       versionId: version.id,
       version: version.version,
+      contentStatus: version.contentStatus,
+      answerStatus: version.answerStatus,
       content: version.content,
       classification: bank.getQuestionClassification(version.questionId),
       materials: version.content.materials.map((ref) => {
@@ -53,6 +56,19 @@ export function registerPaper(db: Database, currentWindow: () => BrowserWindow |
         return { materialId: ref.materialId, versionId: ref.versionId, title: material.title, content: material.content, source: material.source, status: material.status };
       }),
     };
+  });
+
+  ipcMain.handle("question:setContentStatus", (event, versionId: unknown, status: unknown) => {
+    permitted(event);
+    bank.setContentStatus(text(versionId, "题目版本"), status as ReviewStatus);
+  });
+  ipcMain.handle("question:setAnswerStatus", (event, versionId: unknown, status: unknown) => {
+    permitted(event);
+    bank.setAnswerStatus(text(versionId, "题目版本"), status as AnswerStatus);
+  });
+  ipcMain.handle("question:setClassification", (event, questionId: unknown, classification: unknown) => {
+    permitted(event);
+    return bank.setClassification(text(questionId, "题目"), classification);
   });
 
   ipcMain.handle("basket:list", (event) => {
