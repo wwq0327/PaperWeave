@@ -14,6 +14,7 @@
     "make:win": "electron-forge make --platform=win32 --arch=x64",
     "check:artifacts": "node scripts/check-artifacts.mjs",
     "test:e2e": "npm run package && playwright test",
+    "test:packaged-db": "node scripts/test-packaged-database.mjs",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "check": "npm run typecheck && npm run test"
