@@ -43,6 +43,11 @@ test("断网启动：窗口打开、零网络请求、桥可用、渲染进程�
   }));
   expect(probe.bridge).toBe(true);
   expect(probe.nodeInRenderer).toBe("undefined");
+  // 测试模式下窗口应隐藏，避免跑套件时频繁弹窗打扰屏幕。
+  const visibility = await app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows().map((win) => win.isVisible()));
+  expect(visibility.length).toBeGreaterThan(0);
+  expect(visibility.every((visible) => visible === false)).toBe(true);
   expect(requests).toEqual([]); // Review Focus 1：零请求
   await app.close();
   rmSync(dataDir, { recursive: true, force: true });
@@ -61,7 +66,7 @@ test("打包产物从中文路径启动并存活", async () => {
   const child = spawn(
     path.resolve(path.join(copiedApp, "Contents", "MacOS", "PaperWeave")),
     [`--remote-debugging-port=${debugPort}`, `--user-data-dir=${path.resolve(zhDir, "user-data")}`],
-    { stdio: ["ignore", "pipe", "pipe"] },
+    { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PAPERWEAVE_TEST: "1" } },
   );
   let stderr = "";
   child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
@@ -88,7 +93,9 @@ async function pollCdpPageTitle(port: number, timeoutMs = 15000): Promise<string
     try {
       const res = await fetch(`http://127.0.0.1:${port}/json`);
       const targets = (await res.json()) as Array<{ type: string; url: string; title: string }>;
-      const page = targets.find((t) => t.type === "page" && t.url.startsWith("file://"));
+      // 冷启动（如系统负载高时）下 CDP 可能先列出 file:// 目标但标题尚未设置，
+      // 必须等标题非空，否则会把「还在加载」误判为启动失败。
+      const page = targets.find((t) => t.type === "page" && t.url.startsWith("file://") && t.title);
       if (page) return page.title;
     } catch {
       // CDP 尚未就绪，继续轮询

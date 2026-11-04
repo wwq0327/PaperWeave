@@ -16,7 +16,7 @@ const probe = (script) => {
 async function startAndWait() {
   const portFile = join(dir, "DevToolsActivePort");
   rmSync(portFile, { force: true });
-  const child = spawn(executable, [`--user-data-dir=${dir}`, "--remote-debugging-port=0"], { stdio: "ignore" });
+  const child = spawn(executable, [`--user-data-dir=${dir}`, "--remote-debugging-port=0"], { stdio: "ignore", env: { ...process.env, PAPERWEAVE_TEST: "1" } });
   try {
     for (let i = 0; i < 100 && !existsSync(file); i++) {
       if (child.exitCode !== null) throw new Error(`应用提前退出：${child.exitCode}`);
