@@ -1,5 +1,5 @@
 import { test, expect, _electron as electron } from "@playwright/test";
-import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -64,6 +64,34 @@ test("双 PDF IPC：生成、校验、打开并在取消后失效", async () => 
       }
     });
     expect(canceled).toBe("rejected");
+  } finally {
+    await app.evaluate(({ app: electronApp }) => { electronApp.exit(0); }).catch(() => undefined);
+    await app.close().catch(() => undefined);
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test("界面导出双卷：两份 PDF 由各自允许的字段生成且内容不同", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-dual-"));
+  const outDir = mkdtempSync(path.join(tmpdir(), "paperweave-dual-out-"));
+  const app = await electron.launch({ args: [path.resolve(".vite/build/main.cjs"), `--user-data-dir=${dir}`] });
+  try {
+    await app.evaluate(({ dialog, shell }, target) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] });
+      shell.openPath = async () => "";
+    }, outDir);
+    const page = await app.firstWindow();
+    await page.getByLabel("教师参考答案（仅供教师卷样张使用）").fill("参考答案：3 个苹果。");
+    await page.getByRole("button", { name: "生成学生卷与教师答案卷" }).click();
+    await expect(page.getByText(/学生卷与教师答案卷已保存并打开/)).toBeVisible();
+    const entries = readdirSync(outDir);
+    expect(entries).toHaveLength(1);
+    const student = readFileSync(path.join(outDir, entries[0], "学生卷.pdf"));
+    const teacher = readFileSync(path.join(outDir, entries[0], "教师答案卷.pdf"));
+    expect(student.subarray(0, 5).toString()).toBe("%PDF-");
+    expect(teacher.subarray(0, 5).toString()).toBe("%PDF-");
+    expect(teacher.equals(student)).toBe(false);
   } finally {
     await app.evaluate(({ app: electronApp }) => { electronApp.exit(0); }).catch(() => undefined);
     await app.close().catch(() => undefined);
