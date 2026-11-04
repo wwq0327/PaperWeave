@@ -443,3 +443,98 @@ test("组合筛选命中目标题，详情与入篮确认展示共享材料依�
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/** 答案待补的单选题，用于验证教师确认出卷与教师卷逐题标注。 */
+function answerGapContent(): QuestionContent {
+  return {
+    stem: [],
+    subQuestions: [{
+      id: "gap-answer-1",
+      originalLabel: "(1)",
+      prompt: [paragraph("写出解答过程。")],
+      explanation: [],
+      options: [],
+      slots: [],
+      answers: [],
+      scoring: [{ id: "gap-answer-score", description: "过程完整", score: 6, slotIds: [] }],
+      originalScore: 6,
+      materialIds: [],
+      dependsOn: [],
+    }],
+    materials: [],
+    selection: { mode: "all" },
+    source: { section: "数学·解答题", pdfPage: 3, originalNumber: "18" },
+  };
+}
+
+function seedAnswerGap(dir: string): void {
+  const db = new Database(path.join(dir, "paperweave.sqlite"));
+  const bank = new QuestionBank(db);
+  const version = bank.createQuestion(answerGapContent());
+  bank.setClassification(version.questionId, {
+    stage: "初中",
+    subject: "数学",
+    grade: "九年级",
+    examType: "单元测",
+    year: "2026",
+    sourceName: "自制样题",
+    questionType: "解答题",
+    knowledgePoints: ["综合"],
+  });
+  bank.setContentStatus(version.id, "pending");
+  bank.setContentStatus(version.id, "approved");
+  db.close();
+}
+
+test("答案待补：未确认时阻断定稿，确认后教师卷逐题标注且学生卷不标注", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-answer-gap-"));
+  const outDir = mkdtempSync(path.join(tmpdir(), "paperweave-answer-gap-out-"));
+  seedAnswerGap(dir);
+  const app = await electron.launch({ args: [path.resolve(".vite/build/main.cjs"), `--user-data-dir=${dir}`] });
+  try {
+    await app.evaluate(({ dialog, shell }, target) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] });
+      shell.openPath = async () => "";
+    }, outDir);
+    const page = await app.firstWindow();
+    await page.getByRole("button", { name: "题库与组卷" }).click();
+    await expect(page.getByRole("heading", { name: "题库与组卷" })).toBeVisible();
+    await page.locator(".paper-card", { hasText: "写出解答过程。" }).getByRole("button", { name: "整题入篮" }).click();
+    await expect(page.getByText("已加入题篮。")).toBeVisible();
+    await page.getByLabel("标题", { exact: true }).fill("答案待补数学卷");
+    await page.getByRole("button", { name: "创建试卷" }).click();
+    await page.getByRole("button", { name: "添加小节" }).click();
+    await page.getByRole("region", { name: "题篮" }).getByRole("button", { name: "加入试卷" }).click();
+    await expect(page.getByText("总分 6 分")).toBeVisible();
+
+    // 未确认时阻断，并指出原因。
+    await page.getByRole("button", { name: "生成学生卷与教师答案卷" }).click();
+    await expect(page.getByText("定稿被阻断，请先处理下列问题。")).toBeVisible();
+    await expect(page.locator(".paper-blockers")).toContainText("答案或评分尚未齐全，需教师确认后出卷");
+
+    // 教师确认后可通过，并提示教师卷会标注。
+    await page.getByLabel("确认答案或评分待补出卷").check();
+    await page.getByRole("button", { name: "检查定稿" }).click();
+    await expect(page.getByText("定稿检查通过。")).toBeVisible();
+    await expect(page.locator(".paper-ok")).toContainText("答案或评分尚未齐全，教师版将标注待补");
+
+    await page.getByRole("button", { name: "生成学生卷与教师答案卷" }).click();
+    const confirmDialog = page.getByRole("dialog", { name: "确认定稿" });
+    await expect(confirmDialog).toBeVisible({ timeout: 30000 });
+    await confirmDialog.getByRole("button", { name: "确认保存为定稿" }).click();
+    await expect(page.getByText(/双卷已保存为定稿/)).toBeVisible({ timeout: 30000 });
+
+    const directories = readdirSync(outDir).filter((name) => name.startsWith("拾题成卷-样张-"));
+    expect(directories).toHaveLength(1);
+    const student = readFileSync(path.join(outDir, directories[0], "学生卷.pdf"));
+    const teacher = readFileSync(path.join(outDir, directories[0], "教师答案卷.pdf"));
+    const studentText = (await extractPdfText(new Uint8Array(student))).pages.map((entry) => entry.text).join("\n").normalize("NFKC");
+    const teacherText = (await extractPdfText(new Uint8Array(teacher))).pages.map((entry) => entry.text).join("\n").normalize("NFKC");
+    expect(teacherText).toContain("答案或评分待补");
+    expect(studentText).not.toContain("答案或评分待补");
+  } finally {
+    await closeApp(app);
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});

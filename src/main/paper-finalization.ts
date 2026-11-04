@@ -236,6 +236,7 @@ export class PaperFinalizer {
           blankSpace: item.blankSpace,
           scoring: item.scoring,
           scoringState: item.scoringState,
+          answerGap: this.bank.checkReady(item.questionVersionId, { confirmAnswerGap: true }).requiresAnswerConfirmation,
           content: item.content,
         })),
       })),

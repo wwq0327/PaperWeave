@@ -9,7 +9,7 @@ import { Paper } from "../../../src/main/paper";
 import { PaperFinalizer, PAPER_JOURNAL_KEY, recoverPaperFinalizations } from "../../../src/main/paper-finalization";
 import { pdfPairPaths } from "../../../src/main/pdf-pair";
 import { QuestionBank, type QuestionVersionRecord } from "../../../src/main/question-bank";
-import type { VolumePaper } from "../../../src/shared/paper-layout";
+import { paperVolume, type VolumePaper } from "../../../src/shared/paper-layout";
 import type { QuestionContent } from "../../../src/shared/question";
 import { paragraph, referenceGroup } from "../fixtures/questions";
 
@@ -160,6 +160,10 @@ test("定稿门槛：评分待调整、答案待确认、内嵌分值未确认�
   check = finalizer.check(gapPaper.created.id, { confirmAnswerGap: true });
   expect(check.ready).toBe(true);
   expect(check.notices.some((notice) => notice.includes("答案或评分尚未齐全"))).toBe(true);
+  const teacherVolume = paperVolume(check.snapshot, "teacher");
+  const studentVolume = paperVolume(check.snapshot, "student");
+  expect(teacherVolume.sections[0].items[0].answerGap).toBe(true);
+  expect("answerGap" in studentVolume.sections[0].items[0]).toBe(false);
 
   const conflictContent = referenceGroup();
   conflictContent.subQuestions[0].prompt.push(paragraph("（4 分）"));

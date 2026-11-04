@@ -22,6 +22,8 @@ export interface SnapshotItemInput {
   blankSpace: BlankSpace;
   scoring: PaperScoring;
   scoringState: PaperScoringState;
+  /** 答案或评分待补且教师已确认出卷；仅教师卷输出提示。 */
+  answerGap?: boolean;
   content: QuestionContent;
 }
 
@@ -59,6 +61,7 @@ export interface SnapshotItem {
   blankSpace: BlankSpace;
   scoring: PaperScoring;
   scoringState: PaperScoringState;
+  answerGap: boolean;
   stem: QuestionBlock[];
   subQuestions: SnapshotSubQuestion[];
   /** 题目完整材料池，用于把 materialId 解析到版本。 */
@@ -131,6 +134,7 @@ export interface VolumeItem {
   materialLabels: string[];
   scoring?: PaperScoring;
   scoringState?: PaperScoringState;
+  answerGap?: boolean;
 }
 
 export interface VolumePaper {
@@ -226,6 +230,7 @@ export function buildPaperSnapshot(input: SnapshotInput): PaperSnapshot {
         blankSpace: inputItem.blankSpace,
         scoring: inputItem.scoring,
         scoringState: inputItem.scoringState,
+        answerGap: inputItem.answerGap === true,
         stem: inputItem.content.stem,
         subQuestions: selected.map((sub, index) => ({
           id: sub.id,
@@ -395,7 +400,7 @@ export function paperVolume(snapshot: PaperSnapshot, volume: Volume): VolumePape
           materialLabels: snapshot.materials.filter((material) => material.itemIds[0] === item.id).map((material) => material.label),
         };
         if (volume === "student") return base;
-        return { ...base, scoring: item.scoring, scoringState: item.scoringState };
+        return { ...base, scoring: item.scoring, scoringState: item.scoringState, answerGap: item.answerGap };
       }),
     })),
     materials: snapshot.materials.map((material) => ({ label: material.label, title: material.title, content: material.content })),

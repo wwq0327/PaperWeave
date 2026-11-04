@@ -126,6 +126,7 @@ button.primary { background: #225c3d; color: #fff; border-color: #225c3d; }
 .paper-slots { margin: 4px 0; }
 .paper-slot + .paper-slot { margin-left: 1.5em; }
 .paper-answer-only { color: #7a4700; }
+.paper-answer-gap { color: #7a4700; font-weight: 600; }
 .paper-status { padding: 10px; text-align: center; }
 @media print {
   main.paper-print > * { display: block !important; }

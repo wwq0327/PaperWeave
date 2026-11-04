@@ -128,6 +128,7 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
   const [confirmAdd, setConfirmAdd] = useState<{ questionId: string; versionId: string; subQuestionId: string | null; selection: BasketSelection } | null>(null);
   const [finalizations, setFinalizations] = useState<FinalizationRecordView[]>([]);
   const [check, setCheck] = useState<FinalizationCheckView | null>(null);
+  const [confirmAnswerGap, setConfirmAnswerGap] = useState(false);
   const [filter, setFilter] = useState<SearchFilter>({
     stage: "初中",
     subject: "数学",
@@ -161,6 +162,8 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
       const [next, history] = await Promise.all([window.paperweave.getPaper(id), window.paperweave.listPaperFinalizations(id)]);
       setPaper(next);
       setFinalizations(history);
+      setCheck(null);
+      setConfirmAnswerGap(false);
       setScores(Object.fromEntries(next.sections.flatMap((section) => section.items).map((item) => [item.id, String(item.score)])));
       setTargets((old) => {
         const entries = next.sections.flatMap((section) => section.items.map((item) => [item.id, old[item.id] || next.sections[0]?.id || ""] as const));
@@ -356,7 +359,7 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
     if (!paper) return;
     setBusy(true); setError(""); setMessage("");
     try {
-      const result = await window.paperweave.beginPaperFinalize(paper.paper.id);
+      const result = await window.paperweave.beginPaperFinalize(paper.paper.id, { confirmAnswerGap });
       if (result.status === "canceled") return;
       if (result.status === "blocked") { setCheck(result.check); setMessage("定稿被阻断，请先处理下列问题。"); return; }
       setCheck(null);
@@ -366,7 +369,7 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
   }
   async function checkReady() {
     if (!paper) return;
-    try { setCheck(await window.paperweave.checkPaperFinalize(paper.paper.id)); }
+    try { setCheck(await window.paperweave.checkPaperFinalize(paper.paper.id, { confirmAnswerGap })); }
     catch (e) { setError(`检查失败：${errorText(e)}`); }
   }
 
@@ -532,6 +535,16 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
         </section>)}
         <section className="paper-finalize" aria-label="定稿">
           <h3>定稿</h3>
+          <label className="paper-inline">
+            <input
+              type="checkbox"
+              aria-label="确认答案或评分待补出卷"
+              checked={confirmAnswerGap}
+              disabled={busy}
+              onChange={(event) => { setConfirmAnswerGap(event.target.checked); setCheck(null); }}
+            />
+            答案或评分待补的题已核对，确认出卷（教师卷会标注）
+          </label>
           <button onClick={() => void checkReady()}>检查定稿</button>
           <button className="primary" onClick={() => void beginFinalize()} disabled={busy}>生成学生卷与教师答案卷</button>
           {check && <div className={check.ready ? "paper-ok" : "paper-blockers"}>
