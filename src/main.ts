@@ -2,21 +2,37 @@ import { app, BrowserWindow, dialog } from "electron";
 import { join } from "node:path";
 import { Database } from "./main/database";
 import { registerEditor } from "./main/editor";
+import { parseJournal } from "./main/pdf-journal";
+import { recoverPendingOperations } from "./main/pdf-recovery";
 import { registerPdf } from "./main/pdf";
 import { createMainWindow } from "./main/window";
 
 let database: Database | undefined;
 let mainWindow: BrowserWindow | undefined;
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  let db: Database;
   try {
-    database = new Database(join(app.getPath("userData"), "paperweave.sqlite"));
+    db = new Database(join(app.getPath("userData"), "paperweave.sqlite"));
   } catch (error) {
     dialog.showErrorBox("题库打开失败", `无法打开本地题库，原数据未被替换。\n${String(error)}`);
     app.quit();
     return;
   }
-  registerEditor(database, app.getPath("userData"), () => mainWindow);
-  registerPdf(() => mainWindow);
+  database = db;
+  try {
+    const pending = parseJournal(db.getSetting("pdf.pending"));
+    if (pending.length) {
+      const { kept } = await recoverPendingOperations(pending);
+      db.setSetting("pdf.pending", JSON.stringify(kept));
+      if (kept.length) {
+        dialog.showErrorBox("发现未完成的 PDF 操作", `以下暂存目录含非预期文件，未自动删除：\n${kept.map((item) => `${item.parent}（${item.id}）`).join("\n")}`);
+      }
+    }
+  } catch (error) {
+    dialog.showErrorBox("清理未完成的 PDF 操作失败", `原文件未被删除，可稍后重试。\n${String(error)}`);
+  }
+  registerEditor(db, app.getPath("userData"), () => mainWindow);
+  registerPdf(db, () => mainWindow);
   mainWindow = createMainWindow();
 
   app.on("activate", () => {
