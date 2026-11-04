@@ -1,4 +1,5 @@
 export type TextStyle = "普通" | "粗体" | "斜体" | "下划线" | "上标" | "下标";
+export const TEXT_STYLES: TextStyle[] = ["普通", "粗体", "斜体", "下划线", "上标", "下标"];
 export type Inline = { type: "text"; text: string; style: TextStyle } | { type: "formula"; latex: string };
 export type Block =
   | { type: "paragraph"; runs: Inline[] }
@@ -12,7 +13,7 @@ export interface DraftSource {
 export type Draft = { version: 3; blocks: Block[]; teacherAnswer: string; sources: DraftSource[] };
 export type StoredDraft = Draft | { version: 2; blocks: Block[]; teacherAnswer: string } | { version: 1; blocks: Block[] };
 export const emptyDraft = (): Draft => ({ version: 3, teacherAnswer: "", sources: [], blocks: [{ type: "paragraph", runs: [{ type: "text", text: "", style: "普通" }] }] });
-const styles = new Set(["普通", "粗体", "斜体", "下划线", "上标", "下标"]);
+const styles = new Set<string>(TEXT_STYLES);
 const object = (x: unknown): x is Record<string, unknown> => typeof x === "object" && x !== null && !Array.isArray(x);
 const keys = (x: Record<string, unknown>, allowed: string[]) => Object.keys(x).every((k) => allowed.includes(k));
 const str = (x: unknown, max = 20000): x is string => typeof x === "string" && x.length <= max;

@@ -1,4 +1,4 @@
-import { answerPresent, type SaveIntakeResult } from "../shared/intake";
+import { answerPresent, duplicateSubLabels, type SaveIntakeResult } from "../shared/intake";
 import { classificationProblem, questionContentProblem, type QuestionContent } from "../shared/question";
 import type { ExamStore } from "./exams";
 import type { QuestionBank } from "./question-bank";
@@ -23,9 +23,11 @@ export class Intake {
     const exam = this.exams.getExam(examId);
     if (!exam.sections.some((section) => section.id === sectionId)) throw new Error("考试分部不存在");
     const submit = value.submit === true;
+    const contentProblem = questionContentProblem(value.content);
+    if (contentProblem !== null) throw new Error(`题目结构无效：${contentProblem}`);
+    const duplicates = duplicateSubLabels((value.content as QuestionContent).subQuestions.map((sub) => sub.originalLabel));
+    if (duplicates.length > 0) throw new Error(`小问号重复：${duplicates.join("、")}；请修改后再保存`);
     if (value.questionId === undefined) {
-      const contentProblem = questionContentProblem(value.content);
-      if (contentProblem !== null) throw new Error(`题目结构无效：${contentProblem}`);
       const classificationIssue = value.classification === undefined ? null : classificationProblem(value.classification);
       if (classificationIssue !== null) throw new Error(classificationIssue);
       const duplicate = this.exams.findDuplicate(examId, sectionId, (value.content as QuestionContent).source.originalNumber);

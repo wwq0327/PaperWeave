@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { buildContent, contentToForm, newIntakeForm } from "../../../src/shared/intake";
+import { buildContent, contentToForm, duplicateSubLabels, newIntakeForm } from "../../../src/shared/intake";
 import { hasContent, isQuestionContent, type Classification, type QuestionContent } from "../../../src/shared/question";
 
 const classification: Classification = {
@@ -97,6 +97,78 @@ test("内容回填表单后再生成，保持题干、图、表、答案与评�
   expect(value.subQuestions[0].materialIds).toEqual(["material-a"]);
   expect(value.materials).toEqual(content.materials);
   expect(value.source).toEqual(content.source);
+});
+
+test("文字块样式写入题目片段；接续块合并回同一段落", () => {
+  const value = form();
+  value.stem = [
+    { kind: "text", text: "粗体提示：", style: "粗体" },
+    { kind: "text", text: "x", style: "上标", continuesPrevious: true },
+    { kind: "text", text: " 为普通文字。", continuesPrevious: true },
+  ];
+  const built = buildContent(value);
+  expect(built.problems).toEqual([]);
+  expect(built.content?.stem).toEqual([{ type: "paragraph", runs: [
+    { type: "text", text: "粗体提示：", style: "粗体" },
+    { type: "text", text: "x", style: "上标" },
+    { type: "text", text: " 为普通文字。", style: "普通" },
+  ] }]);
+});
+
+test("回填含样式题目时保留文字样式、段落分组与选项样式", () => {
+  const styled: QuestionContent = {
+    stem: [{ type: "paragraph", runs: [
+      { type: "text", text: "注意：", style: "粗体" },
+      { type: "text", text: "x", style: "上标" },
+      { type: "text", text: " 表示平方。", style: "普通" },
+    ] }],
+    subQuestions: [{
+      id: "sub-a",
+      originalLabel: "(1)",
+      prompt: [{ type: "paragraph", runs: [{ type: "text", text: "选择正确项。", style: "斜体" }] }],
+      explanation: [],
+      options: [
+        { label: "A", content: [{ type: "paragraph", runs: [{ type: "text", text: "甲", style: "下划线" }] }] },
+        { label: "B", content: [{ type: "paragraph", runs: [{ type: "text", text: "乙", style: "普通" }] }] },
+      ],
+      slots: [],
+      answers: [],
+      scoring: [],
+      originalScore: null,
+      materialIds: [],
+      dependsOn: [],
+    }],
+    materials: [],
+    selection: { mode: "all" },
+    source: { section: "全卷", pdfPage: 1, originalNumber: "1" },
+  };
+  const roundtrip = contentToForm(styled, classification);
+  expect(roundtrip.problem).toBeUndefined();
+  const value = roundtrip.form!;
+  expect(value.stem).toEqual([
+    { kind: "text", text: "注意：", style: "粗体" },
+    { kind: "text", text: "x", style: "上标", continuesPrevious: true },
+    { kind: "text", text: " 表示平方。", continuesPrevious: true },
+  ]);
+  expect(value.subQuestions[0].prompt).toEqual([{ kind: "text", text: "选择正确项。", style: "斜体" }]);
+  expect(value.subQuestions[0].optionStyles).toEqual(["下划线", "普通"]);
+  const again = buildContent(value);
+  expect(again.problems).toEqual([]);
+  expect(again.content?.stem).toEqual(styled.stem);
+  expect(again.content?.subQuestions[0].prompt).toEqual(styled.subQuestions[0].prompt);
+  expect(again.content?.subQuestions[0].options).toEqual(styled.subQuestions[0].options);
+});
+
+test("无效文字样式被拒绝，不静默当作普通文字保存", () => {
+  const value = form();
+  value.stem = [{ kind: "text", text: "文字", style: "花体" as never }];
+  expect(buildContent(value).problems.join("；")).toContain("样式");
+});
+
+
+test("小问号查重忽略全半角括号与空白，空号不参与", () => {
+  expect(duplicateSubLabels(["(1)", "（1）", "(2)", "", "3", "（3）"])).toEqual(["(1)", "3"]);
+  expect(duplicateSubLabels(["(1)", "(2)", "(3)"])).toEqual([]);
 });
 
 test("空题干、坏页码、未配对公式与悬空依赖给出可读提示", () => {

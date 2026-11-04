@@ -126,6 +126,33 @@ test("同卷同分部同号再次保存时返回已有题，不静默新建", ()
   expect(bank.getLatestQuestionVersion(first.questionId)?.version).toBe(1);
 });
 
+test("同一题内小问号重复时拒绝保存；不同题各自使用相同小问号不误判", () => {
+  const { store, intake, examId, sectionId } = open();
+  const duplicated = content("1");
+  duplicated.subQuestions = [
+    { ...duplicated.subQuestions[0], id: "sub-a", originalLabel: "(1)" },
+    { ...duplicated.subQuestions[0], id: "sub-b", originalLabel: "（1）" },
+  ];
+  expect(() => intake.save({ examId, sectionId, content: duplicated, classification })).toThrow("小问号重复");
+  expect(store.getExam(examId).questionCount).toBe(0);
+
+  const first = content("2");
+  first.subQuestions[0].originalLabel = "(1)";
+  const second = content("3");
+  second.subQuestions[0].originalLabel = "(1)";
+  const a = saved(intake.save({ examId, sectionId, content: first, classification }));
+  const b = saved(intake.save({ examId, sectionId, content: second, classification }));
+  expect(a.questionId).not.toBe(b.questionId);
+  expect(store.getExam(examId).questionCount).toBe(2);
+
+  const edited = content("2");
+  edited.subQuestions = [
+    { ...edited.subQuestions[0], id: "sub-a", originalLabel: "(1)" },
+    { ...edited.subQuestions[0], id: "sub-b", originalLabel: "(1)" },
+  ];
+  expect(() => intake.save({ examId, sectionId, questionId: a.questionId, content: edited, classification })).toThrow("小问号重复");
+});
+
 test("不同分部或不同考试的同号题不提示重复", () => {
   const { store, intake, examId, sectionId } = open();
   const otherSection = store.addSection(examId, "第二部分", "数学");

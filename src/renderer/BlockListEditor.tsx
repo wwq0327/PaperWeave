@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { TEXT_STYLES, type TextStyle } from "../shared/document";
 import type { IntakeBlock, IntakeReferenceOption } from "../shared/intake";
 
 const referenceLabels = { subQuestion: "小问", material: "材料", figure: "图" } as const;
@@ -36,6 +37,14 @@ export default function BlockListEditor({ label, blocks, disabled = false, onCro
   const targetOf = (block: Extract<IntakeBlock, { kind: "reference" }>) =>
     referenceOptions.find((option) => option.kind === block.refKind && option.targetId === block.targetId);
   const update = (index: number, block: IntakeBlock) => onChange(blocks.map((entry, i) => i === index ? block : entry));
+  const applyTextStyle = (index: number, block: Extract<IntakeBlock, { kind: "text" }>, style: TextStyle) => {
+    const { style: _current, ...rest } = block;
+    update(index, style === "普通" ? rest : { ...rest, style });
+  };
+  const applyContinuation = (index: number, block: Extract<IntakeBlock, { kind: "text" }>, continues: boolean) => {
+    const { continuesPrevious: _current, ...rest } = block;
+    update(index, continues ? { ...rest, continuesPrevious: true } : rest);
+  };
   const move = (index: number, delta: number) => {
     const target = index + delta;
     if (target < 0 || target >= blocks.length) return;
@@ -54,7 +63,15 @@ export default function BlockListEditor({ label, blocks, disabled = false, onCro
         <button onClick={() => move(index, 1)} disabled={disabled || index === blocks.length - 1}>下移</button>
         <button onClick={() => onChange(blocks.filter((_, i) => i !== index))} disabled={disabled}>删除</button>
       </header>
-      {block.kind === "text" && <textarea aria-label={`${label} 文字 ${index + 1}`} value={block.text} disabled={disabled} onChange={(event) => update(index, { kind: "text", text: event.target.value })} placeholder="文字；行内公式写 $x^2$，独立公式单独一行写 $$…$$" />}
+      {block.kind === "text" && <>
+        <textarea aria-label={`${label} 文字 ${index + 1}`} value={block.text} disabled={disabled} onChange={(event) => update(index, { ...block, text: event.target.value })} placeholder="文字；行内公式写 $x^2$，独立公式单独一行写 $$…$$" />
+        <div className="paper-inline">
+          <label>文字样式<select aria-label={`${label} 文字样式 ${index + 1}`} value={block.style ?? "普通"} disabled={disabled} onChange={(event) => applyTextStyle(index, block, event.target.value as TextStyle)}>
+            {TEXT_STYLES.map((style) => <option key={style}>{style}</option>)}
+          </select></label>
+          <label className="inline"><input type="checkbox" aria-label={`${label} 接续上一段 ${index + 1}`} checked={block.continuesPrevious === true} disabled={disabled || index === 0} onChange={(event) => applyContinuation(index, block, event.target.checked)} />接续上一段</label>
+        </div>
+      </>}
       {block.kind === "formula" && <label>LaTeX<input aria-label={`${label} 公式 ${index + 1}`} value={block.latex} disabled={disabled} onChange={(event) => update(index, { kind: "formula", latex: event.target.value })} /></label>}
       {block.kind === "reference" && <div className="intake-reference">
         <p><span className="paper-state">{referenceLabels[block.refKind]}</span> {targetOf(block)?.label ?? `目标失效（${block.targetId}）`}</p>
