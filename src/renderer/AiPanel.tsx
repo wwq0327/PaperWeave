@@ -27,6 +27,7 @@ export default function AiPanel({ onAdopt }: { onAdopt: (questions: AiQuestion[]
   const [adopted, setAdopted] = useState<number[]>([]);
   const [resultMessage, setResultMessage] = useState("");
   const [resultError, setResultError] = useState("");
+  const [canRetry, setCanRetry] = useState(false);
 
   useEffect(() => {
     window.paperweave.getAiConfig()
@@ -62,7 +63,7 @@ export default function AiPanel({ onAdopt }: { onAdopt: (questions: AiQuestion[]
   }
 
   async function choosePdf() {
-    setResultMessage(""); setResultError("");
+    setResultMessage(""); setResultError(""); setCanRetry(false);
     try {
       const picked = await window.paperweave.extractPdfText();
       if (!picked) return;
@@ -95,7 +96,7 @@ export default function AiPanel({ onAdopt }: { onAdopt: (questions: AiQuestion[]
   }
 
   function requestConfirmation() {
-    setResultMessage(""); setResultError("");
+    setResultMessage(""); setResultError(""); setCanRetry(false);
     const checked = buildInput();
     if (!checked.ok) { setResultError(checked.error); return; }
     setConfirming(true);
@@ -126,7 +127,7 @@ export default function AiPanel({ onAdopt }: { onAdopt: (questions: AiQuestion[]
     const checked = buildInput();
     if (!checked.ok) { setResultError(checked.error); setConfirming(false); return; }
     const id = crypto.randomUUID();
-    setRequestId(id); setSending(true); setResultError(""); setResultMessage("");
+    setRequestId(id); setSending(true); setResultError(""); setResultMessage(""); setCanRetry(false);
     try {
       const draft = await window.paperweave.generateAiDraft(id, checked.input);
       if (!isAiDraft(draft)) throw new Error("模型返回格式无法解析，请重试或手工录入");
@@ -135,7 +136,7 @@ export default function AiPanel({ onAdopt }: { onAdopt: (questions: AiQuestion[]
     } catch (error) {
       const message = messageOf(error);
       if (message.includes("已取消")) setResultMessage("已取消。输入文字与编辑器内容都保留在本机。");
-      else setResultError(message);
+      else { setResultError(message); setCanRetry(true); }
     } finally {
       setSending(false); setRequestId(null); setConfirming(false);
     }
@@ -212,7 +213,7 @@ export default function AiPanel({ onAdopt }: { onAdopt: (questions: AiQuestion[]
       onChange={changeImages}
       note={imageNote}
       onNoteChange={(value) => { setImageNote(value); setConfirming(false); }}
-      onError={setResultError}
+      onError={(message) => { setResultError(message); setCanRetry(false); }}
       disabled={sending}
     />}
 
@@ -239,7 +240,7 @@ export default function AiPanel({ onAdopt }: { onAdopt: (questions: AiQuestion[]
     </section>}
 
     {resultMessage && <p className="muted" role="status">{resultMessage}</p>}
-    {resultError && <p className="error" role="alert">{resultError} <button onClick={() => setResultError("")}>关闭提示</button></p>}
+    {resultError && <p className="error" role="alert">{resultError}{canRetry && <button onClick={requestConfirmation}>重试生成</button>} <button onClick={() => { setResultError(""); setCanRetry(false); }}>关闭提示</button></p>}
 
     {result && <section className="ai-result" aria-label="AI 草稿结果">
       <div className="ai-result-head"><h3>待核草稿（{result.questions.length} 题）</h3><button onClick={() => adopt(result.questions)}>全部采纳</button></div>

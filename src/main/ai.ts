@@ -12,7 +12,7 @@ import { extractPdfText } from "./pdf-text";
 const configKey = "ai.config";
 const maxPdfBytes = 50 * 1024 * 1024;
 const requestIdPattern = /^[a-zA-Z0-9-]{8,64}$/;
-const fakeScenarios = new Set(["ok", "invalid", "malicious", "timeout", "late"]);
+const fakeScenarios = new Set(["ok", "invalid", "malicious", "timeout", "late", "late-success"]);
 
 export function registerAi(db: Database, root: string, currentWindow: () => BrowserWindow | undefined): void {
   const store: KeyStore = {
@@ -91,6 +91,8 @@ export function registerAi(db: Database, root: string, currentWindow: () => Brow
       const result = fake
         ? await fakeAiDraft(fake, checked.input, controller.signal)
         : await requestAiDraft(config, apiKey as string, checked.input, controller.signal);
+      // 取消时即使响应已经到达也丢弃，避免迟到结果覆盖人工编辑。
+      if (controller.signal.aborted) throw new Error("已取消");
       if (!isAiDraft(result)) throw new Error("模型返回格式无法解析，请重试或手工录入");
       return result;
     } finally {
