@@ -16,5 +16,6 @@
 - [项目交接与当前进度](HANDOFF.md)
 - [M0 工程脚手架实施计划](superpowers/plans/2026-11-04-electron-scaffold.md)
 - [M1 题目结构与版本审核模型实施计划](superpowers/plans/2026-11-04-m1-question-model.md)
+- [M1 题库检索与选题依赖实施计划](superpowers/plans/2026-11-04-m1-question-search.md)
 
 研究文档集中保存在本目录。样本卷和旧项目原件通过链接回查，本地原件链接指向当前电脑上的原位置。
