@@ -70,6 +70,8 @@ M0 已启动。Issue #1「工程脚手架——Electron 双平台安装包与断
 
 - Issue #38 组卷草稿与卷内改分（2026-11-05，分支 `feat/38-paper-draft`）：新增 `src/shared/paper.ts`（默认分值、评分状态推导、内嵌旧分值扫描）与 `src/main/paper.ts`（创建单科试卷、小节增删、题篮项加入／移除／跨小节移动、卷内改分、评分点调整、只输出答案、逐项确认冲突、总分）。整题默认分值取组选答后的 `selectionScore`，小问集合取原分值合计，`null` 时拒绝并提示补填；卷内改分只写 `paper_items`，题库内容不变。未接 IPC／界面，定稿与编号解析属 #39/#40。`npm run check` 119 项通过。
 
+- Issue #39 双卷定稿与重印（2026-11-05，分支 `feat/39-paper-finalization`）：新增 `src/shared/paper-layout.ts`（卷内大题／题目连续编号、小问重排、材料与图跨题去重、引用解析、按卷裁剪结构）与 `src/main/paper-finalization.ts`（定稿门槛、两卷注入式渲染、`pdf-pair` 原子落盘、SHA-256、快照冻结、重印只读原 PDF、中断恢复）。学生卷结构上不含答案、解析、评分点及仅答案可见的图；未解析引用列出题号与原卷页阻断定稿；启动时清理未完成暂存与无定稿记录的完成目录。`pdf-pair` 抽出路径函数供恢复复用，启动接上组卷恢复。PDF 渲染通过 `PaperRenderer` 注入，真实 Electron 打印接线与端到端样卷属 #40。`npm run check` 128 项、`npm run test:e2e` 26 项通过。
+
 - M0 验收补强（2026-11-05，分支 `fix/m0-verification-gaps`）：草稿格式升至 v3，采纳 AI 草稿时保存原卷页码与待核项，保存重开后仍显示「原卷来源」；双卷 E2E 解析两份 PDF 文本，断言学生卷不含「参考答案」与答案正文、教师卷包含答案，取代仅比较字节的弱断言；#35 已补多页逐行内容核对。`npm run check` 97 项、`npm run test:e2e` 25 项通过。真实模型调用、实体纸样、Windows 与安装包人工验收仍待用户。
 
 ## M0 待用户确认或授权（2026-11-04）

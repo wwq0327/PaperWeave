@@ -4,6 +4,7 @@ import {
   paperDefaultScore,
   paperScoringState,
   scoreConflicts,
+  type BlankSpace,
   type PaperScoring,
   type PaperScoringState,
   type ScoreConflict,
@@ -12,7 +13,7 @@ import type { QuestionContent, ScoringPoint, Stage } from "../shared/question";
 import type { Database } from "./database";
 import { QuestionBank } from "./question-bank";
 
-export type BlankSpace = "none" | "small" | "medium" | "large";
+export type { BlankSpace };
 
 export interface PaperRecord {
   id: string;

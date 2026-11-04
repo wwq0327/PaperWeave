@@ -8,6 +8,8 @@ export type PaperScoring =
 
 export type PaperScoringState = "original" | "needsAdjustment" | "adjusted" | "answerOnly";
 
+export type BlankSpace = "none" | "small" | "medium" | "large";
+
 export interface PaperDefaultScore {
   score: number;
   conflict: string | null;

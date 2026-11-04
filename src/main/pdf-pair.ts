@@ -1,13 +1,19 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+export function pdfPairPaths(parent: string, operationId: string) {
+  return {
+    pending: join(parent, `.paperweave-${operationId}.pending`),
+    result: join(parent, `拾题成卷-样张-${operationId}`),
+  };
+}
+
 /** 两份样张作为一个目录发布：任一写入或校验失败时，不出现完整目录。 */
 export async function writePdfPair(parent: string, operationId: string, student: Buffer, teacher: Buffer, io = { mkdir, readFile, rename, rm, writeFile }): Promise<string> {
   const validPdf = (data: Buffer) => data.length >= 100 && data.subarray(0, 5).equals(Buffer.from("%PDF-")) && data.subarray(-1024).includes(Buffer.from("%%EOF"));
   if (!validPdf(student) || !validPdf(teacher)) throw new Error("双份 PDF 必须都生成并校验成功");
   if (!/^[a-f0-9-]{36}$/.test(operationId)) throw new Error("操作标识无效");
-  const pending = join(parent, `.paperweave-${operationId}.pending`);
-  const result = join(parent, `拾题成卷-样张-${operationId}`);
+  const { pending, result } = pdfPairPaths(parent, operationId);
   try {
     const existingStudent = await io.readFile(join(result, "学生卷.pdf"));
     const existingTeacher = await io.readFile(join(result, "教师答案卷.pdf"));
