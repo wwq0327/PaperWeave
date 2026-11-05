@@ -10,6 +10,13 @@ export interface ImportMaterialSpec {
   hash: string;
 }
 
+/** 小问号对不上、但可在应用内并入现有小问的答案或解析条目。 */
+export interface ImportUnmatchedGroup {
+  problem: string;
+  target: "answers" | "explanation";
+  blocks: QuestionBlock[];
+}
+
 /** 旧库解析结果；Tiku 与 mathVault 共用批次、差异与写入流程。 */
 export interface ImportCandidate {
   sourceKey: string;
@@ -25,6 +32,10 @@ export interface ImportCandidate {
   problems: string[];
   /** 应用内已做的修正，随导入记录写入 detail 供追溯。 */
   corrections: string[];
+  /** 来源文件相对旧库根目录的路径。 */
+  sourcePath?: string;
+  /** 小问号超出题内小问数量、可调整到现有小问的答案与解析。 */
+  unmatchedGroups?: ImportUnmatchedGroup[];
   legacyStatus?: string;
   blocked: boolean;
   needsProofread: boolean;

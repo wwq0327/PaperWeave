@@ -1,5 +1,5 @@
 import { lstatSync, readFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { ImportCandidate } from "./import-candidate";
 import {
   blocksText,
@@ -45,7 +45,7 @@ function groupSection(text: string): Map<number, string[]> {
   return lines;
 }
 
-function emptyCandidate(sourceKey: string, reason: string): ImportCandidate {
+function emptyCandidate(sourceKey: string, reason: string, sourcePath?: string): ImportCandidate {
   return {
     sourceKey,
     sourceHash: sha256(`failed:${sourceKey}`),
@@ -58,6 +58,7 @@ function emptyCandidate(sourceKey: string, reason: string): ImportCandidate {
     reasons: [reason],
     problems: [],
     corrections: [],
+    ...(sourcePath ? { sourcePath } : {}),
     blocked: true,
     needsProofread: false,
     images: [],
@@ -91,16 +92,17 @@ export function scanMathVault(root: string): ImportCandidate[] {
     try {
       return parseQuestion(wiki, file);
     } catch (error) {
-      return emptyCandidate(`mathvault:${basename(file, ".md")}`, `解析失败：${error instanceof Error ? error.message : String(error)}`);
+      return emptyCandidate(`mathvault:${basename(file, ".md")}`, `解析失败：${error instanceof Error ? error.message : String(error)}`, `wiki/${relative(wiki, file).split(sep).join("/")}`);
     }
   }).sort((left, right) => left.sourceKey.localeCompare(right.sourceKey));
 }
 
 function parseQuestion(wiki: string, file: string): ImportCandidate {
   const bytes = readFileSync(file);
+  const sourcePath = `wiki/${relative(wiki, file).split(sep).join("/")}`;
   const frontmatter = parseFrontmatter(bytes.toString("utf8"));
   const fallbackId = basename(file, ".md");
-  if (frontmatter.problem) return emptyCandidate(`mathvault:${fallbackId}`, `解析失败：${frontmatter.problem}`);
+  if (frontmatter.problem) return emptyCandidate(`mathvault:${fallbackId}`, `解析失败：${frontmatter.problem}`, sourcePath);
   const id = textValue(frontmatter.data["题目编号"]) || fallbackId;
   const sourceKey = `mathvault:${id}`;
   const reasons: string[] = ["页码待补（按第 1 页）"];
@@ -130,7 +132,7 @@ function parseQuestion(wiki: string, file: string): ImportCandidate {
 
   const sections = splitSections(frontmatter.body);
   const bodyText = sections.get("题目正文")?.trim() ?? "";
-  if (!bodyText) return { ...emptyCandidate(sourceKey, "解析失败：缺少题目正文"), legacyStatus: textValue(frontmatter.data["审核状态"]) || undefined };
+  if (!bodyText) return { ...emptyCandidate(sourceKey, "解析失败：缺少题目正文", sourcePath), legacyStatus: textValue(frontmatter.data["审核状态"]) || undefined };
 
   const questionType = textValue(frontmatter.data["题型"]);
   const grade = textValue(frontmatter.data["年级"]) || "九年级";
@@ -166,8 +168,19 @@ function parseQuestion(wiki: string, file: string): ImportCandidate {
   const stemBlocks = stemGroup.stem.length > 0 ? parseBlocks(stemGroup.stem.join("\n")) : [];
   const answers = groupSection(sections.get("答案") ?? "");
   const explanations = groupSection(sections.get("解析") ?? "");
-  for (const key of answers.keys()) if (key > stemGroup.segments.length) problems.push(`答案小问号不匹配：（${key}）`);
-  for (const key of explanations.keys()) if (key > stemGroup.segments.length) problems.push(`解析小问号不匹配：（${key}）`);
+  const unmatchedGroups: NonNullable<ImportCandidate["unmatchedGroups"]> = [];
+  for (const [key, lines] of answers) {
+    if (key <= stemGroup.segments.length) continue;
+    const problem = `答案小问号不匹配：（${key}）`;
+    problems.push(problem);
+    unmatchedGroups.push({ problem, target: "answers", blocks: parseBlocks(lines.join("\n")) });
+  }
+  for (const [key, lines] of explanations) {
+    if (key <= stemGroup.segments.length) continue;
+    const problem = `解析小问号不匹配：（${key}）`;
+    problems.push(problem);
+    unmatchedGroups.push({ problem, target: "explanation", blocks: parseBlocks(lines.join("\n")) });
+  }
 
   const subQuestions: SubQuestion[] = stemGroup.segments.map((segment, index) => {
     const scored = extractScore(segment.lines);
@@ -232,6 +245,8 @@ function parseQuestion(wiki: string, file: string): ImportCandidate {
     reasons,
     problems,
     corrections: [],
+    sourcePath,
+    ...(unmatchedGroups.length > 0 ? { unmatchedGroups } : {}),
     legacyStatus: textValue(frontmatter.data["审核状态"]) || undefined,
     blocked: problems.length > 0,
     needsProofread,

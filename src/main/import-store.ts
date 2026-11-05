@@ -202,6 +202,8 @@ export class ImportStore {
       preview: candidate.preview,
       reasons: [...candidate.reasons],
       problems: [...candidate.problems],
+      ...(candidate.sourcePath ? { sourcePath: candidate.sourcePath } : {}),
+      ...(candidate.content ? { subQuestionCount: candidate.content.subQuestions.length } : {}),
       legacyStatus: candidate.legacyStatus,
       needsProofread: candidate.needsProofread,
     };
@@ -235,14 +237,15 @@ export class ImportStore {
     };
   }
 
-  /** 应用内修正单个阻断项：补图或确认移除；只重校验该条，不重跑整批。 */
+  /** 应用内修正单个阻断项：补图、移除材料、补原题号、调整答案／解析小问号；只重校验该条。 */
   correct(input: unknown, image?: { data: Buffer; path: string; alt: string }): ImportRow {
     if (typeof input !== "object" || input === null || Array.isArray(input)) throw new Error("修正请求无效");
     const value = input as Record<string, unknown>;
-    if (!Object.keys(value).every((key) => key === "scanId" || key === "sourceKey" || key === "action" || key === "problem")) throw new Error("修正请求包含未知字段");
+    if (!Object.keys(value).every((key) => ["scanId", "sourceKey", "action", "problem", "value", "target"].includes(key))) throw new Error("修正请求包含未知字段");
     if (typeof value.scanId !== "string" || !value.scanId) throw new Error("扫描标识无效");
     if (typeof value.sourceKey !== "string" || !value.sourceKey) throw new Error("来源标识无效");
-    if (value.action !== "attachImage" && value.action !== "dropProblem") throw new Error("修正动作无效");
+    const actions = new Set(["attachImage", "dropProblem", "setOriginalNumber", "moveSubLabel"]);
+    if (typeof value.action !== "string" || !actions.has(value.action)) throw new Error("修正动作无效");
     if (typeof value.problem !== "string" || !value.problem) throw new Error("阻断项无效");
     const cache = this.scans.get(value.scanId);
     if (!cache) throw new Error("扫描结果已失效，请重新扫描");
@@ -263,8 +266,38 @@ export class ImportStore {
       target.push(block);
       candidate.images.push({ id: saved.id, path: image.path, alt, saved: true });
       candidate.corrections.push(`补图：${value.problem}`);
-    } else {
+    } else if (value.action === "dropProblem") {
+      if (kind === "originalNumber") throw new Error("原题号需要补填，不能直接移除");
+      if (kind === "subLabel") {
+        candidate.unmatchedGroups = candidate.unmatchedGroups?.filter((group) => group.problem !== value.problem);
+      }
       candidate.corrections.push(`确认移除：${value.problem}`);
+    } else if (value.action === "setOriginalNumber") {
+      if (kind !== "originalNumber") throw new Error("该阻断项不能用补填原题号修正");
+      if (typeof value.value !== "string") throw new Error("原题号无效");
+      const number = value.value.trim();
+      if (!number || number.length > 50) throw new Error("原题号无效：请输入 1–50 个字符");
+      if (!candidate.content) throw new Error("该来源缺少题目内容，无法补填原题号");
+      candidate.originalNumber = number;
+      candidate.content = { ...candidate.content, source: { ...candidate.content.source, originalNumber: number } };
+      candidate.title = `${candidate.section} 第 ${number} 题 · ${candidate.preview.slice(0, 40)}`;
+      candidate.corrections.push(`补原题号：${number}`);
+    } else {
+      if (kind !== "subLabel") throw new Error("该阻断项不能用调整小问号修正");
+      const target = value.target;
+      const count = candidate.content?.subQuestions.length ?? 0;
+      if (typeof target !== "number" || !Number.isInteger(target) || target < 1 || target > count) throw new Error(`目标小问无效：请选择第 1–${count} 小问`);
+      const group = candidate.unmatchedGroups?.find((entry) => entry.problem === value.problem);
+      if (!group || !candidate.content) throw new Error("该阻断项没有可调整的内容，请重新扫描");
+      const sub = candidate.content.subQuestions[target - 1];
+      if (group.target === "answers") {
+        if (sub.answers.length === 0) sub.answers = [{ slotId: null, blocks: group.blocks, variants: [] }];
+        else sub.answers[0].blocks.push(...group.blocks);
+      } else {
+        sub.explanation.push(...group.blocks);
+      }
+      candidate.unmatchedGroups = candidate.unmatchedGroups?.filter((entry) => entry.problem !== value.problem);
+      candidate.corrections.push(`调整${group.target === "answers" ? "答案" : "解析"}小问号：并入小问 ${target}`);
     }
     candidate.problems = candidate.problems.filter((entry) => entry !== value.problem);
     candidate.reasons = candidate.reasons.filter((entry) => entry !== value.problem);

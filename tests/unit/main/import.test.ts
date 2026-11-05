@@ -81,6 +81,25 @@ B
 `;
 }
 
+function numberlessFile(): string {
+  return `---
+题目编号: QTEST
+题型: 选择题
+板块: 积累与运用
+来源: 自制样题
+年份: 2023
+---
+
+## 题目正文
+
+合成无号题。
+
+## 答案
+
+合成答案。
+`;
+}
+
 function makeTiku(): { root: string; wiki: string } {
   const root = temp("paperweave-tiku-");
   const wiki = join(root, "wiki");
@@ -165,6 +184,8 @@ test("缺图、材料失链与解析失败逐条列入阻断原因", () => {
   const broken = scan.rows.find((row) => row.sourceKey === "Q2023-TEST-001");
   expect(broken?.status).toBe("blocked");
   expect(broken?.reasons.join("；")).toContain("frontmatter");
+  expect(broken?.sourcePath).toBe("wiki/by-type/01-积累与运用/Q2023-TEST-001.md");
+  expect(broken?.problems).toEqual([]);
   expect(scan.summary.blocked).toBe(2);
 });
 
@@ -214,6 +235,85 @@ test("材料失链确认不带材料后单条导入，未修正的阻断仍被�
   const found = bank.searchQuestions({ keyword: "合成第一问" })[0];
   const detail = bank.getQuestionVersion(found.versionId);
   expect(detail?.content.materials).toEqual([]);
+});
+
+test("缺少原题号可在应用内填写，单条重校验后导入并写回来源题号", () => {
+  const { db, store, bank } = open();
+  const { root, wiki } = makeTiku();
+  writeFileSync(join(wiki, "by-type", "01-积累与运用", "Q2023-TEST-001.md"), numberlessFile());
+  const scan = store.scan("tiku", root);
+  const blocked = scan.rows.find((row) => row.sourceKey === "QTEST")!;
+  expect(blocked.status).toBe("blocked");
+  expect(blocked.sourcePath).toBe("wiki/by-type/01-积累与运用/Q2023-TEST-001.md");
+  const problem = blocked.problems!.find((item) => item.startsWith("缺少原题号"))!;
+  expect(() => store.correct({ scanId: scan.scanId, sourceKey: blocked.sourceKey, action: "setOriginalNumber", problem, value: "  " })).toThrow("原题号");
+  const corrected = store.correct({ scanId: scan.scanId, sourceKey: blocked.sourceKey, action: "setOriginalNumber", problem, value: " 12 " });
+  expect(corrected.status).toBe("importable");
+  expect(corrected.originalNumber).toBe("12");
+  expect(corrected.incoming?.source.originalNumber).toBe("12");
+  expect(store.apply({ scanId: scan.scanId, rows: [{ sourceKey: blocked.sourceKey, action: "import" }] }).imported).toBe(1);
+  const found = bank.searchQuestions({ keyword: "合成无号题" })[0];
+  expect(bank.getQuestionVersion(found.versionId)?.content.source.originalNumber).toBe("12");
+  const record = db.read((sqlite) => sqlite.prepare("SELECT detail FROM import_records WHERE kind = 'tiku' AND source_key = ?").get(blocked.sourceKey) as { detail: string });
+  expect(JSON.parse(record.detail).corrections).toEqual(["补原题号：12"]);
+});
+
+test("答案多余小问条目可调整到现有小问，导入内容包含该答案", () => {
+  const { store, bank } = open();
+  const { root, wiki } = makeTiku();
+  writeFileSync(join(wiki, "by-type", "04-文学类文本", "Q2024-TEST-002.md"), questionFile({ answer: "（1）合成答案一。\n\n（2）合成答案二。\n\n（3）多余的合成答案。" }));
+  const scan = store.scan("tiku", root);
+  const blocked = scan.rows.find((row) => row.sourceKey === "Q2024-TEST-002")!;
+  expect(blocked.status).toBe("blocked");
+  const problem = blocked.problems!.find((item) => item === "答案小问号不匹配：（3）")!;
+  expect(() => store.correct({ scanId: scan.scanId, sourceKey: blocked.sourceKey, action: "moveSubLabel", problem, target: 9 })).toThrow("小问");
+  const corrected = store.correct({ scanId: scan.scanId, sourceKey: blocked.sourceKey, action: "moveSubLabel", problem, target: 2 });
+  expect(corrected.status).toBe("importable");
+  const answers = corrected.incoming?.subQuestions[1].answers ?? [];
+  expect(JSON.stringify(answers)).toContain("多余的合成答案");
+  expect(store.apply({ scanId: scan.scanId, rows: [{ sourceKey: blocked.sourceKey, action: "import" }] }).imported).toBe(1);
+  const found = bank.searchQuestions({ keyword: "合成第二问" })[0];
+  expect(JSON.stringify(bank.getQuestionVersion(found.versionId)?.content.subQuestions[1].answers)).toContain("多余的合成答案");
+});
+
+test("答案或解析多余小问条目可确认删除后导入", () => {
+  const { store } = open();
+  const { root, wiki } = makeTiku();
+  writeFileSync(join(wiki, "by-type", "04-文学类文本", "Q2024-TEST-002.md"), questionFile({
+    answer: "（1）合成答案一。\n\n（2）合成答案二。\n\n（3）多余答案。",
+  }).replace("（2）合成解析二。", "（2）合成解析二。\n\n（3）多余解析。"));
+  const scan = store.scan("tiku", root);
+  const blocked = scan.rows.find((row) => row.sourceKey === "Q2024-TEST-002")!;
+  const answerProblem = "答案小问号不匹配：（3）";
+  const explanationProblem = "解析小问号不匹配：（3）";
+  expect(blocked.problems).toEqual(expect.arrayContaining([answerProblem, explanationProblem]));
+  const afterAnswer = store.correct({ scanId: scan.scanId, sourceKey: blocked.sourceKey, action: "dropProblem", problem: answerProblem });
+  expect(afterAnswer.status).toBe("blocked");
+  expect(afterAnswer.problems).toEqual([explanationProblem]);
+  const corrected = store.correct({ scanId: scan.scanId, sourceKey: blocked.sourceKey, action: "dropProblem", problem: explanationProblem });
+  expect(corrected.status).toBe("importable");
+  expect(JSON.stringify(corrected.incoming)).not.toContain("多余答案");
+  expect(JSON.stringify(corrected.incoming)).not.toContain("多余解析");
+});
+
+test("图片为空或超过 5 MiB 时可用替换图片修正后导入", () => {
+  const { store, bank } = open();
+  const { root, wiki } = makeTiku();
+  writeFileSync(join(wiki, "images", "empty.png"), Buffer.alloc(0));
+  writeFileSync(join(wiki, "by-type", "04-文学类文本", "Q2024-TEST-002.md"), questionFile({ image: "empty.png" }));
+  const scan = store.scan("tiku", root);
+  const blocked = scan.rows.find((row) => row.sourceKey === "Q2024-TEST-002")!;
+  const problem = "图片为空或超过 5 MiB：../../images/empty.png";
+  expect(blocked.problems).toContain(problem);
+  const corrected = store.correct(
+    { scanId: scan.scanId, sourceKey: blocked.sourceKey, action: "attachImage", problem },
+    { data: png, path: join(wiki, "images", "fig.png"), alt: "替换示意图" },
+  );
+  expect(corrected.status).toBe("importable");
+  expect(JSON.stringify(corrected.incoming?.subQuestions[0].prompt)).toContain("替换示意图");
+  expect(store.apply({ scanId: scan.scanId, rows: [{ sourceKey: blocked.sourceKey, action: "import" }] }).imported).toBe(1);
+  const found = bank.searchQuestions({ keyword: "合成第一问" })[0];
+  expect(JSON.stringify(bank.getQuestionVersion(found.versionId)?.content.subQuestions[0].prompt)).toContain("替换示意图");
 });
 
 test("来源变化时给出字段级差异：题干、答案、分类、材料与图片分别标记", () => {

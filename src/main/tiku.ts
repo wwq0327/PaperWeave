@@ -1,5 +1,5 @@
 import { lstatSync, readFileSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import {
   blocksText,
   extractOptions,
@@ -65,7 +65,7 @@ function groupSection(text: string): GroupedSection {
   return { lines, extra };
 }
 
-function emptyCandidate(sourceKey: string, reason: string): TikuCandidate {
+function emptyCandidate(sourceKey: string, reason: string, sourcePath?: string): TikuCandidate {
   return {
     sourceKey,
     sourceHash: sha256(`failed:${sourceKey}`),
@@ -78,6 +78,7 @@ function emptyCandidate(sourceKey: string, reason: string): TikuCandidate {
     reasons: [reason],
     problems: [],
     corrections: [],
+    ...(sourcePath ? { sourcePath } : {}),
     blocked: true,
     needsProofread: false,
     images: [],
@@ -102,7 +103,7 @@ export function scanTiku(root: string): TikuCandidate[] {
     try {
       return parseQuestion(wiki, file, passages);
     } catch (error) {
-      return emptyCandidate(basename(file, ".md"), `解析失败：${error instanceof Error ? error.message : String(error)}`);
+      return emptyCandidate(basename(file, ".md"), `解析失败：${error instanceof Error ? error.message : String(error)}`, `wiki/${relative(wiki, file).split(sep).join("/")}`);
     }
   });
   return candidates.sort((left, right) => left.sourceKey.localeCompare(right.sourceKey));
@@ -111,9 +112,10 @@ export function scanTiku(root: string): TikuCandidate[] {
 function parseQuestion(wiki: string, file: string, passages: Map<string, string>): TikuCandidate {
   const bytes = readFileSync(file);
   const text = bytes.toString("utf8");
+  const sourcePath = `wiki/${relative(wiki, file).split(sep).join("/")}`;
   const frontmatter = parseFrontmatter(text);
   const fallbackKey = basename(file, ".md");
-  if (frontmatter.problem) return emptyCandidate(fallbackKey, `解析失败：${frontmatter.problem}`);
+  if (frontmatter.problem) return emptyCandidate(fallbackKey, `解析失败：${frontmatter.problem}`, sourcePath);
   const sourceKey = textValue(frontmatter.data["题目编号"]) || fallbackKey;
   const reasons: string[] = ["页码待补（按第 1 页）"];
   const problems: string[] = [];
@@ -132,10 +134,10 @@ function parseQuestion(wiki: string, file: string, passages: Map<string, string>
 
   const sections = splitSections(frontmatter.body);
   const bodyText = sections.get("题目正文")?.trim() ?? "";
-  if (!bodyText) return { ...emptyCandidate(sourceKey, "解析失败：缺少题目正文"), legacyStatus: textValue(frontmatter.data["审核状态"]) || undefined };
+  if (!bodyText) return { ...emptyCandidate(sourceKey, "解析失败：缺少题目正文", sourcePath), legacyStatus: textValue(frontmatter.data["审核状态"]) || undefined };
 
-  const relative = file.slice(wiki.length + 1).split(sep);
-  const typeFolder = relative[0] === "by-type" ? relative[1] : relative[0];
+  const segments = relative(wiki, file).split(sep);
+  const typeFolder = segments[0] === "by-type" ? segments[1] : segments[0];
   const section = textValue(frontmatter.data["板块"]) || typeFolder?.replace(/^\d+-/, "") || "Tiku";
   const questionType = textValue(frontmatter.data["题型"]);
   const knowledgePoints = [
@@ -167,8 +169,19 @@ function parseQuestion(wiki: string, file: string, passages: Map<string, string>
 
   const answers = groupSection(sections.get("答案") ?? "");
   const explanations = groupSection(sections.get("解析") ?? "");
-  for (const key of answers.lines.keys()) if (key > stemGroup.segments.length) problems.push(`答案小问号不匹配：（${key}）`);
-  for (const key of explanations.lines.keys()) if (key > stemGroup.segments.length) problems.push(`解析小问号不匹配：（${key}）`);
+  const unmatchedGroups: NonNullable<ImportCandidate["unmatchedGroups"]> = [];
+  for (const [key, lines] of answers.lines) {
+    if (key <= stemGroup.segments.length) continue;
+    const problem = `答案小问号不匹配：（${key}）`;
+    problems.push(problem);
+    unmatchedGroups.push({ problem, target: "answers", blocks: parseBlocks(lines.join("\n")) });
+  }
+  for (const [key, lines] of explanations.lines) {
+    if (key <= stemGroup.segments.length) continue;
+    const problem = `解析小问号不匹配：（${key}）`;
+    problems.push(problem);
+    unmatchedGroups.push({ problem, target: "explanation", blocks: parseBlocks(lines.join("\n")) });
+  }
 
   const materials: ImportMaterialSpec[] = [];
   const materialRefs: { materialId: string; versionId: string }[] = [];
@@ -245,6 +258,8 @@ function parseQuestion(wiki: string, file: string, passages: Map<string, string>
     reasons,
     problems,
     corrections: [],
+    sourcePath,
+    ...(unmatchedGroups.length > 0 ? { unmatchedGroups } : {}),
     legacyStatus: textValue(frontmatter.data["审核状态"]) || undefined,
     blocked: problems.length > 0,
     needsProofread: false,

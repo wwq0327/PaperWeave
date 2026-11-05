@@ -1,5 +1,5 @@
 import { test, expect, _electron as electron } from "@playwright/test";
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -102,6 +102,57 @@ test("缺图题目在应用内补图后导入；来源变化显示字段差异�
     await page.getByLabel("建立修订版").check();
     await page.getByRole("button", { name: "执行导入" }).click();
     await expect(page.getByText("导入完成：新增 0，修订 1，保留 0。", { exact: true })).toBeVisible();
+  } finally {
+    await closeApp(app);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("缺少原题号的迁入题在界面补填后导入，并在题库中可检索", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-import-number-"));
+  const source = path.join(dir, "tiku-numberless");
+  const wiki = path.join(source, "wiki");
+  mkdirSync(path.join(wiki, "by-type", "01-积累与运用"), { recursive: true });
+  writeFileSync(path.join(wiki, "by-type", "01-积累与运用", "QTEST-NO-NUMBER.md"), `---
+题目编号: QTEST
+题型: 选择题
+板块: 积累与运用
+来源: 自制样题
+年份: 2023
+---
+
+## 题目正文
+
+合成无号题。
+
+## 答案
+
+合成答案。
+`);
+  const app = await electron.launch({ args: [entry, `--user-data-dir=${path.join(dir, "data")}`] });
+  try {
+    const page = await app.firstWindow();
+    await page.getByRole("button", { name: "旧库迁入" }).click();
+    await stubDirectory(app, source);
+    await page.getByRole("button", { name: "扫描 Tiku 根目录" }).click();
+    const preview = page.getByRole("region", { name: "迁入预览" });
+    await expect(page.getByText(/阻断 1/)).toBeVisible();
+    await expect(preview).toContainText("缺少原题号");
+    await preview.getByLabel(/补填原题号/).fill("8");
+    await preview.getByRole("button", { name: "保存原题号" }).click();
+    await expect(page.getByText(/该条已重新校验为可导入/)).toBeVisible();
+    await expect(page.getByText(/可导入 1 · 完全重复 0/)).toBeVisible();
+    await page.getByRole("button", { name: "执行导入" }).click();
+    await expect(page.getByText("导入完成：新增 1，修订 0，保留 0。", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "返回录题草稿" }).click();
+    await page.getByRole("button", { name: "题库与组卷" }).click();
+    const searchRegion = page.getByRole("region", { name: "题库检索" });
+    await searchRegion.getByLabel("学科").fill("语文");
+    await searchRegion.getByLabel("关键词").fill("合成无号题");
+    await searchRegion.getByRole("button", { name: "检索" }).click();
+    await expect(searchRegion).toContainText("合成无号题");
+    await expect(searchRegion).toContainText("题 8");
   } finally {
     await closeApp(app);
     rmSync(dir, { recursive: true, force: true });
