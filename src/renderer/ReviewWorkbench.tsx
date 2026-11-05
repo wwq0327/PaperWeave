@@ -13,6 +13,7 @@ import type {
   Classification,
   QuestionBlock,
   ReviewStatus,
+  SubQuestionImpact,
 } from "../shared/question";
 
 const contentLabels: Record<ReviewStatus, string> = { draft: "内容草稿", pending: "内容待核", approved: "内容已审核" };
@@ -31,7 +32,9 @@ interface AffectedUsage {
   materialVersion: number;
   latestVersionId: string;
   latestVersion: number;
+  impacts: SubQuestionImpact[];
   source: QuestionDetailView["content"]["source"];
+  content: QuestionDetailView["content"];
 }
 
 function materialText(blocks: Block[]): string | null {
@@ -316,10 +319,10 @@ function MaterialReview({ material, busy, onAdvance, onSaved, onAdopted }: {
     setWorking(true); setError("");
     try {
       const usages = await window.paperweave.questionsAffectedByMaterial(material.materialId);
-      const rows = await Promise.all(usages.map(async (usage) => ({
-        ...usage,
-        source: (await window.paperweave.getQuestionDetail(usage.versionId)).content.source,
-      })));
+      const rows = await Promise.all(usages.map(async (usage) => {
+        const detail = await window.paperweave.getQuestionDetail(usage.versionId);
+        return { ...usage, source: detail.content.source, content: detail.content };
+      }));
       setAffected(rows);
     } catch (e) { setError(`读取受影响题失败：${errorText(e)}`); }
     finally { setWorking(false); }
@@ -373,11 +376,20 @@ function MaterialReview({ material, busy, onAdvance, onSaved, onAdopted }: {
     </div>}
     {affected !== null && <div className="review-affected">
       <h4>仍引用旧版的题目</h4>
-      {affected.length === 0 ? <p className="muted">没有题目仍引用旧版材料。</p> : <ul>
-        {affected.map((usage) => <li key={usage.questionId}>
-          <span>原卷第 {usage.source.pdfPage} 页 题 {usage.source.originalNumber} · 题目第 {usage.version} 版 · 材料第 {usage.materialVersion} 版</span>
-          <button onClick={() => void adopt(usage)} disabled={working || busy}>采用新版（材料第 {usage.latestVersion} 版）</button>
-        </li>)}
+      {affected === null ? null : affected.length === 0 ? <p className="muted">没有题目仍引用旧版材料。</p> : <ul>
+        {affected.map((usage) => {
+          const label = (id: string) => usage.content.subQuestions.find((sub) => sub.id === id)?.originalLabel || id;
+          const direct = usage.impacts.filter((impact) => impact.direct);
+          const indirect = usage.impacts.filter((impact) => !impact.direct);
+          return <li key={usage.questionId}>
+            <span>原卷第 {usage.source.pdfPage} 页 题 {usage.source.originalNumber} · 题目第 {usage.version} 版 · 材料第 {usage.materialVersion} 版</span>
+            <p className="muted">直接受影响：{direct.length > 0 ? direct.map((impact) => label(impact.subQuestionId)).join("、") : "无"}</p>
+            <p className="muted">间接受影响：{indirect.length > 0
+              ? indirect.map((impact) => `${label(impact.subQuestionId)}（经由 ${impact.via.map(label).join("、")}）`).join("；")
+              : "无"}</p>
+            <button onClick={() => void adopt(usage)} disabled={working || busy}>采用新版（材料第 {usage.latestVersion} 版）</button>
+          </li>;
+        })}
       </ul>}
     </div>}
     {material.status === "draft" && <button onClick={() => onAdvance("pending")} disabled={busy}>提交材料待核</button>}

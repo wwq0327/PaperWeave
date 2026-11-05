@@ -30,7 +30,7 @@ import type {
 } from "../shared/paper-api";
 import type { BlankSpace, PaperScoring } from "../shared/paper";
 import type { VolumePaper } from "../shared/paper-layout";
-import type { AnswerStatus, Classification, QuestionContent, ReviewStatus } from "../shared/question";
+import type { AnswerStatus, Classification, QuestionContent, ReviewStatus, SubQuestionImpact } from "../shared/question";
 import type { RuntimeVersions } from "../shared/versions";
 
 declare global {
@@ -103,7 +103,7 @@ declare global {
       saveIntakeFigure(dataUrl: string): Promise<{ id: string; url: string }>;
       createMaterial(input: { title: string; content: Block[]; source: string }): Promise<{ id: string; materialId: string; version: number; title: string; content: Block[]; source: string; status: ReviewStatus; createdAt: string }>;
       saveMaterialVersion(materialId: string, input: { title: string; content: Block[]; source: string }): Promise<{ id: string; materialId: string; version: number; title: string; content: Block[]; source: string; status: ReviewStatus; createdAt: string }>;
-      questionsAffectedByMaterial(materialId: string): Promise<{ questionId: string; versionId: string; version: number; materialVersion: number; latestVersionId: string; latestVersion: number }[]>;
+      questionsAffectedByMaterial(materialId: string): Promise<{ questionId: string; versionId: string; version: number; materialVersion: number; latestVersionId: string; latestVersion: number; impacts: SubQuestionImpact[] }[]>;
       adoptMaterialVersion(questionId: string, materialId: string, materialVersionId: string): Promise<{ id: string; questionId: string; version: number; contentStatus: ReviewStatus; answerStatus: AnswerStatus }>;
       setMaterialStatus(versionId: string, status: ReviewStatus): Promise<void>;
       chooseBackupDestination(): Promise<{ folder: string } | null>;

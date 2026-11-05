@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { DatabaseSync } from "node:sqlite";
 import { isBlockList, type Block } from "../shared/document";
 import type { ItemUpdates } from "../shared/paper";
-import { buildSearchText, classificationProblem, isQuestionContent, isClassification, questionContentProblem, questionReadiness, type AnswerStatus, type Classification, type QuestionContent, type Readiness, type ReviewStatus, type SourcePosition, type Stage } from "../shared/question";
+import { buildSearchText, classificationProblem, isQuestionContent, isClassification, materialImpacts, questionContentProblem, questionReadiness, type AnswerStatus, type Classification, type QuestionContent, type Readiness, type ReviewStatus, type SourcePosition, type Stage, type SubQuestionImpact } from "../shared/question";
 import type { Database } from "./database";
 
 export interface QuestionVersionRecord {
@@ -40,6 +40,7 @@ export interface QuestionUsage {
   materialVersion: number;
   latestVersionId: string;
   latestVersion: number;
+  impacts: SubQuestionImpact[];
 }
 
 export interface QuestionFilter {
@@ -440,7 +441,9 @@ export class QuestionBank {
       `).all(materialId, materialId) as unknown[];
       return rows.map((row) => {
         const value = row as { questionId: string; versionId: string; version: number; materialVersion: number };
-        return { ...value, latestVersionId: latest.id, latestVersion: latest.version };
+        const version = this.getQuestionVersion(value.versionId);
+        if (version === undefined) throw new Error("题目版本不存在");
+        return { ...value, latestVersionId: latest.id, latestVersion: latest.version, impacts: materialImpacts(version.content, materialId) };
       });
     });
   }

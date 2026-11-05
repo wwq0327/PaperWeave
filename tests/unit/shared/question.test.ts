@@ -4,6 +4,7 @@ import {
   classificationProblem,
   hasContent,
   isClassification,
+  materialImpacts,
   isQuestionContent,
   questionContentProblem,
   questionReadiness,
@@ -360,4 +361,57 @@ test("无题组指令、无材料、无前问的小问判定为独立可用", ()
 
 test("不存在的小问标识被拒绝", () => {
   expect(() => selectionDependencies(note(), "missing")).toThrow("小问不存在");
+});
+
+function chainedMaterial(): ReturnType<typeof math> {
+  const content = math();
+  content.materials = [{ materialId: "material-m", versionId: "material-m-v1" }];
+  content.subQuestions[0].materialIds = ["material-m"];
+  return content;
+}
+
+test("材料改动直接影响引用小问，并沿 dependsOn 传递为间接影响", () => {
+  const content = chainedMaterial();
+  const third = structuredClone(content.subQuestions[1]);
+  third.id = "part-3";
+  third.dependsOn = ["part-2"];
+  content.subQuestions.push(third);
+  expect(materialImpacts(content, "material-m")).toEqual([
+    { subQuestionId: "part-1", direct: true, via: [] },
+    { subQuestionId: "part-2", direct: false, via: ["part-1"] },
+    { subQuestionId: "part-3", direct: false, via: ["part-2"] },
+  ]);
+  expect(materialImpacts(content, "other-material")).toEqual([]);
+});
+
+test("无依赖关系的小问不列为间接影响", () => {
+  const content = chainedMaterial();
+  content.subQuestions[1].dependsOn = [];
+  expect(materialImpacts(content, "material-m")).toEqual([
+    { subQuestionId: "part-1", direct: true, via: [] },
+  ]);
+});
+
+test("材料只出现在题组材料池时整组视为直接影响", () => {
+  const content = math();
+  content.materials = [{ materialId: "material-m", versionId: "material-m-v1" }];
+  expect(materialImpacts(content, "material-m")).toEqual([
+    { subQuestionId: "part-1", direct: true, via: [] },
+    { subQuestionId: "part-2", direct: true, via: [] },
+  ]);
+});
+
+test("循环与自依赖数据不崩溃", () => {
+  const content = chainedMaterial();
+  content.subQuestions[0].dependsOn = ["part-2"];
+  content.subQuestions[1].dependsOn = ["part-1"];
+  expect(materialImpacts(content, "material-m")).toEqual([
+    { subQuestionId: "part-1", direct: true, via: [] },
+    { subQuestionId: "part-2", direct: false, via: ["part-1"] },
+  ]);
+
+  const lonely = math();
+  lonely.subQuestions[0].dependsOn = ["part-2"];
+  lonely.subQuestions[1].dependsOn = ["part-1"];
+  expect(materialImpacts(lonely, "material-m")).toEqual([]);
 });
