@@ -1,5 +1,5 @@
-import { isAiDraft, type AiDraft } from "./ai";
-import type { WholePaperBatchPlan } from "./whole-paper-batches";
+import { AI_LIMITS, isAiDraft, type AiDraft } from "./ai";
+import { wholePaperRequestText, type WholePaperBatchPlan } from "./whole-paper-batches";
 
 export type BatchStatus = "pending" | "running" | "succeeded" | "failed" | "skipped";
 export interface WholePaperBatchState {
@@ -64,7 +64,9 @@ export class WholePaperRunner {
           break;
         }
         try {
-          const result = await this.request({ text: input.text, pages: [...input.pages] }, signal);
+          const text = wholePaperRequestText(input);
+          if ([...text].length > AI_LIMITS.textChars) throw new Error("附加页码后超过模型输入限制");
+          const result = await this.request({ text, pages: [...input.pages] }, signal);
           if (signal.aborted) throw new Error("已取消，请重试");
           if (!isAiDraft(result)) throw new Error("模型返回格式无效，请重试");
           batch.status = "succeeded";

@@ -28,9 +28,14 @@ export interface WholePaperBatchPlan {
   emptyPages: number[];
 }
 
+/** 向模型发送时标明每段原页；原始文本和页内偏移保持不变。 */
+export function wholePaperRequestText(batch: WholePaperBatch): string {
+  return batch.fragments.map((part) => `\n[原卷第 ${part.page} 页]\n${part.text}`).join("");
+}
+
 /** 按原页顺序无损切分文字；空页单独报告，不能假定空页没有题目。 */
 export function planWholePaperBatches(pages: WholePaperPage[], limit: number = AI_LIMITS.textChars): WholePaperBatchPlan {
-  if (!Number.isInteger(limit) || limit < 1 || limit > AI_LIMITS.textChars) throw new Error("分批字符上限无效");
+  if (!Number.isInteger(limit) || limit < 20 || limit > AI_LIMITS.textChars) throw new Error("分批字符上限无效");
   let lastPage = 0;
   const batches: WholePaperBatch[] = [];
   const emptyPages: number[] = [];
@@ -53,11 +58,12 @@ export function planWholePaperBatches(pages: WholePaperPage[], limit: number = A
     }
     let start = 0;
     while (start < chars.length) {
-      if (size === limit || (fragments.length > 0 && fragments[fragments.length - 1].page !== page.page && new Set(fragments.map((part) => part.page)).size === 50)) flush();
-      const end = Math.min(start + limit - size, chars.length);
+      const headerSize = [...`\n[原卷第 ${page.page} 页]\n`].length;
+      if (size + headerSize >= limit || (fragments.length > 0 && new Set(fragments.map((part) => part.page)).size === 50)) flush();
+      const end = Math.min(start + limit - size - headerSize, chars.length);
       const part = chars.slice(start, end).join("");
       fragments.push({ page: page.page, start, end, text: part });
-      size += end - start;
+      size += headerSize + end - start;
       start = end;
     }
   }

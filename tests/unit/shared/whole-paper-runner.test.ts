@@ -3,7 +3,7 @@ import { planWholePaperBatches } from "../../../src/shared/whole-paper-batches";
 import { createWholePaperRun, WholePaperRunner } from "../../../src/shared/whole-paper-runner";
 
 const draft = { questions: [{ stem: "题", subquestions: [], options: [], tags: [], uncertain: [], page: 1 }], notes: [] };
-const input = () => createWholePaperRun(planWholePaperBatches([{ page: 1, text: "甲乙丙" }], 1));
+const input = () => createWholePaperRun(planWholePaperBatches([{ page: 1, text: "甲".repeat(19) }], 20));
 
 describe("整卷任务调度", () => {
   it("记录每批状态，重试失败批次时保留成功结果", async () => {
@@ -41,11 +41,24 @@ describe("整卷任务调度", () => {
   });
 
   it("跳过纯空白批次并保留空页信息", async () => {
-    const state = createWholePaperRun(planWholePaperBatches([{ page: 1, text: " " }, { page: 2, text: "题" }], 1));
+    const state = createWholePaperRun(planWholePaperBatches([{ page: 1, text: " " }, { page: 2, text: "题" }], 20));
     const request = vi.fn().mockResolvedValue(draft);
     const result = await new WholePaperRunner(async () => {}, request).run(state, new AbortController().signal);
     expect(result.batches.map((b) => b.status)).toEqual(["skipped", "succeeded"]);
     expect(result.plan.emptyPages).toEqual([1]);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("向模型发送标注原页的文字，旧计划超限时拒绝发送", async () => {
+    const request = vi.fn().mockResolvedValue(draft);
+    const runner = new WholePaperRunner(async () => {}, request);
+    await runner.run(createWholePaperRun(planWholePaperBatches([{ page: 4, text: "题目" }])), new AbortController().signal);
+    expect(request.mock.calls[0][0]).toEqual({ text: "\n[原卷第 4 页]\n题目", pages: [4] });
+    const old = createWholePaperRun(planWholePaperBatches([{ page: 1, text: "甲" }]));
+    old.plan.batches[0].text = "甲".repeat(8000);
+    old.plan.batches[0].fragments[0] = { page: 1, start: 0, end: 8000, text: "甲".repeat(8000) };
+    const result = await runner.run(old, new AbortController().signal);
+    expect(result.batches[0].status).toBe("failed");
     expect(request).toHaveBeenCalledTimes(1);
   });
 
