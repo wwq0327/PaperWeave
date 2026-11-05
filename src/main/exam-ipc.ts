@@ -26,7 +26,7 @@ export function registerExams(db: Database, root: string, currentWindow: () => B
   const intake = new Intake(store, bank);
   const wholePaper = new WholePaperStore(db);
   const taskView = (task: WholePaperTask): WholePaperTaskView => ({
-    id: task.id, sectionId: task.sectionId, sourceFileId: task.sourceFileId, createdAt: task.createdAt,
+    id: task.id, sectionId: task.sectionId, revision: task.revision, sourceFileId: task.sourceFileId, createdAt: task.createdAt,
     emptyPages: task.state.plan.emptyPages,
     batches: task.state.plan.batches.map((batch, index) => ({ pages: batch.pages, status: task.state.batches[index].status, reviewBoundaryBefore: batch.reviewBoundaryBefore })),
   });

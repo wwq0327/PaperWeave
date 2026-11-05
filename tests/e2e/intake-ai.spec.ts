@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Database } from "../../src/main/database";
+import type { ExamDetailView, ExamRecord } from "../../src/shared/exam";
 import { ExamStore } from "../../src/main/exams";
 import { QuestionBank } from "../../src/main/question-bank";
 import { note } from "../unit/fixtures/questions";
@@ -46,7 +47,7 @@ async function dragOnPage(page: Page) {
   await page.mouse.up();
 }
 
-async function importExam(page: Page, app: Awaited<ReturnType<typeof electron.launch>>) {
+async function importExam(page: Page, app: Awaited<ReturnType<typeof electron.launch>>, source = fixture) {
   await page.getByRole("button", { name: "考试原卷" }).click();
   await page.getByLabel("考试标题").fill("九年级数学单元卷");
   await page.getByLabel("学科", { exact: true }).fill("语文");
@@ -54,7 +55,7 @@ async function importExam(page: Page, app: Awaited<ReturnType<typeof electron.la
   await page.getByLabel("来源").fill("自制样题");
   await app.evaluate(({ dialog }, target) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] });
-  }, fixture);
+  }, source);
   await page.getByRole("button", { name: "选择 PDF 并导入" }).click();
   await expect(page.getByText("已导入「九年级数学单元卷」。", { exact: true })).toBeVisible();
   await page.locator(".paper-card").filter({ hasText: "九年级数学单元卷" }).getByRole("button", { name: "进入录题" }).click();
@@ -170,20 +171,71 @@ test("整卷任务准备后重开可见，且不跨考试读取或创建", async
     await expect(panel.getByRole("region", { name: "整卷任务详情" })).toContainText("原卷第 1、2 页");
     await expect(panel).toContainText("不发送模型");
     const isolated = await page.evaluate(async ({ otherId, otherSectionId }) => {
-      const exams = await window.paperweave.listExams();
+      const bridge = (window as unknown as { paperweave: { listExams(): Promise<ExamRecord[]>; getExam(id: string): Promise<ExamDetailView>; prepareWholePaper(examId: string, sectionId: string, fileId: string): Promise<unknown>; listWholePaper(examId: string): Promise<unknown[]> } }).paperweave;
+      const exams = await bridge.listExams();
       const current = exams.find((item) => item.title === "九年级数学单元卷");
       if (!current) throw new Error("考试不存在");
-      const detail = await window.paperweave.getExam(current.id);
+      const detail = await bridge.getExam(current.id);
       const paper = detail.files.find((file) => file.role === "paper");
       if (!paper) throw new Error("原卷不存在");
       let rejected = false;
-      try { await window.paperweave.prepareWholePaper(otherId, otherSectionId, paper.id); } catch { rejected = true; }
-      return { otherTasks: await window.paperweave.listWholePaper(otherId), rejected };
+      try { await bridge.prepareWholePaper(otherId, otherSectionId, paper.id); } catch { rejected = true; }
+      return { otherTasks: await bridge.listWholePaper(otherId), rejected };
     }, { otherId: other.exam.id, otherSectionId: otherSection });
     expect(isolated).toEqual({ otherTasks: [], rejected: true });
     await page.getByRole("button", { name: "返回考试原卷" }).click();
     await page.locator(".paper-card").filter({ hasText: "九年级数学单元卷" }).getByRole("button", { name: "进入录题" }).click();
     await panel.getByRole("button", { name: "查看任务 1" }).click();
     await expect(panel.getByRole("region", { name: "整卷任务详情" })).toContainText("原卷第 1、2 页");
+  } finally { await closeApp(app); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("整卷文字先确认发送，失败后重新确认并重试", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-whole-paper-run-"));
+  const app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`], env: { ...process.env, PAPERWEAVE_AI_FAKE: "invalid" } });
+  try {
+    const page = await app.firstWindow();
+    await importExam(page, app);
+    const panel = page.getByRole("region", { name: "整卷任务", exact: true });
+    await panel.getByRole("button", { name: "准备整卷文字任务" }).click();
+    await panel.getByRole("button", { name: "发送或重试整卷任务" }).click();
+    const confirm = panel.getByRole("region", { name: "确认整卷发送" });
+    await expect(confirm).toContainText("原卷第 1、2 页");
+    await expect(confirm).toContainText("费用按服务商规则计收");
+    await confirm.getByRole("button", { name: "取消发送" }).click();
+    await expect(panel).toContainText("待处理");
+    await panel.getByRole("button", { name: "发送或重试整卷任务" }).click();
+    await confirm.getByRole("button", { name: "确认发送整卷文字" }).click();
+    await expect(panel).toContainText("失败待重试");
+    await app.evaluate(() => { process.env.PAPERWEAVE_AI_FAKE = "ok"; });
+    await panel.getByRole("button", { name: "发送或重试整卷任务" }).click();
+    await confirm.getByRole("button", { name: "确认发送整卷文字" }).click();
+    await expect(panel).toContainText("已处理");
+    await expect(panel).toContainText("批量建题尚未接入");
+    await page.getByRole("button", { name: "返回考试原卷" }).click();
+    await page.locator(".paper-card").filter({ hasText: "九年级数学单元卷" }).getByRole("button", { name: "进入录题" }).click();
+    await panel.getByRole("button", { name: "查看任务 1" }).click();
+    await expect(panel).toContainText("已处理");
+  } finally { await closeApp(app); rmSync(dir, { recursive: true, force: true }); }
+});
+
+
+test("整卷取消后丢弃迟到响应；返回页码不属于本批也失败", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-whole-cancel-"));
+  const app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`], env: { ...process.env, PAPERWEAVE_AI_FAKE: "late-success" } });
+  try {
+    const page = await app.firstWindow();
+    await importExam(page, app, path.resolve("tests/fixtures/text.pdf"));
+    const panel = page.getByRole("region", { name: "整卷任务", exact: true });
+    await panel.getByRole("button", { name: "准备整卷文字任务" }).click();
+    await panel.getByRole("button", { name: "发送或重试整卷任务" }).click();
+    await panel.getByRole("button", { name: "确认发送整卷文字" }).click();
+    await panel.getByRole("button", { name: "取消整卷处理" }).click();
+    await expect(panel).toContainText("失败待重试");
+    await app.evaluate(() => { process.env.PAPERWEAVE_AI_FAKE = "ok"; });
+    await panel.getByRole("button", { name: "发送或重试整卷任务" }).click();
+    await panel.getByRole("button", { name: "确认发送整卷文字" }).click();
+    await expect(panel).toContainText("失败待重试");
+    await expect(panel).not.toContainText("已处理");
   } finally { await closeApp(app); rmSync(dir, { recursive: true, force: true }); }
 });
