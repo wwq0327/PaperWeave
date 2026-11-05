@@ -59,6 +59,8 @@ contextBridge.exposeInMainWorld("paperweave", {
   addExamSection: (examId: string, title: string, subject?: string) => ipcRenderer.invoke("exam:addSection", examId, title, subject),
   getExamFile: (fileId: string) => ipcRenderer.invoke("exam:fileData", fileId),
   getExamFileText: (fileId: string) => ipcRenderer.invoke("exam:fileText", fileId),
+  prepareWholePaper: (examId: string, sectionId: string, fileId: string) => ipcRenderer.invoke("wholePaper:prepare", examId, sectionId, fileId),
+  listWholePaper: (examId: string) => ipcRenderer.invoke("wholePaper:list", examId),
   listExamQuestions: (examId: string) => ipcRenderer.invoke("exam:questions", examId),
   scanImports: (kind: string) => ipcRenderer.invoke("import:scan", kind),
   applyImports: (input: unknown) => ipcRenderer.invoke("import:apply", input),

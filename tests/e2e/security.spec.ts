@@ -84,7 +84,7 @@ test("渲染进程无 Node、隔离与沙箱生效，跨窗口调用被拒绝", 
     });
     expect(probe.globals).toEqual(["process:undefined", "require:undefined", "module:undefined", "ipcRenderer:undefined", "Buffer:undefined", "electron:undefined"]);
     expect(probe.keys).toEqual([
-      "addBasketItemToPaper", "addExamSection", "addPaperSection", "addToBasket", "adoptMaterialVersion", "applyImports", "attachExamFile", "beginPaperFinalize", "beginPdfPair", "cancelAiDraft", "cancelPaperFinalize", "cancelPdfPair", "capturePaperStudent", "capturePaperTeacher", "captureStudentPdf", "checkPaperFinalize", "chooseBackupDestination", "chooseBackupSource", "chooseImage", "clearAiKey", "clearBasket", "confirmPaperFinalize", "confirmPaperScoreConflict", "correctImport", "createBackup", "createMaterial", "createPaper", "exportPdf", "extractPdfText", "finishPdfPair", "generateAiDraft", "getAiConfig", "getExam", "getExamFile", "getExamFileText", "getImage", "getPaper", "getPaperTeacherVolume", "getQuestionDetail", "getRuntimeVersions", "importExam", "listBasket", "listExamQuestions", "listExams", "listImportBatches", "listPaperFinalizations", "listPapers", "loadDraft", "loadPdfForImages", "movePaperItem", "platform", "questionsAffectedByMaterial", "removeBasketItem", "removePaperItem", "removePaperSection", "reopenPaperPreview", "reprintPaper", "restoreBackup", "saveAiConfig", "saveAiKey", "saveDraft", "saveIntake", "saveIntakeFigure", "saveMaterialVersion", "scanImports", "searchQuestions", "setMaterialStatus", "setPaperItemBlankSpace", "setPaperItemScore", "setPaperItemScoring", "setQuestionAnswerStatus", "setQuestionClassification", "setQuestionContentStatus", "updatePaperItemVersion",
+      "addBasketItemToPaper", "addExamSection", "addPaperSection", "addToBasket", "adoptMaterialVersion", "applyImports", "attachExamFile", "beginPaperFinalize", "beginPdfPair", "cancelAiDraft", "cancelPaperFinalize", "cancelPdfPair", "capturePaperStudent", "capturePaperTeacher", "captureStudentPdf", "checkPaperFinalize", "chooseBackupDestination", "chooseBackupSource", "chooseImage", "clearAiKey", "clearBasket", "confirmPaperFinalize", "confirmPaperScoreConflict", "correctImport", "createBackup", "createMaterial", "createPaper", "exportPdf", "extractPdfText", "finishPdfPair", "generateAiDraft", "getAiConfig", "getExam", "getExamFile", "getExamFileText", "getImage", "getPaper", "getPaperTeacherVolume", "getQuestionDetail", "getRuntimeVersions", "importExam", "listBasket", "listExamQuestions", "listExams", "listImportBatches", "listPaperFinalizations", "listPapers", "listWholePaper", "loadDraft", "loadPdfForImages", "movePaperItem", "platform", "prepareWholePaper", "questionsAffectedByMaterial", "removeBasketItem", "removePaperItem", "removePaperSection", "reopenPaperPreview", "reprintPaper", "restoreBackup", "saveAiConfig", "saveAiKey", "saveDraft", "saveIntake", "saveIntakeFigure", "saveMaterialVersion", "scanImports", "searchQuestions", "setMaterialStatus", "setPaperItemBlankSpace", "setPaperItemScore", "setPaperItemScoring", "setQuestionAnswerStatus", "setQuestionClassification", "setQuestionContentStatus", "updatePaperItemVersion",
     ]);
 
     const denied = await app.evaluate(async ({ BrowserWindow }, preloadPath) => {
@@ -119,6 +119,8 @@ test("渲染进程无 Node、隔离与沙箱生效，跨窗口调用被拒绝", 
             await attempt(() => bridge.setQuestionAnswerStatus("missing", "approved")),
             await attempt(() => bridge.setQuestionClassification("missing", {})),
             await attempt(() => bridge.getExamFileText("missing")),
+            await attempt(() => bridge.prepareWholePaper("missing", "missing", "missing")),
+            await attempt(() => bridge.listWholePaper("missing")),
             await attempt(() => bridge.chooseBackupDestination()),
             await attempt(() => bridge.createBackup()),
             await attempt(() => bridge.chooseBackupSource()),
@@ -150,10 +152,12 @@ test("渲染进程无 Node、隔离与沙箱生效，跨窗口调用被拒绝", 
     expect(denied[18]).toContain("无权访问组卷功能");
     expect(denied[19]).toContain("无权访问组卷功能");
     expect(denied[20]).toContain("无权访问考试资料");
-    expect(denied[21]).toContain("无权访问备份与恢复");
-    expect(denied[22]).toContain("无权访问备份与恢复");
+    expect(denied[21]).toContain("无权访问考试资料");
+    expect(denied[22]).toContain("无权访问考试资料");
     expect(denied[23]).toContain("无权访问备份与恢复");
     expect(denied[24]).toContain("无权访问备份与恢复");
+    expect(denied[25]).toContain("无权访问备份与恢复");
+    expect(denied[26]).toContain("无权访问备份与恢复");
   } finally {
     await closeApp(app);
     rmSync(dir, { recursive: true, force: true });

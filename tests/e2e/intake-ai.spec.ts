@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Database } from "../../src/main/database";
+import { ExamStore } from "../../src/main/exams";
 import { QuestionBank } from "../../src/main/question-bank";
 import { note } from "../unit/fixtures/questions";
 
@@ -48,7 +49,7 @@ async function dragOnPage(page: Page) {
 async function importExam(page: Page, app: Awaited<ReturnType<typeof electron.launch>>) {
   await page.getByRole("button", { name: "考试原卷" }).click();
   await page.getByLabel("考试标题").fill("九年级数学单元卷");
-  await page.getByLabel("学科").fill("语文");
+  await page.getByLabel("学科", { exact: true }).fill("语文");
   await page.getByLabel("学年").fill("2026");
   await page.getByLabel("来源").fill("自制样题");
   await app.evaluate(({ dialog }, target) => {
@@ -56,7 +57,7 @@ async function importExam(page: Page, app: Awaited<ReturnType<typeof electron.la
   }, fixture);
   await page.getByRole("button", { name: "选择 PDF 并导入" }).click();
   await expect(page.getByText("已导入「九年级数学单元卷」。", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "进入录题" }).click();
+  await page.locator(".paper-card").filter({ hasText: "九年级数学单元卷" }).getByRole("button", { name: "进入录题" }).click();
   await expect(page.getByRole("region", { name: "原卷预览" })).toBeVisible();
   await expect(page.getByAltText("原卷第 1 页")).toBeVisible({ timeout: 15000 });
 }
@@ -150,4 +151,39 @@ test("裁图输入生成 AI 草稿；采纳覆盖当前表单前需确认", asyn
     await closeApp(app);
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+
+test("整卷任务准备后重开可见，且不跨考试读取或创建", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-whole-paper-ui-"));
+  const db = new Database(path.join(dir, "paperweave.sqlite"));
+  const exams = new ExamStore(db, dir);
+  const other = exams.importPaper({ title: "另一场考试", stage: "初中", subject: "语文", grade: "九年级", region: "", examType: "", year: "", sourceName: "" }, path.resolve("tests/fixtures/text.pdf"));
+  const otherSection = exams.getExam(other.exam.id).sections[0].id;
+  db.close();
+  const app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`] });
+  try {
+    const page = await app.firstWindow();
+    await importExam(page, app);
+    const panel = page.getByRole("region", { name: "整卷任务", exact: true });
+    await panel.getByRole("button", { name: "准备整卷文字任务" }).click();
+    await expect(panel.getByRole("region", { name: "整卷任务详情" })).toContainText("原卷第 1、2 页");
+    await expect(panel).toContainText("不发送模型");
+    const isolated = await page.evaluate(async ({ otherId, otherSectionId }) => {
+      const exams = await window.paperweave.listExams();
+      const current = exams.find((item) => item.title === "九年级数学单元卷");
+      if (!current) throw new Error("考试不存在");
+      const detail = await window.paperweave.getExam(current.id);
+      const paper = detail.files.find((file) => file.role === "paper");
+      if (!paper) throw new Error("原卷不存在");
+      let rejected = false;
+      try { await window.paperweave.prepareWholePaper(otherId, otherSectionId, paper.id); } catch { rejected = true; }
+      return { otherTasks: await window.paperweave.listWholePaper(otherId), rejected };
+    }, { otherId: other.exam.id, otherSectionId: otherSection });
+    expect(isolated).toEqual({ otherTasks: [], rejected: true });
+    await page.getByRole("button", { name: "返回考试原卷" }).click();
+    await page.locator(".paper-card").filter({ hasText: "九年级数学单元卷" }).getByRole("button", { name: "进入录题" }).click();
+    await panel.getByRole("button", { name: "查看任务 1" }).click();
+    await expect(panel.getByRole("region", { name: "整卷任务详情" })).toContainText("原卷第 1、2 页");
+  } finally { await closeApp(app); rmSync(dir, { recursive: true, force: true }); }
 });

@@ -6,6 +6,9 @@ import { ExamStore } from "./exams";
 import { Intake } from "./intake";
 import { extractPdfText } from "./pdf-text";
 import { QuestionBank } from "./question-bank";
+import { prepareWholePaperPdf } from "./whole-paper-prepare";
+import { WholePaperStore, type WholePaperTask } from "./whole-paper-store";
+import type { WholePaperTaskView } from "../shared/whole-paper-view";
 
 const fileView = (file: OriginalFileRecord): OriginalFileView => ({
   id: file.id,
@@ -21,6 +24,12 @@ export function registerExams(db: Database, root: string, currentWindow: () => B
   const store = new ExamStore(db, root);
   const bank = new QuestionBank(db);
   const intake = new Intake(store, bank);
+  const wholePaper = new WholePaperStore(db);
+  const taskView = (task: WholePaperTask): WholePaperTaskView => ({
+    id: task.id, sectionId: task.sectionId, sourceFileId: task.sourceFileId, createdAt: task.createdAt,
+    emptyPages: task.state.plan.emptyPages,
+    batches: task.state.plan.batches.map((batch, index) => ({ pages: batch.pages, status: task.state.batches[index].status, reviewBoundaryBefore: batch.reviewBoundaryBefore })),
+  });
   const attachments = new AttachmentStore(root);
   const permitted = (event: Electron.IpcMainInvokeEvent) => {
     const win = currentWindow();
@@ -78,6 +87,16 @@ export function registerExams(db: Database, root: string, currentWindow: () => B
     permitted(event);
     const { data } = store.readFile(text(fileId, "原卷文件"));
     return extractPdfText(new Uint8Array(data));
+  });
+  ipcMain.handle("wholePaper:prepare", async (event, examId: unknown, sectionId: unknown, fileId: unknown) => {
+    permitted(event);
+    return taskView(await prepareWholePaperPdf(store, wholePaper, text(examId, "考试标识"), text(sectionId, "考试分部"), text(fileId, "原卷文件")));
+  });
+  ipcMain.handle("wholePaper:list", (event, examId: unknown) => {
+    permitted(event);
+    const id = text(examId, "考试标识");
+    store.getExam(id);
+    return wholePaper.list().filter((task) => task.examId === id).map((task) => taskView(wholePaper.get(task.id)));
   });
   ipcMain.handle("intake:save", (event, input: unknown) => {
     permitted(event);
