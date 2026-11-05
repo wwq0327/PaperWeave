@@ -168,7 +168,8 @@ export async function runWorkflow(harness, { fixture, examTitle, paperTitle, exp
   await harness.setOpenPath(fixture);
   await page.getByRole("button", { name: "考试原卷" }).click();
   await page.getByLabel("考试标题").fill(examTitle);
-  await page.getByLabel("年份").fill("2026");
+  // 上一版构建仍用旧标签「年份」，升级走查需同时兼容。
+  await page.getByLabel(/^(年份|学年)$/).fill("2026");
   await page.getByLabel("来源").fill("自制合成");
   await page.getByRole("button", { name: "选择 PDF 并导入" }).click();
   await page.getByText(`已导入「${examTitle}」。`, { exact: true }).waitFor({ timeout: 30_000 });
