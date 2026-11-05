@@ -1,7 +1,7 @@
 {
   "product": "PaperWeave",
   "version": "1.0.0",
-  "generatedAt": "2026-11-04T22:56:22.635Z",
+  "generatedAt": "2026-11-05T00:38:10.168Z",
   "files": [
     {
       "path": "out/PaperWeave-darwin-arm64/PaperWeave.app/Contents/Info.plist",
@@ -10,18 +10,18 @@
     },
     {
       "path": "out/make/dmg/arm64/PaperWeave-1.0.0-arm64.dmg",
-      "bytes": 120680625,
-      "sha256": "93d4c56da568ee6646adcf362e157f2fce938562410d7a86502532af1dca9770"
+      "bytes": 120665748,
+      "sha256": "846e68e1352c05c5f6d0c9903ab1941c74fd65b138a8c430e1f8975761a7e2c2"
     },
     {
       "path": "out/make/zip/darwin/arm64/PaperWeave-darwin-arm64-1.0.0.zip",
-      "bytes": 122475650,
-      "sha256": "768f9d77471fbd480796cc79f74d138c65d15eb36a5975eb9bfe7ed9090c555c"
+      "bytes": 122481734,
+      "sha256": "369616545850e012ca5b4f3feee1a5acc719553caf86831ad520ec6a6b6ed1bf"
     },
     {
       "path": "out/make/zip/win32/x64/PaperWeave-win32-x64-1.0.0.zip",
-      "bytes": 160323170,
-      "sha256": "96682f35ea051dfc0bca8dcd38b6df83c33c42a81cdd3c28ffbe67dfb779788e"
+      "bytes": 160329254,
+      "sha256": "c4afd181514a2356e1474d79bc061ca0879b8f75c1a92304c5e59454b904b8e2"
     }
   ]
 }
