@@ -19,7 +19,7 @@ function setup() {
   const exams = new ExamStore(db, root);
   const exam = exams.importPaper({ title: "自制卷", stage: "初中", subject: "数学", grade: "九年级", region: "", examType: "", year: "", sourceName: "" }, source).exam;
   const section = exams.getExam(exam.id).sections[0];
-  const state = createWholePaperRun(planWholePaperBatches([{ page: 1, text: "甲乙" }], 1));
+  const state = createWholePaperRun(planWholePaperBatches([{ page: 1, text: "甲".repeat(10) }], 20));
   return { root, path, db, exam, section, state };
 }
 
