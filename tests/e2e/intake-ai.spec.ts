@@ -214,7 +214,7 @@ test("整卷文字先确认发送，失败后重新确认并重试", async () =>
     await panel.getByRole("button", { name: "发送或重试整卷任务" }).click();
     await confirm.getByRole("button", { name: "确认发送整卷文字" }).click();
     await expect(panel).toContainText("已处理");
-    await expect(panel).toContainText("批量建题尚未接入");
+    await expect(panel).toContainText("识别结果仍是待核草稿");
     const results = panel.getByRole("region", { name: "第 1 批识别结果" });
     await expect(results).toContainText("<script>window.__paperweavePwned = true</script>");
     await expect(results).toContainText("固定响应材料正文");
