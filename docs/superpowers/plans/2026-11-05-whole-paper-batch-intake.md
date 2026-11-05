@@ -153,7 +153,7 @@ git commit -m "feat: 整卷识别结果批量建档与重复候选处理 (#146)"
 ### Task 3: IPC 与 preload 桥
 
 **Files:**
-- Modify: `src/main/exam-ipc.ts`（在 `wholePaper:detail` 之后加三个 handler；`registerExamIpc` 形参增 `wholeIntake: WholePaperIntake`）
+- Modify: `src/main/exam-ipc.ts`（在 `wholePaper:detail` 之后加三个 handler；在 `registerExams` 内直接实例化 `WholePaperIntake`，`src/main.ts` 不变）
 - Modify: `src/main/main.ts`（或实际装配 `Intake`/`WholePaperStore` 的入口文件；`new WholePaperIntake(...)` 并传入注册函数）
 - Modify: `src/preload.ts`、`src/renderer/env.d.ts`
 - Modify: `scripts/verify-packaged-app.mjs`、`scripts/verify-packaged-install.mjs`、`tests/e2e/security.spec.ts`（桥计数 79→82）

@@ -7,8 +7,10 @@ import { Intake } from "./intake";
 import { extractPdfText } from "./pdf-text";
 import { QuestionBank } from "./question-bank";
 import { prepareWholePaperPdf } from "./whole-paper-prepare";
+import { WholePaperIntake } from "./whole-paper-intake";
 import { WholePaperStore, type WholePaperTask } from "./whole-paper-store";
 import type { WholePaperTaskDetail, WholePaperTaskView } from "../shared/whole-paper-view";
+import type { Classification } from "../shared/question";
 
 const fileView = (file: OriginalFileRecord): OriginalFileView => ({
   id: file.id,
@@ -25,6 +27,7 @@ export function registerExams(db: Database, root: string, currentWindow: () => B
   const bank = new QuestionBank(db);
   const intake = new Intake(store, bank);
   const wholePaper = new WholePaperStore(db);
+  const wholeIntake = new WholePaperIntake(db, wholePaper, intake, bank, store);
   const taskView = (task: WholePaperTask): WholePaperTaskView => ({
     id: task.id, sectionId: task.sectionId, revision: task.revision, sourceFileId: task.sourceFileId, createdAt: task.createdAt,
     emptyPages: task.state.plan.emptyPages,
@@ -43,6 +46,12 @@ export function registerExams(db: Database, root: string, currentWindow: () => B
   const choosePdf = async (win: BrowserWindow, title: string): Promise<string | null> => {
     const result = await dialog.showOpenDialog(win, { title, properties: ["openFile"], filters: [{ name: "PDF", extensions: ["pdf"] }] });
     return result.canceled ? null : result.filePaths[0] ?? null;
+  };
+  const ownedWholeTask = (examId: unknown, taskId: unknown): WholePaperTask => {
+    const id = text(examId, "考试标识");
+    const task = wholePaper.get(text(taskId, "整卷任务"));
+    if (task.examId !== id) throw new Error("整卷任务不属于该考试");
+    return task;
   };
 
   ipcMain.handle("exam:list", (event) => {
@@ -100,10 +109,25 @@ export function registerExams(db: Database, root: string, currentWindow: () => B
   });
   ipcMain.handle("wholePaper:detail", (event, examId: unknown, taskId: unknown): WholePaperTaskDetail => {
     permitted(event);
-    const id = text(examId, "考试标识");
-    const task = wholePaper.get(text(taskId, "整卷任务"));
-    if (task.examId !== id) throw new Error("整卷任务不属于该考试");
+    const task = ownedWholeTask(examId, taskId);
     return { ...taskView(task), results: task.state.batches.map((batch) => batch.result ?? null) };
+  });
+  ipcMain.handle("wholePaper:intakeCreate", (event, examId: unknown, taskId: unknown, classification: unknown) => {
+    permitted(event);
+    const task = ownedWholeTask(examId, taskId);
+    if (typeof classification !== "object" || classification === null) throw new Error("整卷分类无效");
+    return wholeIntake.create(task.id, classification as Classification);
+  });
+  ipcMain.handle("wholePaper:intakeList", (event, examId: unknown, taskId: unknown) => {
+    permitted(event);
+    return wholeIntake.list(ownedWholeTask(examId, taskId).id);
+  });
+  ipcMain.handle("wholePaper:intakeResolve", (event, examId: unknown, taskId: unknown, recordId: unknown, action: unknown) => {
+    permitted(event);
+    const id = text(recordId, "建档记录");
+    if (action !== "skip" && action !== "revise") throw new Error("处理动作无效");
+    const task = ownedWholeTask(examId, taskId);
+    wholeIntake.resolve(task.id, id, action);
   });
   ipcMain.handle("intake:save", (event, input: unknown) => {
     permitted(event);
