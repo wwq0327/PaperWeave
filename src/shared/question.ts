@@ -351,6 +351,41 @@ export function selectionDependencies(content: QuestionContent, subQuestionId: s
   return { subQuestionId, directPrevious, previous, materialIds, groupCandidates, usesGroupStem, independent };
 }
 
+export interface SubQuestionImpact {
+  subQuestionId: string;
+  direct: boolean;
+  /** 间接项依赖的受影响小问；直接项为空数组。 */
+  via: string[];
+}
+
+/** 材料改动的影响范围：直接引用材料的小问，以及沿 dependsOn 传递的后续小问。未知与循环依赖截断，不抛错。 */
+export function materialImpacts(content: QuestionContent, materialId: string): SubQuestionImpact[] {
+  const known = new Set(content.subQuestions.map((sub) => sub.id));
+  let direct = new Set(content.subQuestions.filter((sub) => sub.materialIds.includes(materialId)).map((sub) => sub.id));
+  if (direct.size === 0 && content.materials.some((ref) => ref.materialId === materialId)) {
+    direct = new Set(known);
+  }
+  const affected = new Set(direct);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const sub of content.subQuestions) {
+      if (affected.has(sub.id)) continue;
+      if (sub.dependsOn.some((id) => affected.has(id))) {
+        affected.add(sub.id);
+        changed = true;
+      }
+    }
+  }
+  return content.subQuestions
+    .filter((sub) => affected.has(sub.id))
+    .map((sub) => ({
+      subQuestionId: sub.id,
+      direct: direct.has(sub.id),
+      via: direct.has(sub.id) ? [] : sub.dependsOn.filter((id) => known.has(id) && affected.has(id)),
+    }));
+}
+
 export interface ReadinessInput {
   content: QuestionContent;
   contentStatus: ReviewStatus;

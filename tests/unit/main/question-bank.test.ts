@@ -181,6 +181,32 @@ test("一份材料被三道题引用，材料改版后三道题全部列为受�
   }
 });
 
+test("材料改版列出直接与间接受影响的小问，无依赖题不误报", () => {
+  const { bank } = open();
+  const material = approvedMaterial(bank);
+  const content = withMaterial(material);
+  const base = note().subQuestions[0];
+  content.subQuestions = [
+    { ...base, id: "a", originalLabel: "(1)", materialIds: [material.materialId], dependsOn: [] },
+    { ...base, id: "b", originalLabel: "(2)", materialIds: [], dependsOn: ["a"] },
+    { ...base, id: "c", originalLabel: "(3)", materialIds: [], dependsOn: ["b"] },
+    { ...base, id: "d", originalLabel: "(4)", materialIds: [], dependsOn: [] },
+  ];
+  const question = bank.createQuestion(content);
+  const unrelated = bank.createQuestion(note());
+  bank.saveMaterialVersion(material.materialId, { title: "共享材料", content: [paragraph("材料二")], source: "自制" });
+
+  const affected = bank.questionsAffectedByMaterial(material.materialId);
+  expect(affected).toHaveLength(1);
+  expect(affected[0].questionId).toBe(question.questionId);
+  expect(affected[0].questionId).not.toBe(unrelated.questionId);
+  expect(affected[0].impacts).toEqual([
+    { subQuestionId: "a", direct: true, via: [] },
+    { subQuestionId: "b", direct: false, via: ["a"] },
+    { subQuestionId: "c", direct: false, via: ["b"] },
+  ]);
+});
+
 test("采用新版材料后生成新版本并待核，旧版本仍引用旧材料", () => {
   const { bank } = open();
   const material = approvedMaterial(bank);

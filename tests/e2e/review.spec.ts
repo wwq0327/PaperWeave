@@ -66,6 +66,25 @@ function sharedMaterialContent(materialId: string, versionId: string, stem: stri
   };
 }
 
+/** 丙题为三小问链式依赖：第 (1) 问直接引用材料，第 (2)(3) 问沿前问间接受影响。 */
+function chainedMaterialContent(materialId: string, versionId: string): QuestionContent {
+  const content = sharedMaterialContent(materialId, versionId, "丙题题干", "3");
+  const base = content.subQuestions[0];
+  const sub = (id: string, label: string, dependsOn: string[], materialIds: string[]) => ({
+    ...structuredClone(base),
+    id,
+    originalLabel: label,
+    dependsOn,
+    materialIds,
+  });
+  content.subQuestions = [
+    sub("sub-1", "(1)", [], [materialId]),
+    sub("sub-2", "(2)", ["sub-1"], []),
+    sub("sub-3", "(3)", ["sub-2"], []),
+  ];
+  return content;
+}
+
 /** 一份已审核材料被三道题引用；甲题待核，乙、丙题已审核。 */
 function seedSharedMaterial(dir: string): void {
   const db = new Database(path.join(dir, "paperweave.sqlite"));
@@ -74,7 +93,10 @@ function seedSharedMaterial(dir: string): void {
   bank.setMaterialStatus(material.id, "pending");
   bank.setMaterialStatus(material.id, "approved");
   const versions = ["甲题题干", "乙题题干", "丙题题干"].map((stem, index) => {
-    const version = bank.createQuestion(sharedMaterialContent(material.materialId, material.id, stem, String(index + 1)));
+    const content = index === 2
+      ? chainedMaterialContent(material.materialId, material.id)
+      : sharedMaterialContent(material.materialId, material.id, stem, String(index + 1));
+    const version = bank.createQuestion(content);
     bank.setClassification(version.questionId, {
       stage: "初中",
       subject: "语文",
@@ -115,6 +137,9 @@ test("材料改版列出受影响题并逐题采用新版", async () => {
     const affected = detail.locator(".review-affected");
     await expect(affected.locator("li")).toHaveCount(3);
     await expect(affected).toContainText("原卷第 3 页 题 2 · 题目第 1 版 · 材料第 1 版");
+    const chained = affected.locator("li", { hasText: "题 3 ·" });
+    await expect(chained).toContainText("直接受影响：(1)");
+    await expect(chained).toContainText("间接受影响：(2)（经由 (1)）；(3)（经由 (2)）");
 
     await affected.locator("li", { hasText: "题 2 ·" }).getByRole("button", { name: /采用新版/ }).click();
     await expect(page.getByText(/已采用材料第 2 版；题目第 2 版回到待核。/)).toBeVisible();
