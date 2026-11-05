@@ -31,6 +31,7 @@ export interface WholePaperTask {
   id: string;
   examId: string;
   sectionId: string;
+  sourceFileId?: string;
   revision: number;
   createdAt: string;
   updatedAt: string;
@@ -40,19 +41,20 @@ export interface WholePaperTask {
 function parse(raw: string, id: string): WholePaperTask {
   let value: unknown;
   try { value = JSON.parse(raw); } catch { throw new Error("整卷任务数据损坏"); }
-  if (!object(value) || !keys(value, ["id", "examId", "sectionId", "revision", "createdAt", "updatedAt", "state"]) || value.id !== id || typeof value.examId !== "string" || !value.examId || typeof value.sectionId !== "string" || !value.sectionId || !Number.isSafeInteger(value.revision) || (value.revision as number) < 1 || typeof value.createdAt !== "string" || typeof value.updatedAt !== "string" || !validState(value.state)) throw new Error("整卷任务数据损坏");
+  if (!object(value) || !keys(value, ["id", "examId", "sectionId", "sourceFileId", "revision", "createdAt", "updatedAt", "state"]) || value.id !== id || typeof value.examId !== "string" || !value.examId || typeof value.sectionId !== "string" || !value.sectionId || (value.sourceFileId !== undefined && (typeof value.sourceFileId !== "string" || !value.sourceFileId)) || !Number.isSafeInteger(value.revision) || (value.revision as number) < 1 || typeof value.createdAt !== "string" || typeof value.updatedAt !== "string" || !validState(value.state)) throw new Error("整卷任务数据损坏");
   return value as unknown as WholePaperTask;
 }
 
 export class WholePaperStore {
   constructor(private readonly db: Database) {}
 
-  create(examId: string, sectionId: string, state: WholePaperRunState): WholePaperTask {
+  create(examId: string, sectionId: string, state: WholePaperRunState, sourceFileId?: string): WholePaperTask {
     if (!validState(state) || state.batches.some((batch) => batch.status !== "pending" && batch.status !== "skipped")) throw new Error("整卷任务初始状态无效");
     const now = new Date().toISOString();
-    const task: WholePaperTask = { id: randomUUID(), examId, sectionId, revision: 1, createdAt: now, updatedAt: now, state: structuredClone(state) };
+    const task: WholePaperTask = { id: randomUUID(), examId, sectionId, ...(sourceFileId === undefined ? {} : { sourceFileId }), revision: 1, createdAt: now, updatedAt: now, state: structuredClone(state) };
     this.db.transaction((sqlite) => {
       if (!sqlite.prepare("SELECT 1 FROM exam_sections WHERE id = ? AND exam_id = ?").get(sectionId, examId)) throw new Error("考试分部不存在");
+      if (sourceFileId !== undefined && !sqlite.prepare("SELECT 1 FROM exam_originals WHERE exam_id = ? AND file_id = ? AND role = 'paper'").get(examId, sourceFileId)) throw new Error("原卷不属于该考试");
       sqlite.prepare("INSERT INTO app_settings (key, value) VALUES (?, ?)").run(prefix + task.id, JSON.stringify(task));
     });
     return task;
@@ -65,7 +67,7 @@ export class WholePaperStore {
     return parse(raw, id);
   }
 
-  list(): Pick<WholePaperTask, "id" | "examId" | "sectionId" | "revision" | "createdAt" | "updatedAt">[] {
+  list(): Pick<WholePaperTask, "id" | "examId" | "sectionId" | "sourceFileId" | "revision" | "createdAt" | "updatedAt">[] {
     const rows = this.db.read((sqlite) => sqlite.prepare("SELECT key, value FROM app_settings WHERE key GLOB ? ORDER BY key").all(prefix + "*") as { key: string; value: string }[]);
     return rows.map((row) => {
       const id = row.key.slice(prefix.length);
