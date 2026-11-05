@@ -126,6 +126,22 @@ test("同卷同分部同号再次保存时返回已有题，不静默新建", ()
   expect(bank.getLatestQuestionVersion(first.questionId)?.version).toBe(1);
 });
 
+test("编辑已有题改为已占用原题号被拒，自身号码与空闲号码可保存", () => {
+  const { bank, intake, examId, sectionId } = open();
+  saved(intake.save({ examId, sectionId, content: content("1"), classification }));
+  const second = saved(intake.save({ examId, sectionId, content: content("2"), classification }));
+
+  expect(() => intake.save({ examId, sectionId, questionId: second.questionId, content: content("1"), classification }))
+    .toThrow(/原题号「1」.*第 1 页.*第 1 版/);
+  expect(bank.getLatestQuestionVersion(second.questionId)?.version).toBe(1);
+
+  const self = saved(intake.save({ examId, sectionId, questionId: second.questionId, content: content("2"), classification }));
+  expect(self).toMatchObject({ questionId: second.questionId, version: 2 });
+
+  const moved = saved(intake.save({ examId, sectionId, questionId: second.questionId, content: content("3"), classification }));
+  expect(moved).toMatchObject({ questionId: second.questionId, version: 3 });
+});
+
 test("同一题内小问号重复时拒绝保存；不同题各自使用相同小问号不误判", () => {
   const { store, intake, examId, sectionId } = open();
   const duplicated = content("1");

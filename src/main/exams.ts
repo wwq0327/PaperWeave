@@ -233,11 +233,12 @@ export class ExamStore {
   }
 
   /** 同一考试、同一分部、同一原题号的已有题；不同考试或分部不算重复。 */
-  findDuplicate(examId: string, sectionId: string, originalNumber: string): ExamQuestionSummary | undefined {
+  findDuplicate(examId: string, sectionId: string, originalNumber: string, excludeQuestionId?: string): ExamQuestionSummary | undefined {
     const number = originalNumber.trim();
     if (!number) return undefined;
     return this.listQuestions(examId).find((question) =>
-      question.sectionId === sectionId && question.source.originalNumber.trim() === number);
+      question.questionId !== excludeQuestionId
+      && question.sectionId === sectionId && question.source.originalNumber.trim() === number);
   }
 
   addSection(examId: string, title: unknown, subject?: unknown): ExamSectionRecord {    const exam = this.requireExam(examId);
