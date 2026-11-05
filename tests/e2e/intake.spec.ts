@@ -306,3 +306,38 @@ test("同一题内小问号重复时拒绝保存并指出重复项", async () =>
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("移动小问后依赖顺序异常时提示并拒绝保存，移回后通过", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-intake-order-"));
+  const app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`] });
+  try {
+    const page = await app.firstWindow();
+    await importExam(page, app);
+    await page.getByLabel("原题号").fill("5");
+    await page.getByLabel("题干 文字 1", { exact: true }).fill("合成题：小问顺序。");
+    await page.getByLabel("小问 1 题干 文字 1", { exact: true }).fill("第一问。");
+    await page.getByRole("button", { name: "添加小问" }).click();
+    const second = page.getByRole("group", { name: "小问 2", exact: true });
+    await second.getByLabel("小问号").fill("(2)");
+    await second.getByLabel("小问 2 题干 文字 1", { exact: true }).fill("第二问。");
+    await page.getByRole("group", { name: "小问 2 依赖" }).getByRole("checkbox", { name: "(1)" }).check();
+
+    await page.getByRole("button", { name: "小问 2 上移" }).click();
+    await expect(page.getByRole("status")).toContainText("移动后依赖顺序需重新确认。");
+    const warning = page.locator(".intake-order-warning");
+    await expect(warning).toContainText("小问 (2) 依赖的「(1)」排在其后");
+
+    await page.getByRole("button", { name: "提交待核" }).click();
+    await expect(page.getByRole("alert")).toContainText("第 (2) 小问依赖的小问不存在或不在前面");
+    await expect(page.getByText(/已提交待核/)).toHaveCount(0);
+
+    const first = page.getByRole("group", { name: "小问 1", exact: true });
+    await first.getByRole("button", { name: "小问 1 下移" }).click();
+    await expect(page.locator(".intake-order-warning")).toHaveCount(0);
+    await page.getByRole("button", { name: "提交待核" }).click();
+    await expect(page.getByText("已提交待核（版本 1）。", { exact: true })).toBeVisible();
+  } finally {
+    await closeApp(app);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

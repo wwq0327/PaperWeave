@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { buildContent, contentToForm, duplicateSubLabels, newIntakeForm } from "../../../src/shared/intake";
+import { blankSubQuestion, buildContent, contentToForm, dependencyOrderProblems, duplicateSubLabels, moveSubQuestion, newIntakeForm } from "../../../src/shared/intake";
 import { hasContent, isQuestionContent, type Classification, type QuestionContent } from "../../../src/shared/question";
 
 const classification: Classification = {
@@ -194,6 +194,49 @@ test("空题干、坏页码、未配对公式与悬空依赖给出可读提示",
   const score = form();
   score.subQuestions[0].scoring = [{ description: "列式", score: "", slotIds: [] }];
   expect(buildContent(score).problems.join("；")).toContain("评分");
+});
+
+/** 两个小问的完整表单，第 (2) 问依赖第 (1) 问。 */
+function chainedForm() {
+  const value = form();
+  const second = blankSubQuestion();
+  second.key = "second-key";
+  second.id = "second-id";
+  second.originalLabel = "(2)";
+  second.prompt = [{ kind: "text", text: "第二问。" }];
+  second.answer = [{ kind: "text", text: "5" }];
+  second.dependsOn = [value.subQuestions[0].id];
+  value.subQuestions.push(second);
+  return value;
+}
+
+test("上移与下移改变小问顺序，不改小问号与依赖", () => {
+  const value = chainedForm();
+  const movedUp = moveSubQuestion(value, "second-key", "up");
+  expect(movedUp.subQuestions.map((sub) => sub.key)).toEqual(["second-key", value.subQuestions[0].key]);
+  expect(movedUp.subQuestions[0].originalLabel).toBe("(2)");
+  expect(movedUp.subQuestions[0].dependsOn).toEqual([value.subQuestions[0].id]);
+  expect(value.subQuestions.map((sub) => sub.key)).toEqual([value.subQuestions[0].key, "second-key"]);
+
+  const movedBack = moveSubQuestion(movedUp, "second-key", "down");
+  expect(movedBack.subQuestions.map((sub) => sub.key)).toEqual([value.subQuestions[0].key, "second-key"]);
+  expect(moveSubQuestion(value, value.subQuestions[0].key, "up")).toBe(value);
+  expect(moveSubQuestion(value, "second-key", "down")).toBe(value);
+});
+
+test("依赖排在被依赖小问之后时给出顺序提示且保存被拒", () => {
+  const value = chainedForm();
+  expect(dependencyOrderProblems(value)).toEqual([]);
+  expect(buildContent(value).content).not.toBeNull();
+
+  const moved = moveSubQuestion(value, "second-key", "up");
+  expect(dependencyOrderProblems(moved)).toEqual([{ subQuestionId: "second-id", later: ["(1)"], missing: [] }]);
+  const result = buildContent(moved);
+  expect(result.content).toBeNull();
+  expect(result.problems.join("；")).toContain("第 (2) 小问依赖的小问不存在或不在前面");
+
+  moved.subQuestions[0].dependsOn = ["missing-id"];
+  expect(dependencyOrderProblems(moved)).toEqual([{ subQuestionId: "second-id", later: [], missing: ["missing-id"] }]);
 });
 
 test("题干与小问引用可回填编辑；选项引用与答案变体仍拒绝", () => {

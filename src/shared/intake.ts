@@ -187,6 +187,43 @@ export function newIntakeForm(classification: Classification, section: string): 
   };
 }
 
+/** 交换小问位置；只改变顺序，不改小问号、依赖与组选答候选。已在首/尾时原样返回。 */
+export function moveSubQuestion(form: IntakeForm, key: string, direction: "up" | "down"): IntakeForm {
+  const index = form.subQuestions.findIndex((sub) => sub.key === key);
+  const target = direction === "up" ? index - 1 : index + 1;
+  if (index < 0 || target < 0 || target >= form.subQuestions.length) return form;
+  const subQuestions = [...form.subQuestions];
+  [subQuestions[index], subQuestions[target]] = [subQuestions[target], subQuestions[index]];
+  return { ...form, subQuestions };
+}
+
+export interface SubQuestionOrderProblem {
+  subQuestionId: string;
+  /** 被依赖但排在当前小问之后的小问号。 */
+  later: string[];
+  /** 依赖指向了当前题中不存在的小问标识。 */
+  missing: string[];
+}
+
+/** 按当前顺序检查依赖是否仍排在前面；供移动后即时提示，保存仍由 buildContent 拒绝。 */
+export function dependencyOrderProblems(form: IntakeForm): SubQuestionOrderProblem[] {
+  const problems: SubQuestionOrderProblem[] = [];
+  const earlier = new Set<string>();
+  for (const sub of form.subQuestions) {
+    const later: string[] = [];
+    const missing: string[] = [];
+    for (const dependency of sub.dependsOn) {
+      if (earlier.has(dependency)) continue;
+      const target = form.subQuestions.find((entry) => entry.id === dependency);
+      if (target === undefined) missing.push(dependency);
+      else later.push(target.originalLabel.trim() || `第 ${form.subQuestions.indexOf(target) + 1} 小问`);
+    }
+    if (later.length > 0 || missing.length > 0) problems.push({ subQuestionId: sub.id, later, missing });
+    earlier.add(sub.id);
+  }
+  return problems;
+}
+
 function parseTextBlocks(text: string, label: string, problems: string[], style: TextStyle = "普通", keepLeadingSpace = false): QuestionBlock[] {
   const blocks: QuestionBlock[] = [];
   for (const raw of text.split("\n")) {

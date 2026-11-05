@@ -5,7 +5,7 @@ import type { AiConfig } from "../shared/ai-config";
 import { aiQuestionToIntake, type AiIntakeResult } from "../shared/ai-intake";
 import type { ExamDetailView, ExamQuestionSummary } from "../shared/exam";
 import { TEXT_STYLES, type Block, type TextStyle } from "../shared/document";
-import { blankSubQuestion, buildContent, contentToForm, newIntakeForm, type IntakeBlock, type IntakeDuplicateSummary, type IntakeForm, type IntakeMaterial, type IntakeReferenceOption, type IntakeSlot, type IntakeSubQuestion } from "../shared/intake";
+import { blankSubQuestion, buildContent, contentToForm, dependencyOrderProblems, moveSubQuestion, newIntakeForm, type IntakeBlock, type IntakeDuplicateSummary, type IntakeForm, type IntakeMaterial, type IntakeReferenceOption, type IntakeSlot, type IntakeSubQuestion } from "../shared/intake";
 import type { Classification, QuestionBlock, QuestionContent, ReviewStatus, Stage } from "../shared/question";
 import BlockListEditor from "./BlockListEditor";
 import ExamPdfPanel from "./ExamPdfPanel";
@@ -289,6 +289,17 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
     });
   }
 
+  function moveSub(key: string, direction: "up" | "down") {
+    if (!form) return;
+    const next = moveSubQuestion(form, key, direction);
+    if (next === form) return;
+    setForm(next);
+    setError("");
+    setMessage(next.subQuestions.some((sub) => sub.dependsOn.length > 0)
+      ? "已移动小问；移动后依赖顺序需重新确认。"
+      : "已移动小问。");
+  }
+
   function requestCrop(target: CropTarget) {
     setCropTarget(target);
     setMessage("请在左栏原卷页面上拖选区域。");
@@ -558,6 +569,8 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
     setAiConfirming(false); setAiDraft(null); setAiAdopted([]); setAiNewTags([]);
   }
 
+  const orderProblems = form ? dependencyOrderProblems(form) : [];
+
   return <main className="paper-app intake-app">
     <header className="paper-top">
       <div><h1>{exam?.exam.title ?? "录题工作台"}</h1><p>左看原卷 · 右录题目{editing ? ` · 正在编辑版本 ${editing.version}` : " · 新题"}</p></div>
@@ -716,6 +729,8 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
               <div className="paper-inline">
                 <label>小问号<input value={sub.originalLabel} onChange={(event) => updateSub(sub.key, { originalLabel: event.target.value })} /></label>
                 <label>原分值<input type="number" min={0} max={1000} step={0.5} value={sub.originalScore} onChange={(event) => updateSub(sub.key, { originalScore: event.target.value })} /></label>
+                <button aria-label={`小问 ${index + 1} 上移`} onClick={() => moveSub(sub.key, "up")} disabled={busy || index === 0}>上移</button>
+                <button aria-label={`小问 ${index + 1} 下移`} onClick={() => moveSub(sub.key, "down")} disabled={busy || index === form.subQuestions.length - 1}>下移</button>
                 <button onClick={() => removeSub(sub.key)} disabled={busy || form.subQuestions.length <= 1}>删除小问</button>
               </div>
               <BlockListEditor label={`小问 ${index + 1} 题干`} blocks={sub.prompt} disabled={busy} referenceOptions={referenceOptionsFor(sub.key)} onChange={(blocks) => setSubBlocks(sub.key, "prompt", blocks)} onCrop={() => requestCrop({ field: "prompt", subKey: sub.key })} />
@@ -787,6 +802,20 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
               </fieldset>}
             </fieldset>)}
             <button onClick={addSub} disabled={busy}>添加小问</button>
+            {orderProblems.length > 0 && <section className="intake-order-warning" aria-label="依赖顺序提示">
+              <p>依赖顺序需要重新确认，保存前请调整：</p>
+              <ul>
+                {orderProblems.map((problem) => {
+                  const current = form.subQuestions.find((sub) => sub.id === problem.subQuestionId);
+                  return <li key={problem.subQuestionId}>
+                    小问 {current?.originalLabel.trim() || "未知"}
+                    {problem.later.length > 0 ? ` 依赖的「${problem.later.join("、")}」排在其后` : ""}
+                    {problem.missing.length > 0 ? ` 依赖了不存在的小问（${problem.missing.join("、")}）` : ""}
+                    ，请调整顺序后再保存。
+                  </li>;
+                })}
+              </ul>
+            </section>}
 
             <fieldset className="intake-selection" aria-label="组选答规则">
               <legend>组选答规则</legend>
