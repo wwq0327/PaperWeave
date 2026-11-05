@@ -8,6 +8,7 @@ import { blankBlock, blankOption, blankSubQuestion, buildContent, buildContentBl
 import type { Classification, QuestionBlock, QuestionContent, ReviewStatus, Stage } from "../shared/question";
 import BlockListEditor from "./BlockListEditor";
 import ExamPdfPanel from "./ExamPdfPanel";
+import WholePaperPanel from "./WholePaperPanel";
 
 const stages: Stage[] = ["小学", "初中", "高中"];
 const statusLabels: Record<ReviewStatus, string> = { draft: "草稿", pending: "待核", approved: "已审核" };
@@ -635,6 +636,7 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
         </section>
 
         {form && <>
+          <WholePaperPanel examId={examId} sectionId={sectionId} fileId={paper?.id} sectionName={section?.title ?? ""} />
           <section className="paper-panel" aria-label="AI 拆题">
             <header><h2>AI 拆题</h2><button onClick={() => setAiOpen((value) => !value)}>{aiOpen ? "收起" : "展开"}</button></header>
             {!aiOpen && <p className="muted">从原卷裁图或读取文字，生成结构化草稿，逐题核对后采纳。AI 结果不会自动入库。</p>}

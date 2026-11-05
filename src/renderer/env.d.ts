@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import type { AiDraftResult, AiInput } from "../shared/ai";
+import type { WholePaperTaskView } from "../shared/whole-paper-view";
 import type { AiConfig } from "../shared/ai-config";
 import type { BackupSummary } from "../shared/backup";
 import type { BasketSelection } from "../shared/basket";
@@ -93,6 +94,8 @@ declare global {
       attachExamFile(examId: string, role: ExamFileRole): Promise<{ status: "canceled" } | ({ status: "attached" } & ExamAttachment)>;
       addExamSection(examId: string, title: string, subject?: string): Promise<ExamSectionRecord>;
       getExamFile(fileId: string): Promise<{ file: OriginalFileView; data: Uint8Array }>;
+      prepareWholePaper(examId: string, sectionId: string, fileId: string): Promise<WholePaperTaskView>;
+      listWholePaper(examId: string): Promise<WholePaperTaskView[]>;
       getExamFileText(fileId: string): Promise<{ pages: { page: number; text: string }[]; hasText: boolean }>;
       listExamQuestions(examId: string): Promise<ExamQuestionSummary[]>;
       scanImports(kind: "tiku" | "mathvault"): Promise<{ status: "canceled" } | { status: "scanned"; scan: ImportScanView }>;
