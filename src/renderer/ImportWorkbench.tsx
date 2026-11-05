@@ -47,6 +47,8 @@ export default function ImportWorkbench({ onBack }: { onBack: () => void }) {
   const [scan, setScan] = useState<ImportScanView | null>(null);
   const [choices, setChoices] = useState<Record<string, ImportDecision>>({});
   const [proofread, setProofread] = useState<Record<string, boolean>>({});
+  const [numberInputs, setNumberInputs] = useState<Record<string, string>>({});
+  const [moveTargets, setMoveTargets] = useState<Record<string, number>>({});
   const [history, setHistory] = useState<ImportBatchView[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -99,11 +101,11 @@ export default function ImportWorkbench({ onBack }: { onBack: () => void }) {
     } finally { setBusy(false); }
   }
 
-  async function correct(row: ImportRow, action: ImportCorrectionAction, problem: string) {
+  async function correct(row: ImportRow, action: ImportCorrectionAction, problem: string, extra: { value?: string; target?: number } = {}) {
     if (!scan) return;
     setBusy(true); setError(""); setMessage("");
     try {
-      const result = await window.paperweave.correctImport({ scanId: scan.scanId, sourceKey: row.sourceKey, action, problem });
+      const result = await window.paperweave.correctImport({ scanId: scan.scanId, sourceKey: row.sourceKey, action, problem, ...extra });
       if (result.status === "canceled") return;
       setScan((current) => current ? replaceRow(current, result.row) : current);
       setChoices((current) => {
@@ -113,6 +115,7 @@ export default function ImportWorkbench({ onBack }: { onBack: () => void }) {
         if (result.row.status === "changed") next[row.sourceKey] = "skip";
         return next;
       });
+      if (action === "setOriginalNumber") setNumberInputs((current) => ({ ...current, [`${row.sourceKey}\n${problem}`]: "" }));
       setMessage(result.row.status === "blocked"
         ? `已处理「${problem}」，仍有阻断项需要继续处理。`
         : `已处理「${problem}」，该条已重新校验为${statusLabels[result.row.status]}。`);
@@ -176,13 +179,33 @@ export default function ImportWorkbench({ onBack }: { onBack: () => void }) {
               {row.problems && row.problems.length > 0 && <ul className="import-problems">
                 {row.problems.map((problem) => {
                   const kind = importProblemKind(problem);
+                  const key = `${row.sourceKey}\n${problem}`;
                   return <li key={problem} className="paper-inline">
                     <span>{problem}</span>
-                    {kind === "image" && <button onClick={() => void correct(row, "attachImage", problem)} disabled={busy}>选择图片补入</button>}
-                    {kind !== "other" && <button onClick={() => void correct(row, "dropProblem", problem)} disabled={busy}>{kind === "image" ? "不带此图导入" : "不带此材料导入"}</button>}
+                    {kind === "image" && <button onClick={() => void correct(row, "attachImage", problem)} disabled={busy}>
+                      {/图片为空|图片格式不支持|远程图片/.test(problem) ? "选择图片替换" : "选择图片补入"}
+                    </button>}
+                    {kind === "image" && <button onClick={() => void correct(row, "dropProblem", problem)} disabled={busy}>不带此图导入</button>}
+                    {kind === "material" && <button onClick={() => void correct(row, "dropProblem", problem)} disabled={busy}>不带此材料导入</button>}
+                    {kind === "originalNumber" && <>
+                      <input aria-label={`补填原题号（${row.sourceKey}）`} value={numberInputs[key] ?? ""} onChange={(event) => setNumberInputs((current) => ({ ...current, [key]: event.target.value }))} placeholder="原题号" />
+                      <button onClick={() => void correct(row, "setOriginalNumber", problem, { value: numberInputs[key] ?? "" })} disabled={busy}>保存原题号</button>
+                    </>}
+                    {kind === "subLabel" && <>
+                      <select aria-label={`并入小问（${problem}）`} value={moveTargets[key] ?? 1} onChange={(event) => setMoveTargets((current) => ({ ...current, [key]: Number(event.target.value) }))}>
+                        {Array.from({ length: row.subQuestionCount ?? 1 }, (_, index) => <option key={index + 1} value={index + 1}>第 {index + 1} 小问</option>)}
+                      </select>
+                      <button onClick={() => void correct(row, "moveSubLabel", problem, { target: moveTargets[key] ?? 1 })} disabled={busy}>调整到该小问</button>
+                      <button onClick={() => void correct(row, "dropProblem", problem)} disabled={busy}>删除该条目</button>
+                    </>}
+                    {kind === "other" && <span className="muted">不能在应用内修正，请修改源文件后重新扫描。</span>}
                   </li>;
                 })}
               </ul>}
+              {row.status === "blocked" && ((row.problems?.length ?? 0) === 0 || (row.problems ?? []).some((problem) => importProblemKind(problem) === "other")) && <div className="import-unfixable">
+                <p className="muted">源文件：{row.sourcePath ?? row.sourceKey}{(row.problems?.length ?? 0) === 0 ? `；${row.reasons.join("；")}` : ""}</p>
+                <button onClick={() => void scanLibrary(scan.kind)} disabled={busy}>修改源文件后重新扫描</button>
+              </div>}
               {notes.length > 0 && <p className="muted">提示：{notes.join("；")}</p>}
             </div>
             <div className="paper-actions">

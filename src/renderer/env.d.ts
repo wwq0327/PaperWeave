@@ -15,7 +15,7 @@ import type {
   ExamSectionRecord,
   OriginalFileView,
 } from "../shared/exam";
-import type { ImportApplyResult, ImportBatchView, ImportCorrectionResult, ImportScanView } from "../shared/import";
+import type { ImportApplyResult, ImportBatchView, ImportCorrectionInput, ImportCorrectionResult, ImportScanView } from "../shared/import";
 import type { SaveIntakeResult } from "../shared/intake";
 import type {
   BeginFinalizationView,
@@ -97,7 +97,7 @@ declare global {
       listExamQuestions(examId: string): Promise<ExamQuestionSummary[]>;
       scanImports(kind: "tiku" | "mathvault"): Promise<{ status: "canceled" } | { status: "scanned"; scan: ImportScanView }>;
       applyImports(input: { scanId: string; rows: { sourceKey: string; action: "import" | "revise" | "skip"; acknowledgeProofread?: boolean }[] }): Promise<ImportApplyResult>;
-      correctImport(input: { scanId: string; sourceKey: string; action: "attachImage" | "dropProblem"; problem: string }): Promise<ImportCorrectionResult>;
+      correctImport(input: ImportCorrectionInput): Promise<ImportCorrectionResult>;
       listImportBatches(): Promise<ImportBatchView[]>;
       saveIntake(input: { examId: string; sectionId: string; questionId?: string; content: QuestionContent; classification: Classification; submit?: boolean }): Promise<SaveIntakeResult>;
       saveIntakeFigure(dataUrl: string): Promise<{ id: string; url: string }>;
