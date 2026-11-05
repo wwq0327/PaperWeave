@@ -85,7 +85,7 @@ const fileRoles = new Set(["paper", "answer", "rubric", "answer_sheet"]);
 const object = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const text = (value: unknown, max: number): value is string => typeof value === "string" && value.length <= max;
 
-/** 考试基本信息校验；地区、题型、年份、来源允许缺省或空串，表示待补。 */
+/** 考试基本信息校验；地区、考试类型、学年、来源允许缺省或空串，表示待补。 */
 export function examInputProblem(value: unknown): string | null {
   if (!object(value) || !Object.keys(value).every((key) => inputKeys.includes(key))) return "考试信息无效";
   if (!text(value.title, 200) || !value.title.trim()) return "考试标题无效";

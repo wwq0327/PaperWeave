@@ -99,8 +99,8 @@ export default function ExamLibrary({ onBack, onOpenExam }: { onBack: () => void
         <label>学科<input value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} /></label>
         <label>年级<input value={form.grade} onChange={(e) => setForm({ ...form, grade: e.target.value })} /></label>
         <label>地区<input value={form.region} onChange={(e) => setForm({ ...form, region: e.target.value })} /></label>
-        <label>题型<input value={form.examType} onChange={(e) => setForm({ ...form, examType: e.target.value })} /></label>
-        <label>年份<input value={form.year} onChange={(e) => setForm({ ...form, year: e.target.value })} /></label>
+        <label>考试类型<input value={form.examType} onChange={(e) => setForm({ ...form, examType: e.target.value })} /></label>
+        <label>学年<input value={form.year} onChange={(e) => setForm({ ...form, year: e.target.value })} /></label>
         <label>来源<input value={form.sourceName} onChange={(e) => setForm({ ...form, sourceName: e.target.value })} /></label>
       </div>
       <p className="muted">同一 PDF 会按文件指纹去重；重复导入直接打开原考试。</p>
@@ -125,7 +125,7 @@ export default function ExamLibrary({ onBack, onOpenExam }: { onBack: () => void
 
     {detail && <section className="paper-panel" aria-label="考试详情">
       <header><h2>{detail.exam.title}</h2><span className="paper-state">{detail.questionCount} 道题</span></header>
-      <p className="muted">{detail.exam.stage} · {detail.exam.subject} · {detail.exam.grade} · {detail.exam.examType || "题型待补"} · {detail.exam.sourceName || "来源待补"}</p>
+      <p className="muted">{detail.exam.stage} · {detail.exam.subject} · {detail.exam.grade} · {detail.exam.examType || "考试类型待补"} · {detail.exam.sourceName || "来源待补"}</p>
 
       <h3>原件</h3>
       <ul className="paper-list">
