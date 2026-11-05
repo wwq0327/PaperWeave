@@ -34,8 +34,8 @@ test("导入原卷、指纹去重、挂接答案并在重开后保留", async ()
     await page.getByLabel("学科", { exact: true }).fill("数学");
     await page.getByLabel("年级", { exact: true }).fill("九年级");
     await page.getByLabel("地区").fill("四川南充");
-    await page.getByLabel("题型").fill("单元测");
-    await page.getByLabel("年份").fill("2026");
+    await page.getByLabel("考试类型").fill("单元测");
+    await page.getByLabel("学年").fill("2026");
     await page.getByLabel("来源").fill("自制样题");
 
     await app.evaluate(({ dialog }, target) => {

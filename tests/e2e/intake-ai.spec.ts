@@ -49,7 +49,7 @@ async function importExam(page: Page, app: Awaited<ReturnType<typeof electron.la
   await page.getByRole("button", { name: "考试原卷" }).click();
   await page.getByLabel("考试标题").fill("九年级数学单元卷");
   await page.getByLabel("学科").fill("语文");
-  await page.getByLabel("年份").fill("2026");
+  await page.getByLabel("学年").fill("2026");
   await page.getByLabel("来源").fill("自制样题");
   await app.evaluate(({ dialog }, target) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] });
