@@ -76,6 +76,7 @@ declare global {
       setPaperItemBlankSpace(itemId: string, blankSpace: BlankSpace): Promise<PaperItemView>;
       setPaperItemScoring(itemId: string, scoring: PaperScoring): Promise<PaperItemView>;
       confirmPaperScoreConflict(itemId: string, key: string): Promise<PaperItemView>;
+      updatePaperItemVersion(itemId: string): Promise<PaperItemView>;
       listPaperFinalizations(paperId: string): Promise<FinalizationRecordView[]>;
       checkPaperFinalize(paperId: string, options?: { confirmAnswerGap?: boolean }): Promise<FinalizationCheckView>;
       beginPaperFinalize(paperId: string, options?: { confirmAnswerGap?: boolean }): Promise<BeginFinalizationView>;

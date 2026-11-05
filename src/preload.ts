@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld("paperweave", {
   setPaperItemBlankSpace: (itemId: string, blankSpace: string) => ipcRenderer.invoke("paper:setItemBlankSpace", itemId, blankSpace),
   setPaperItemScoring: (itemId: string, scoring: unknown) => ipcRenderer.invoke("paper:setItemScoring", itemId, scoring),
   confirmPaperScoreConflict: (itemId: string, key: string) => ipcRenderer.invoke("paper:confirmScoreConflict", itemId, key),
+  updatePaperItemVersion: (itemId: string) => ipcRenderer.invoke("paper:updateItemVersion", itemId),
   listPaperFinalizations: (paperId: string) => ipcRenderer.invoke("paper:listFinalizations", paperId),
   checkPaperFinalize: (paperId: string, options?: { confirmAnswerGap?: boolean }) => ipcRenderer.invoke("paper:checkFinalize", paperId, options),
   beginPaperFinalize: (paperId: string, options?: { confirmAnswerGap?: boolean }) => ipcRenderer.invoke("paper:beginFinalize", paperId, options),

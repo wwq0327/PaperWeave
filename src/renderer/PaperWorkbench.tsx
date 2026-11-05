@@ -330,6 +330,9 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
       updateItem(item, updated);
     }, "待核项已确认。");
   }
+  async function updateVersion(item: PaperItemView) {
+    await mutate(() => window.paperweave.updatePaperItemVersion(item.id), "已更新到题库最新版本。");
+  }
   async function move(item: PaperItemView, sectionId: string, position: number) {
     await mutate(() => window.paperweave.movePaperItem(item.id, sectionId, position), "题目位置已更新。");
   }
@@ -489,7 +492,10 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
     <section className="paper-panel" aria-label="题篮">
       <header><h2>题篮</h2><button onClick={() => void window.paperweave.clearBasket().then(loadBasket).catch((e: unknown) => setError(`清空题篮失败：${errorText(e)}`))} disabled={basket.length === 0}>清空题篮</button></header>
       {basket.length === 0 ? <p className="muted">题篮为空。</p> : <ul className="paper-list">{basket.map((item) => <li key={item.id} className="paper-card">
-        <div><strong>{basketText(item) || "（无题干）"}</strong><p className="muted">小问：{item.subQuestionIds.join("、")} · 依赖：{item.dependencies.reasons.join("；") || "无"}</p></div>
+        <div><strong>{basketText(item) || "（无题干）"}</strong><p className="muted">小问：{item.subQuestionIds.join("、")} · 依赖：{item.dependencies.reasons.join("；") || "无"}</p>
+          {item.updates.question && <p className="muted">题库有新版本（第 {item.updates.question.version} 版），加入试卷后可更新。</p>}
+          {item.updates.materials.length > 0 && <p className="muted">引用材料有新版本，请到题库更新题目。</p>}
+        </div>
         <div className="paper-actions">
           <select aria-label="加入的小节" value={targets[item.id] ?? paper?.sections[0]?.id ?? ""} onChange={(e) => setTargets({ ...targets, [item.id]: e.target.value })}>
             {(paper?.sections ?? []).map((section) => <option key={section.id} value={section.id}>{section.title}</option>)}
@@ -531,6 +537,11 @@ export default function PaperWorkbench({ onBack }: { onBack: () => void }) {
               <span className={`paper-state paper-state-${item.scoringState}`}>{scoringLabels[item.scoringState]}</span>
             </header>
             <p>{blockText(item.content.stem)} {item.content.subQuestions.filter((sub) => item.subQuestionIds.includes(sub.id)).map((sub) => blockText(sub.prompt)).join("；")}</p>
+            {item.updates.question && <p className="paper-update">
+              题目有新版本（第 {item.updates.question.version} 版）。
+              <button onClick={() => void updateVersion(item)}>更新到最新版本</button>
+            </p>}
+            {item.updates.materials.length > 0 && <p className="paper-update">材料有新版本，请到题库更新题目后重新加入</p>}
             <div className="paper-inline">
               <label>卷内分值<input aria-label="卷内分值" type="number" min="0" step="0.5" value={scores[item.id] ?? item.score} onChange={(e) => setScores({ ...scores, [item.id]: e.target.value })} /></label>
               <button onClick={() => void setScore(item)}>改分</button>

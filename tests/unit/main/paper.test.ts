@@ -234,3 +234,67 @@ test("题目顺序稳定、跨小节移动与删除后重新编号，总分随�
 
   expect(JSON.stringify(bank.getQuestionVersion(mathVersion.id)?.content)).toBe(originalContent);
 });
+
+test("题篮与组卷提示题目和材料的新已审核版本；更新后保持卷内分值并重算默认分值与评分状态", () => {
+  const { bank, basket, paper } = open();
+  const created = paper.createPaper({ title: "数学卷", stage: "初中", subject: "数学", grade: "九年级" });
+  const section = paper.addSection(created.id, "解答题");
+  const material = bank.createMaterial({ title: "共享材料", content: [paragraph("材料正文")], source: "自制样题" });
+  bank.setMaterialStatus(material.id, "pending");
+  bank.setMaterialStatus(material.id, "approved");
+  const content = independentMath();
+  content.materials = [{ materialId: material.materialId, versionId: material.id }];
+  content.subQuestions[1].materialIds = [material.materialId];
+  const version = addQuestion(bank, content);
+  const item = paper.addBasketItem(created.id, section.id, addWhole(basket, version).id);
+  expect(item.score).toBe(10);
+  expect(item.updates).toEqual({ question: null, materials: [] });
+  expect(basket.listBasket()[0].updates).toEqual({ question: null, materials: [] });
+
+  const next = structuredClone(content);
+  next.subQuestions[1].prompt = [paragraph("新版第二问。")];
+  next.subQuestions[1].originalScore = 8;
+  const draft = bank.saveQuestionVersion(version.questionId, next);
+  expect(paper.getPaper(created.id).sections[0].items[0].updates.question).toBeNull();
+  expect(() => paper.updateItemVersion(item.id)).toThrow("没有可更新的已审核版本");
+  bank.setContentStatus(draft.id, "pending");
+  bank.setContentStatus(draft.id, "approved");
+
+  const material2 = bank.saveMaterialVersion(material.materialId, { title: "共享材料", content: [paragraph("材料修订正文")], source: "自制样题" });
+  bank.setMaterialStatus(material2.id, "approved");
+  const refreshed = paper.getPaper(created.id).sections[0].items[0];
+  expect(refreshed.updates).toEqual({
+    question: { versionId: draft.id, version: 2 },
+    materials: [{ materialId: material.materialId, versionId: material2.id, version: 2 }],
+  });
+  expect(basket.listBasket()[0].updates.question).toEqual({ versionId: draft.id, version: 2 });
+
+  const updated = paper.updateItemVersion(item.id);
+  expect(updated).toMatchObject({
+    questionVersionId: draft.id,
+    score: 10,
+    defaultScore: 12,
+    scoringState: "needsAdjustment",
+  });
+  expect(JSON.stringify(updated.content.subQuestions[1].prompt)).toContain("新版第二问");
+  expect(updated.updates.question).toBeNull();
+  expect(updated.updates.materials).toHaveLength(1);
+});
+
+test("新版本缺少原选小问时拒绝更新，卷内保持旧版本", () => {
+  const { bank, basket, paper } = open();
+  const created = paper.createPaper({ title: "数学卷", stage: "初中", subject: "数学", grade: "九年级" });
+  const section = paper.addSection(created.id, "解答题");
+  const content = independentMath();
+  const version = addQuestion(bank, content);
+  const item = paper.addBasketItem(created.id, section.id, addWhole(basket, version).id);
+
+  const next = structuredClone(content);
+  next.subQuestions = next.subQuestions.filter((sub) => sub.id !== "part-2");
+  const draft = bank.saveQuestionVersion(version.questionId, next);
+  bank.setContentStatus(draft.id, "pending");
+  bank.setContentStatus(draft.id, "approved");
+  expect(paper.getPaper(created.id).sections[0].items[0].updates.question).not.toBeNull();
+  expect(() => paper.updateItemVersion(item.id)).toThrow("新版本不再包含原选小问");
+  expect(paper.getPaper(created.id).sections[0].items[0].questionVersionId).toBe(version.id);
+});

@@ -148,6 +148,10 @@ export function registerPaper(db: Database, currentWindow: () => BrowserWindow |
     permitted(event);
     return papers.confirmScoreConflict(text(itemId, "题目标识"), text(key, "分值冲突"));
   });
+  ipcMain.handle("paper:updateItemVersion", (event, itemId: unknown) => {
+    permitted(event);
+    return papers.updateItemVersion(text(itemId, "题目标识"));
+  });
   ipcMain.handle("paper:listFinalizations", (event, paperId: unknown) => {
     permitted(event);
     return finalizer.listFinalizations(text(paperId, "试卷标识"));

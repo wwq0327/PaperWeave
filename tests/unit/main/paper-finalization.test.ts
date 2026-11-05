@@ -266,3 +266,30 @@ test("空试卷与中断恢复：清理无记录完成目录，保留有效定�
   expect(existsSync(unusualPaths.result)).toBe(true);
   expect(JSON.parse(db.getSetting(PAPER_JOURNAL_KEY) ?? "[]")).toEqual([{ id: unusual, parent: out }]);
 });
+
+test("更新组卷题目版本后，已定稿快照仍固定更新前版本", async () => {
+  const { db, bank, basket, paper } = open();
+  const out = output();
+  const version = approvedVersion(bank, referenceGroup());
+  const { created, item } = addToPaper(paper, basket, version);
+  const finalizer = new PaperFinalizer(db, fakeRenderer([]));
+  const record = await finalizer.finalize(created.id, out);
+
+  const content = bank.getLatestQuestionVersion(version.questionId)!.content;
+  const next = structuredClone(content);
+  next.stem = [paragraph("新版题干")];
+  next.subQuestions[0].originalScore = 5;
+  const draft = bank.saveQuestionVersion(version.questionId, next);
+  bank.setContentStatus(draft.id, "pending");
+  bank.setContentStatus(draft.id, "approved");
+  bank.setAnswerStatus(draft.id, "approved");
+  const updated = paper.updateItemVersion(item.id);
+  expect(updated.questionVersionId).toBe(draft.id);
+  expect(updated.defaultScore).toBe(11);
+
+  const frozen = finalizer.getFinalization(record.id).snapshot;
+  expect(frozen.sections[0].items[0].questionVersionId).toBe(version.id);
+  expect(JSON.stringify(frozen.sections[0].items[0].stem)).toContain("阅读材料");
+  expect(JSON.stringify(frozen)).not.toContain("新版题干");
+  expect(JSON.stringify(paper.getPaper(created.id))).toContain("新版题干");
+});
