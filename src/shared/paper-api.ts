@@ -1,6 +1,6 @@
 import type { BasketSelection } from "./basket";
 import type { Block } from "./document";
-import type { BlankSpace, PaperScoring, PaperScoringState, PendingCheck, ScoreConflict } from "./paper";
+import type { BlankSpace, ItemUpdates, PaperScoring, PaperScoringState, PendingCheck, ScoreConflict } from "./paper";
 import type { PaperSnapshot, ResolvedReference, VolumePaper } from "./paper-layout";
 import type { AnswerStatus, Classification, QuestionContent, ReviewStatus, SourcePosition, Stage } from "./question";
 
@@ -47,6 +47,7 @@ export interface BasketItemView {
   createdAt: string;
   content: QuestionContent;
   dependencies: BasketSelection;
+  updates: ItemUpdates;
 }
 
 export interface PaperRecordView {
@@ -74,6 +75,7 @@ export interface PaperItemView {
   scoringState: PaperScoringState;
   scoreConflicts: (ScoreConflict & { confirmed: boolean })[];
   pendingChecks: (PendingCheck & { confirmed: boolean })[];
+  updates: ItemUpdates;
   content: QuestionContent;
   createdAt: string;
 }

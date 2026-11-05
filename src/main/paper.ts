@@ -6,6 +6,7 @@ import {
   pendingChecks,
   scoreConflicts,
   type BlankSpace,
+  type ItemUpdates,
   type PaperScoring,
   type PaperScoringState,
   type PendingCheck,
@@ -59,6 +60,7 @@ export interface PaperItemRecord {
   scoreConflictConfirmations: string[];
   scoreConflicts: ConfirmedScoreConflict[];
   pendingChecks: ConfirmedPendingCheck[];
+  updates: ItemUpdates;
   content: QuestionContent;
   createdAt: string;
 }
@@ -313,6 +315,24 @@ export class Paper {
     });
   }
 
+  /** 教师主动更新到最新已审核版本：卷内分值不变，默认分值、评分状态与待核项按新内容重算，旧确认作废。 */
+  updateItemVersion(itemId: string): PaperItemRecord {
+    return this.db.transaction((sqlite) => {
+      const item = this.itemRow(sqlite, itemId);
+      const current = this.bank.getQuestionVersion(item.question_version_id);
+      if (current === undefined) throw new Error("题目版本不存在");
+      const latest = this.bank.latestApprovedQuestionVersion(item.question_id, current.version);
+      if (latest === undefined) throw new Error("没有可更新的已审核版本");
+      const subQuestionIds = JSON.parse(item.sub_question_ids) as string[];
+      if (subQuestionIds.some((id) => !latest.content.subQuestions.some((sub) => sub.id === id))) {
+        throw new Error("新版本不再包含原选小问，请移除后重新加入试卷");
+      }
+      sqlite.prepare("UPDATE paper_items SET question_version_id = ?, score_conflict_confirmations = '[]' WHERE id = ?").run(latest.id, itemId);
+      this.touch(sqlite, item.paper_id);
+      return this.itemRecord({ ...item, question_version_id: latest.id, score_conflict_confirmations: "[]" }, latest.content);
+    });
+  }
+
   getPaper(paperId: string): PaperDetail {
     return this.db.read((sqlite) => {
       const paper = this.paperRow(sqlite, paperId);
@@ -345,6 +365,8 @@ export class Paper {
     const scoring = this.parseScoring(row.scoring);
     const defaultScore = paperDefaultScore(content, subQuestionIds).score;
     const confirmations = this.parseConfirmations(row.score_conflict_confirmations);
+    const version = this.bank.getQuestionVersion(row.question_version_id);
+    if (version === undefined) throw new Error("试卷数据损坏");
     return {
       id: row.id,
       paperId: row.paper_id,
@@ -367,6 +389,7 @@ export class Paper {
         ...check,
         confirmed: confirmations.includes(check.key),
       })),
+      updates: this.bank.updatesFor(row.question_id, version.version, content.materials),
       content,
       createdAt: row.created_at,
     };

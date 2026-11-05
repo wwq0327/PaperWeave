@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { basketSelection, type BasketSelection } from "../shared/basket";
+import type { ItemUpdates } from "../shared/paper";
 import type { QuestionContent } from "../shared/question";
 import type { Database } from "./database";
 import { QuestionBank } from "./question-bank";
@@ -18,6 +19,7 @@ export interface BasketItem {
 export interface BasketItemRecord extends BasketItem {
   content: QuestionContent;
   dependencies: BasketSelection;
+  updates: ItemUpdates;
 }
 
 export type BasketAddResult =
@@ -99,6 +101,7 @@ export class Basket {
           createdAt: row.created_at,
           content: version.content,
           dependencies: basketSelection(version.content, row.primary_sub_question_id),
+          updates: this.bank.updatesFor(row.question_id, version.version, version.content.materials),
         };
       });
     });

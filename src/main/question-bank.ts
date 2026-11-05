@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { DatabaseSync } from "node:sqlite";
 import { isBlockList, type Block } from "../shared/document";
+import type { ItemUpdates } from "../shared/paper";
 import { buildSearchText, classificationProblem, isQuestionContent, isClassification, questionContentProblem, questionReadiness, type AnswerStatus, type Classification, type QuestionContent, type Readiness, type ReviewStatus, type SourcePosition, type Stage } from "../shared/question";
 import type { Database } from "./database";
 
@@ -231,6 +232,36 @@ export class QuestionBank {
   getLatestQuestionVersion(questionId: string): QuestionVersionRecord | undefined {
     const row = this.db.read((sqlite) => this.latestQuestionRow(sqlite, questionId));
     return row === undefined ? undefined : this.questionRecord(row);
+  }
+
+  /** 比给定版本更高的最新已审核版本；组卷只提示、不自动切换。 */
+  latestApprovedQuestionVersion(questionId: string, currentVersion: number): QuestionVersionRecord | undefined {
+    const row = this.db.read((sqlite) => sqlite.prepare("SELECT * FROM question_versions WHERE question_id = ? AND content_status = 'approved' AND version > ? ORDER BY version DESC LIMIT 1")
+      .get(questionId, currentVersion));
+    return row === undefined ? undefined : this.questionRecord(row);
+  }
+
+  /** 题篮与组卷提示：只提示更高的已审核题目版本；材料按引用版本比较是否有更新。 */
+  updatesFor(questionId: string, currentVersion: number, materials: { materialId: string; versionId: string }[]): ItemUpdates {
+    const latestQuestion = this.latestApprovedQuestionVersion(questionId, currentVersion);
+    const updates: ItemUpdates["materials"] = [];
+    this.db.read((sqlite) => {
+      const seen = new Set<string>();
+      const latest = sqlite.prepare("SELECT id, version FROM material_versions WHERE material_id = ? ORDER BY version DESC LIMIT 1");
+      const current = sqlite.prepare("SELECT version FROM material_versions WHERE id = ?");
+      for (const ref of materials) {
+        if (seen.has(ref.materialId)) continue;
+        seen.add(ref.materialId);
+        const next = latest.get(ref.materialId) as { id: string; version: number } | undefined;
+        const used = current.get(ref.versionId) as { version: number } | undefined;
+        if (next === undefined || used === undefined || next.version <= used.version) continue;
+        updates.push({ materialId: ref.materialId, versionId: next.id, version: next.version });
+      }
+    });
+    return {
+      question: latestQuestion === undefined ? null : { versionId: latestQuestion.id, version: latestQuestion.version },
+      materials: updates,
+    };
   }
 
   /** 分类挂在题目身份上，与版本无关；未标分类时返回 undefined。 */

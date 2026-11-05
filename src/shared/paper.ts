@@ -10,6 +10,23 @@ export type PaperScoringState = "original" | "needsAdjustment" | "adjusted" | "a
 
 export type BlankSpace = "none" | "small" | "medium" | "large";
 
+/** 组卷与题篮的版本提示：不自动切换，交由教师选择。 */
+export interface QuestionUpdate {
+  versionId: string;
+  version: number;
+}
+
+export interface MaterialUpdate {
+  materialId: string;
+  versionId: string;
+  version: number;
+}
+
+export interface ItemUpdates {
+  question: QuestionUpdate | null;
+  materials: MaterialUpdate[];
+}
+
 export interface PaperDefaultScore {
   score: number;
   conflict: string | null;
