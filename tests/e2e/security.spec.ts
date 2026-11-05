@@ -84,7 +84,7 @@ test("渲染进程无 Node、隔离与沙箱生效，跨窗口调用被拒绝", 
     });
     expect(probe.globals).toEqual(["process:undefined", "require:undefined", "module:undefined", "ipcRenderer:undefined", "Buffer:undefined", "electron:undefined"]);
     expect(probe.keys).toEqual([
-      "addBasketItemToPaper", "addExamSection", "addPaperSection", "addToBasket", "adoptMaterialVersion", "applyImports", "attachExamFile", "beginPaperFinalize", "beginPdfPair", "cancelAiDraft", "cancelPaperFinalize", "cancelPdfPair", "cancelWholePaper", "capturePaperStudent", "capturePaperTeacher", "captureStudentPdf", "checkPaperFinalize", "chooseBackupDestination", "chooseBackupSource", "chooseImage", "clearAiKey", "clearBasket", "confirmPaperFinalize", "confirmPaperScoreConflict", "correctImport", "createBackup", "createMaterial", "createPaper", "exportPdf", "extractPdfText", "finishPdfPair", "generateAiDraft", "getAiConfig", "getExam", "getExamFile", "getExamFileText", "getImage", "getPaper", "getPaperTeacherVolume", "getQuestionDetail", "getRuntimeVersions", "importExam", "listBasket", "listExamQuestions", "listExams", "listImportBatches", "listPaperFinalizations", "listPapers", "listWholePaper", "loadDraft", "loadPdfForImages", "movePaperItem", "platform", "prepareWholePaper", "questionsAffectedByMaterial", "removeBasketItem", "removePaperItem", "removePaperSection", "reopenPaperPreview", "reprintPaper", "restoreBackup", "runWholePaper", "saveAiConfig", "saveAiKey", "saveDraft", "saveIntake", "saveIntakeFigure", "saveMaterialVersion", "scanImports", "searchQuestions", "setMaterialStatus", "setPaperItemBlankSpace", "setPaperItemScore", "setPaperItemScoring", "setQuestionAnswerStatus", "setQuestionClassification", "setQuestionContentStatus", "updatePaperItemVersion",
+      "addBasketItemToPaper", "addExamSection", "addPaperSection", "addToBasket", "adoptMaterialVersion", "applyImports", "attachExamFile", "beginPaperFinalize", "beginPdfPair", "cancelAiDraft", "cancelPaperFinalize", "cancelPdfPair", "cancelWholePaper", "capturePaperStudent", "capturePaperTeacher", "captureStudentPdf", "checkPaperFinalize", "chooseBackupDestination", "chooseBackupSource", "chooseImage", "clearAiKey", "clearBasket", "confirmPaperFinalize", "confirmPaperScoreConflict", "correctImport", "createBackup", "createMaterial", "createPaper", "exportPdf", "extractPdfText", "finishPdfPair", "generateAiDraft", "getAiConfig", "getExam", "getExamFile", "getExamFileText", "getImage", "getPaper", "getPaperTeacherVolume", "getQuestionDetail", "getRuntimeVersions", "getWholePaperDetail", "importExam", "listBasket", "listExamQuestions", "listExams", "listImportBatches", "listPaperFinalizations", "listPapers", "listWholePaper", "loadDraft", "loadPdfForImages", "movePaperItem", "platform", "prepareWholePaper", "questionsAffectedByMaterial", "removeBasketItem", "removePaperItem", "removePaperSection", "reopenPaperPreview", "reprintPaper", "restoreBackup", "runWholePaper", "saveAiConfig", "saveAiKey", "saveDraft", "saveIntake", "saveIntakeFigure", "saveMaterialVersion", "scanImports", "searchQuestions", "setMaterialStatus", "setPaperItemBlankSpace", "setPaperItemScore", "setPaperItemScoring", "setQuestionAnswerStatus", "setQuestionClassification", "setQuestionContentStatus", "updatePaperItemVersion",
     ]);
 
     const denied = await app.evaluate(async ({ BrowserWindow }, preloadPath) => {
@@ -127,6 +127,7 @@ test("渲染进程无 Node、隔离与沙箱生效，跨窗口调用被拒绝", 
             await attempt(() => bridge.restoreBackup()),
             await attempt(() => bridge.runWholePaper("missing", "missing", 1, {})),
             await attempt(() => bridge.cancelWholePaper("missing")),
+            await attempt(() => bridge.getWholePaperDetail("missing", "missing")),
           ];
         })()`);
       } finally {
@@ -162,6 +163,7 @@ test("渲染进程无 Node、隔离与沙箱生效，跨窗口调用被拒绝", 
     expect(denied[26]).toContain("无权访问备份与恢复");
     expect(denied[27]).toContain("无权访问 AI 设置");
     expect(denied[28]).toContain("无权访问 AI 设置");
+    expect(denied[29]).toContain("无权访问考试资料");
   } finally {
     await closeApp(app);
     rmSync(dir, { recursive: true, force: true });

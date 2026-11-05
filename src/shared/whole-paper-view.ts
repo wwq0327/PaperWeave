@@ -9,3 +9,7 @@ export interface WholePaperTaskView {
   emptyPages: number[];
   batches: { pages: number[]; status: BatchStatus; reviewBoundaryBefore: boolean }[];
 }
+
+export interface WholePaperTaskDetail extends WholePaperTaskView {
+  results: ({ questions: import("./ai").AiQuestion[]; notes: string[] } | null)[];
+}

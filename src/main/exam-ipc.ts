@@ -8,7 +8,7 @@ import { extractPdfText } from "./pdf-text";
 import { QuestionBank } from "./question-bank";
 import { prepareWholePaperPdf } from "./whole-paper-prepare";
 import { WholePaperStore, type WholePaperTask } from "./whole-paper-store";
-import type { WholePaperTaskView } from "../shared/whole-paper-view";
+import type { WholePaperTaskDetail, WholePaperTaskView } from "../shared/whole-paper-view";
 
 const fileView = (file: OriginalFileRecord): OriginalFileView => ({
   id: file.id,
@@ -97,6 +97,13 @@ export function registerExams(db: Database, root: string, currentWindow: () => B
     const id = text(examId, "考试标识");
     store.getExam(id);
     return wholePaper.list().filter((task) => task.examId === id).map((task) => taskView(wholePaper.get(task.id)));
+  });
+  ipcMain.handle("wholePaper:detail", (event, examId: unknown, taskId: unknown): WholePaperTaskDetail => {
+    permitted(event);
+    const id = text(examId, "考试标识");
+    const task = wholePaper.get(text(taskId, "整卷任务"));
+    if (task.examId !== id) throw new Error("整卷任务不属于该考试");
+    return { ...taskView(task), results: task.state.batches.map((batch) => batch.result ?? null) };
   });
   ipcMain.handle("intake:save", (event, input: unknown) => {
     permitted(event);

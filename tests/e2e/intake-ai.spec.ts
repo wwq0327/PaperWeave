@@ -171,7 +171,7 @@ test("整卷任务准备后重开可见，且不跨考试读取或创建", async
     await expect(panel.getByRole("region", { name: "整卷任务详情" })).toContainText("原卷第 1、2 页");
     await expect(panel).toContainText("不发送模型");
     const isolated = await page.evaluate(async ({ otherId, otherSectionId }) => {
-      const bridge = (window as unknown as { paperweave: { listExams(): Promise<ExamRecord[]>; getExam(id: string): Promise<ExamDetailView>; prepareWholePaper(examId: string, sectionId: string, fileId: string): Promise<unknown>; listWholePaper(examId: string): Promise<unknown[]> } }).paperweave;
+      const bridge = (window as unknown as { paperweave: { listExams(): Promise<ExamRecord[]>; getExam(id: string): Promise<ExamDetailView>; prepareWholePaper(examId: string, sectionId: string, fileId: string): Promise<unknown>; listWholePaper(examId: string): Promise<{ id: string }[]>; getWholePaperDetail(examId: string, taskId: string): Promise<unknown> } }).paperweave;
       const exams = await bridge.listExams();
       const current = exams.find((item) => item.title === "九年级数学单元卷");
       if (!current) throw new Error("考试不存在");
@@ -180,9 +180,12 @@ test("整卷任务准备后重开可见，且不跨考试读取或创建", async
       if (!paper) throw new Error("原卷不存在");
       let rejected = false;
       try { await bridge.prepareWholePaper(otherId, otherSectionId, paper.id); } catch { rejected = true; }
-      return { otherTasks: await bridge.listWholePaper(otherId), rejected };
+      const own = await bridge.listWholePaper(current.id);
+      let detailRejected = false;
+      try { await bridge.getWholePaperDetail(otherId, own[0].id); } catch { detailRejected = true; }
+      return { otherTasks: await bridge.listWholePaper(otherId), rejected, detailRejected };
     }, { otherId: other.exam.id, otherSectionId: otherSection });
-    expect(isolated).toEqual({ otherTasks: [], rejected: true });
+    expect(isolated).toEqual({ otherTasks: [], rejected: true, detailRejected: true });
     await page.getByRole("button", { name: "返回考试原卷" }).click();
     await page.locator(".paper-card").filter({ hasText: "九年级数学单元卷" }).getByRole("button", { name: "进入录题" }).click();
     await panel.getByRole("button", { name: "查看任务 1" }).click();
@@ -207,15 +210,22 @@ test("整卷文字先确认发送，失败后重新确认并重试", async () =>
     await panel.getByRole("button", { name: "发送或重试整卷任务" }).click();
     await confirm.getByRole("button", { name: "确认发送整卷文字" }).click();
     await expect(panel).toContainText("失败待重试");
-    await app.evaluate(() => { process.env.PAPERWEAVE_AI_FAKE = "ok"; });
+    await app.evaluate(() => { process.env.PAPERWEAVE_AI_FAKE = "malicious"; });
     await panel.getByRole("button", { name: "发送或重试整卷任务" }).click();
     await confirm.getByRole("button", { name: "确认发送整卷文字" }).click();
     await expect(panel).toContainText("已处理");
     await expect(panel).toContainText("批量建题尚未接入");
+    const results = panel.getByRole("region", { name: "第 1 批识别结果" });
+    await expect(results).toContainText("<script>window.__paperweavePwned = true</script>");
+    await expect(results).toContainText("固定响应材料正文");
+    await results.getByRole("button", { name: "定位原页" }).nth(1).click();
+    await expect(page.getByAltText("原卷第 2 页")).toBeVisible();
+    expect(await page.evaluate(() => (window as unknown as { __paperweavePwned?: boolean }).__paperweavePwned)).toBeUndefined();
     await page.getByRole("button", { name: "返回考试原卷" }).click();
     await page.locator(".paper-card").filter({ hasText: "九年级数学单元卷" }).getByRole("button", { name: "进入录题" }).click();
     await panel.getByRole("button", { name: "查看任务 1" }).click();
     await expect(panel).toContainText("已处理");
+    await expect(panel.getByRole("region", { name: "第 1 批识别结果" })).toContainText("固定响应材料正文");
   } finally { await closeApp(app); rmSync(dir, { recursive: true, force: true }); }
 });
 
