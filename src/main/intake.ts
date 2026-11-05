@@ -23,32 +23,38 @@ export class Intake {
     const exam = this.exams.getExam(examId);
     if (!exam.sections.some((section) => section.id === sectionId)) throw new Error("考试分部不存在");
     const submit = value.submit === true;
+    const questionId = value.questionId === undefined ? undefined : text(value.questionId, "题目标识");
+    if (questionId !== undefined && this.bank.getLatestQuestionVersion(questionId) === undefined) throw new Error("题目不存在");
     const contentProblem = questionContentProblem(value.content);
     if (contentProblem !== null) throw new Error(`题目结构无效：${contentProblem}`);
     const duplicates = duplicateSubLabels((value.content as QuestionContent).subQuestions.map((sub) => sub.originalLabel));
     if (duplicates.length > 0) throw new Error(`小问号重复：${duplicates.join("、")}；请修改后再保存`);
-    if (value.questionId === undefined) {
+    if (questionId === undefined) {
       const classificationIssue = value.classification === undefined ? null : classificationProblem(value.classification);
       if (classificationIssue !== null) throw new Error(classificationIssue);
-      const duplicate = this.exams.findDuplicate(examId, sectionId, (value.content as QuestionContent).source.originalNumber);
-      if (duplicate !== undefined) {
-        return {
-          saved: false,
-          duplicate: {
-            questionId: duplicate.questionId,
-            versionId: duplicate.versionId,
-            version: duplicate.version,
-            contentStatus: duplicate.contentStatus,
-            answerStatus: duplicate.answerStatus,
-            preview: duplicate.preview,
-            source: duplicate.source,
-          },
-        };
+    }
+    const originalNumber = (value.content as QuestionContent).source.originalNumber;
+    const duplicate = this.exams.findDuplicate(examId, sectionId, originalNumber, questionId);
+    if (duplicate !== undefined) {
+      if (questionId !== undefined) {
+        const sectionTitle = exam.sections.find((section) => section.id === sectionId)?.title ?? "该分部";
+        throw new Error(`原题号「${originalNumber.trim()}」已被${sectionTitle}第 ${duplicate.source.pdfPage} 页的题目占用（第 ${duplicate.version} 版）；请修改原题号后再保存。`);
       }
+      return {
+        saved: false,
+        duplicate: {
+          questionId: duplicate.questionId,
+          versionId: duplicate.versionId,
+          version: duplicate.version,
+          contentStatus: duplicate.contentStatus,
+          answerStatus: duplicate.answerStatus,
+          preview: duplicate.preview,
+          source: duplicate.source,
+        },
+      };
     }
     let record;
-    if (value.questionId !== undefined) {
-      const questionId = text(value.questionId, "题目标识");
+    if (questionId !== undefined) {
       record = this.bank.saveQuestionVersionWithClassification(questionId, value.content, value.classification);
     } else {
       record = this.bank.createQuestion(value.content, value.classification);
