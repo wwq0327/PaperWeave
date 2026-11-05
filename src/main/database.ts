@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { createMigrationSnapshot } from "./migration-snapshot";
 
-const DATA_VERSION = 7;
+const DATA_VERSION = 8;
 
 /** 主进程持有的唯一数据库写入口；不向渲染进程暴露 SQL。 */
 export class Database {
@@ -231,6 +231,30 @@ export class Database {
           ) STRICT;
           CREATE INDEX import_records_source ON import_records(kind, source_key);
           PRAGMA user_version = 7
+        `);
+      }
+      if (version < 8) {
+        this.db.exec(`
+          CREATE TABLE whole_paper_intakes (
+            id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL,
+            batch_index INTEGER NOT NULL,
+            question_index INTEGER NOT NULL,
+            original_number TEXT NOT NULL DEFAULT '',
+            page INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL,
+            message TEXT NOT NULL DEFAULT '',
+            question_id TEXT,
+            version_id TEXT,
+            content TEXT NOT NULL DEFAULT '',
+            classification TEXT NOT NULL DEFAULT '',
+            material_ids TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE (task_id, batch_index, question_index)
+          ) STRICT;
+          CREATE INDEX whole_paper_intakes_task ON whole_paper_intakes(task_id);
+          PRAGMA user_version = 8
         `);
       }
       this.db.exec("COMMIT");
