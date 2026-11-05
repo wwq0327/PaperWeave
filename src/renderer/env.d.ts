@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import type { AiDraftResult, AiInput } from "../shared/ai";
-import type { WholePaperTaskView } from "../shared/whole-paper-view";
+import type { WholePaperTaskDetail, WholePaperTaskView } from "../shared/whole-paper-view";
 import type { AiConfig } from "../shared/ai-config";
 import type { BackupSummary } from "../shared/backup";
 import type { BasketSelection } from "../shared/basket";
@@ -97,6 +97,7 @@ declare global {
       runWholePaper(examId: string, taskId: string, revision: number, config: { baseUrl: string; textModel: string }): Promise<void>;
       cancelWholePaper(taskId: string): Promise<boolean>;
       prepareWholePaper(examId: string, sectionId: string, fileId: string): Promise<WholePaperTaskView>;
+      getWholePaperDetail(examId: string, taskId: string): Promise<WholePaperTaskDetail>;
       listWholePaper(examId: string): Promise<WholePaperTaskView[]>;
       getExamFileText(fileId: string): Promise<{ pages: { page: number; text: string }[]; hasText: boolean }>;
       listExamQuestions(examId: string): Promise<ExamQuestionSummary[]>;
