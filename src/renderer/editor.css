@@ -149,6 +149,7 @@ button.primary { background: #225c3d; color: #fff; border-color: #225c3d; }
 .intake-blocks { border: 1px solid #dbe4db; border-radius: 8px; padding: 10px; margin: 10px 0; }
 .intake-blocks legend { font-weight: 600; padding: 0 6px; }
 .intake-sub { border: 1px solid #dbe4db; border-radius: 8px; padding: 12px; margin: 12px 0; }
+.intake-order-warning { border: 1px solid #d9a441; border-radius: 8px; padding: 8px 12px; margin: 10px 0; background: #fff8e8; }
 .intake-slots { border: 1px dashed #dbe4db; border-radius: 8px; padding: 10px; margin: 10px 0; }
 .intake-slot { border-top: 1px solid #edf2ed; padding-top: 8px; margin-top: 8px; }
 .intake-slot:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
