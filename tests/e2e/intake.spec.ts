@@ -213,8 +213,12 @@ test("粗体与上下标题干保存重开后保留样式，组卷 PDF 仍按样
     await stemGroup.getByLabel("题干 接续上一段 3", { exact: true }).check();
 
     await page.getByLabel("小问 1 题干 文字 1", { exact: true }).fill("求值。");
-    await page.getByLabel("选项（每行一个）").fill("选项甲\n选项乙");
-    await page.getByLabel("小问 1 选项样式 1", { exact: true }).selectOption("下划线");
+    const firstSub = page.getByRole("group", { name: "小问 1", exact: true });
+    await firstSub.getByRole("button", { name: "添加选项" }).click();
+    await firstSub.getByRole("button", { name: "添加选项" }).click();
+    await page.getByLabel("小问 1 选项 A 文字 1", { exact: true }).fill("选项甲");
+    await page.getByLabel("小问 1 选项 B 文字 1", { exact: true }).fill("选项乙");
+    await page.getByLabel("小问 1 选项 A 文字样式 1", { exact: true }).selectOption("下划线");
     await page.getByRole("group", { name: "小问 1 答案" }).getByRole("button", { name: "添加文字" }).click();
     await page.getByLabel("小问 1 答案 文字 1", { exact: true }).fill("答案一");
     await page.getByRole("button", { name: "提交待核" }).click();
@@ -238,7 +242,7 @@ test("粗体与上下标题干保存重开后保留样式，组卷 PDF 仍按样
     await expect(page.getByLabel("题干 文字样式 3", { exact: true })).toHaveValue("下标");
     await expect(page.getByLabel("题干 接续上一段 3", { exact: true })).toBeChecked();
     await expect(page.getByLabel("题干 文字 3", { exact: true })).toHaveValue(" 与 y");
-    await expect(page.getByLabel("小问 1 选项样式 1", { exact: true })).toHaveValue("下划线");
+    await expect(page.getByLabel("小问 1 选项 A 文字样式 1", { exact: true })).toHaveValue("下划线");
 
     await page.getByRole("button", { name: "返回考试原卷" }).click();
     await page.getByRole("button", { name: "返回录题草稿" }).click();
@@ -339,5 +343,110 @@ test("移动小问后依赖顺序异常时提示并拒绝保存，移回后通�
   } finally {
     await closeApp(app);
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("材料与选项含公式和裁图，保存重开保留并在双卷中渲染", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-rich-"));
+  const outDir = mkdtempSync(path.join(tmpdir(), "paperweave-rich-out-"));
+  let app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`] });
+  try {
+    let page = await app.firstWindow();
+    await importExam(page, app);
+    await app.evaluate(({ dialog, shell }, target) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] });
+      shell.openPath = async () => "";
+    }, outDir);
+
+    await page.getByLabel("原卷页码", { exact: true }).fill("2");
+    await page.getByLabel("原题号").fill("6");
+    await page.getByLabel("知识点（逗号分隔）").fill("阅读理解");
+    await page.getByLabel("题干 文字 1", { exact: true }).fill("合成题：材料与选项富内容。");
+    await page.getByLabel("小问 1 题干 文字 1", { exact: true }).fill("阅读材料后作答。");
+
+    const firstSub = page.getByRole("group", { name: "小问 1", exact: true });
+    await firstSub.getByRole("button", { name: "添加选项" }).click();
+    const optionA = page.getByRole("group", { name: "小问 1 选项 A" });
+    await optionA.getByLabel("小问 1 选项 A 文字 1", { exact: true }).fill("选项含 ");
+    await optionA.getByRole("button", { name: "添加公式" }).click();
+    await optionA.getByLabel("小问 1 选项 A 公式 2", { exact: true }).fill("x^2");
+    await page.getByRole("group", { name: "小问 1 答案" }).getByRole("button", { name: "添加文字" }).click();
+    await page.getByLabel("小问 1 答案 文字 1", { exact: true }).fill("参考答案：甲");
+
+    await page.getByText("新建材料", { exact: true }).click();
+    await page.getByLabel("材料标题").fill("合成材料甲");
+    await page.getByLabel("材料出处").fill("自制样题");
+    const materialEditor = page.getByRole("group", { name: "材料正文" });
+    await materialEditor.getByLabel("材料正文 文字 1", { exact: true }).fill("材料文字。");
+    await materialEditor.getByRole("button", { name: "添加公式" }).click();
+    await materialEditor.getByLabel("材料正文 公式 2", { exact: true }).fill("a+b");
+    await materialEditor.getByRole("button", { name: "插入裁图" }).click();
+    await dragOnPage(page);
+    await expect(page.getByText("裁图已插入当前编辑目标。", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "建立材料草稿" }).click();
+    await expect(page.getByText("材料草稿已建立，并关联到本组小问。", { exact: true })).toBeVisible();
+
+    await page.getByRole("region", { name: "保存" }).getByRole("button", { name: "提交待核" }).click();
+    await expect(page.getByText("已提交待核（版本 1）。", { exact: true })).toBeVisible();
+
+    // 重开应用：选项公式与材料内容从题库回填。
+    await closeApp(app);
+    app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`] });
+    page = await app.firstWindow();
+    await app.evaluate(({ dialog, shell }, target) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] });
+      shell.openPath = async () => "";
+    }, outDir);
+    await page.getByRole("button", { name: "考试原卷" }).click();
+    await page.getByRole("button", { name: "进入录题" }).click();
+    await page.locator("section[aria-label='本卷题目']").getByRole("button", { name: "编辑" }).click();
+    await expect(page.getByText("已打开题目（版本 1）。", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("小问 1 选项 A 公式 2", { exact: true })).toHaveValue("x^2");
+    await expect(page.locator(".paper-card", { hasText: "合成材料甲" })).toBeVisible();
+
+    await page.getByRole("button", { name: "返回考试原卷" }).click();
+    await page.getByRole("button", { name: "返回录题草稿" }).click();
+    await page.getByRole("button", { name: "题目审核" }).click();
+    const card = page.locator(".paper-card", { hasText: "合成题：材料与选项富内容。" });
+    await card.getByRole("button", { name: "查看并审核" }).click();
+    const detail = page.getByRole("region", { name: "题目审核详情" });
+    await expect(detail.locator(".review-blocks .katex").first()).toBeVisible();
+    await expect(detail.locator(".review-blocks img").first()).toBeVisible();
+    await detail.getByRole("button", { name: "提交材料待核" }).click();
+    await expect(page.getByText("材料已提交待核。", { exact: true })).toBeVisible();
+    await detail.getByRole("button", { name: "通过材料审核" }).click();
+    await expect(page.getByText("材料已通过审核。", { exact: true })).toBeVisible();
+    await detail.getByRole("button", { name: "通过内容审核" }).click();
+    await expect(page.getByText("内容已通过审核。", { exact: true })).toBeVisible();
+    await detail.getByRole("button", { name: "通过答案审核" }).click();
+    await expect(page.getByText("答案与评分已通过审核。", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "去题库与组卷" }).click();
+    const result = page.locator(".paper-card", { hasText: "合成题：材料与选项富内容。" });
+    await result.getByRole("button", { name: "整题入篮" }).click();
+    await page.getByLabel("标题", { exact: true }).fill("富内容卷");
+    await page.getByRole("button", { name: "创建试卷" }).click();
+    await page.getByRole("button", { name: "添加小节" }).click();
+    await page.getByRole("region", { name: "题篮" }).getByRole("button", { name: "加入试卷" }).click();
+    await page.getByRole("button", { name: "检查定稿" }).click();
+    await expect(page.getByText("定稿检查通过。", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "生成学生卷与教师答案卷" }).click();
+    const confirm = page.getByRole("dialog", { name: "确认定稿" });
+    await expect(confirm).toBeVisible({ timeout: 30000 });
+    await confirm.getByRole("button", { name: "确认保存为定稿" }).click();
+    await expect(page.getByText(/双卷已保存为定稿/)).toBeVisible({ timeout: 30000 });
+
+    const directories = readdirSync(outDir).filter((name) => name.startsWith("拾题成卷-样张-"));
+    expect(directories).toHaveLength(1);
+    const studentText = (await pdfTextItems(new Uint8Array(readFileSync(path.join(outDir, directories[0], "学生卷.pdf"))))).map((item) => item.text).join("").normalize("NFKC");
+    const teacherText = (await pdfTextItems(new Uint8Array(readFileSync(path.join(outDir, directories[0], "教师答案卷.pdf"))))).map((item) => item.text).join("").normalize("NFKC");
+    expect(studentText).toContain("材料文字。");
+    expect(studentText).toContain("选项含");
+    expect(studentText).not.toContain("参考答案");
+    expect(teacherText).toContain("参考答案:甲");
+  } finally {
+    await closeApp(app);
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(outDir, { recursive: true, force: true });
   }
 });
