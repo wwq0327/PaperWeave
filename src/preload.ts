@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld("paperweave", {
   saveAiConfig: (config: unknown) => ipcRenderer.invoke("ai:saveConfig", config),
   saveAiKey: (key: string) => ipcRenderer.invoke("ai:saveKey", key),
   clearAiKey: () => ipcRenderer.invoke("ai:clearKey"),
+  runWholePaper: (examId: string, taskId: string, revision: number, config: unknown) => ipcRenderer.invoke("ai:runWholePaper", examId, taskId, revision, config),
+  cancelWholePaper: (taskId: string) => ipcRenderer.invoke("ai:cancelWholePaper", taskId),
   generateAiDraft: (requestId: string, input: unknown) => ipcRenderer.invoke("ai:draft", requestId, input),
   cancelAiDraft: (requestId: string) => ipcRenderer.invoke("ai:cancel", requestId),
   extractPdfText: () => ipcRenderer.invoke("ai:extractPdf"),

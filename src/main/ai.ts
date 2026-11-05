@@ -9,6 +9,9 @@ import { clearApiKey, keyExists, loadApiKey, saveApiKey, type KeyStore } from ".
 import { requestAiDraft } from "./ai-provider";
 import { extractPdfText } from "./pdf-text";
 import { QuestionBank } from "./question-bank";
+import { ExamStore } from "./exams";
+import { WholePaperStore } from "./whole-paper-store";
+import { WholePaperRunner } from "../shared/whole-paper-runner";
 
 const configKey = "ai.config";
 const maxPdfBytes = 50 * 1024 * 1024;
@@ -28,6 +31,9 @@ export function registerAi(db: Database, root: string, currentWindow: () => Brow
   };
   const publicConfig = () => ({ ...parseAiConfig(db.getSetting(configKey)), hasKey: keyExists(root) });
   const inFlight = new Map<string, AbortController>();
+  const wholeInFlight = new Map<string, AbortController>();
+  const wholeTasks = new WholePaperStore(db);
+  const exams = new ExamStore(db, root);
   const choosePdf = async () => {
     const win = currentWindow();
     if (!win) throw new Error("窗口已关闭");
@@ -102,6 +108,49 @@ export function registerAi(db: Database, root: string, currentWindow: () => Brow
     } finally {
       if (inFlight.get(requestId) === controller) inFlight.delete(requestId);
     }
+  });
+
+  ipcMain.handle("ai:runWholePaper", async (event, examId: unknown, taskId: unknown, revision: unknown, confirmedConfig: unknown) => {
+    permitted(event);
+    if (typeof examId !== "string" || typeof taskId !== "string" || !Number.isSafeInteger(revision)) throw new Error("整卷任务参数无效");
+    if (wholeInFlight.has(taskId)) throw new Error("整卷任务正在执行");
+    let task = wholeTasks.get(taskId);
+    if (task.examId !== examId) throw new Error("整卷任务不属于该考试");
+    if (task.revision !== revision) throw new Error("任务已变化，请重新确认发送范围");
+    const config = parseAiConfig(db.getSetting(configKey));
+    if (typeof confirmedConfig !== "object" || confirmedConfig === null || (confirmedConfig as Record<string, unknown>).baseUrl !== config.baseUrl || (confirmedConfig as Record<string, unknown>).textModel !== config.textModel) throw new Error("模型配置已变化，请重新确认");
+    const exam = exams.getExam(examId);
+    const section = exam.sections.find((item) => item.id === task.sectionId);
+    if (!section) throw new Error("考试分部不存在");
+    const context = { stage: exam.exam.stage, subject: section.subject || exam.exam.subject, grade: exam.exam.grade, questionType: "" };
+    const tagCandidates = bank.knowledgePointCandidates(context.stage, context.subject, AI_LIMITS.tagCount);
+    const scenario = process.env.PAPERWEAVE_AI_FAKE as FakeScenario | undefined;
+    const fake = !app.isPackaged && scenario && fakeScenarios.has(scenario) ? scenario : undefined;
+    const apiKey = fake ? "" : loadApiKey(root, store);
+    if (!fake && !apiKey) throw new Error("尚未配置模型密钥，请先在 AI 设置中保存");
+    const controller = new AbortController();
+    wholeInFlight.set(taskId, controller);
+    try {
+      const runner = new WholePaperRunner(async (state) => { task = wholeTasks.save(task.id, task.revision, state); }, async (batch, signal) => {
+        const checked = normalizeAiInput({ mode: "text", ...batch, context });
+        if (!checked.ok) throw new Error(checked.error);
+        const result = fake ? await fakeAiDraft(fake, checked.input, signal) : await requestAiDraft(config, apiKey as string, checked.input, signal, undefined, tagCandidates);
+        if (result.questions.some((question) => !batch.pages.includes(question.page))) throw new Error("模型返回页码不属于本批");
+        return result;
+      });
+      await runner.run(task.state, controller.signal, true);
+    } finally {
+      if (wholeInFlight.get(taskId) === controller) wholeInFlight.delete(taskId);
+    }
+  });
+
+  ipcMain.handle("ai:cancelWholePaper", (event, taskId: unknown) => {
+    permitted(event);
+    if (typeof taskId !== "string") return false;
+    const controller = wholeInFlight.get(taskId);
+    if (!controller) return false;
+    controller.abort();
+    return true;
   });
 
   ipcMain.handle("ai:cancel", (event, requestId: unknown) => {

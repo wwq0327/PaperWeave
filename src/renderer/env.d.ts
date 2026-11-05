@@ -94,6 +94,8 @@ declare global {
       attachExamFile(examId: string, role: ExamFileRole): Promise<{ status: "canceled" } | ({ status: "attached" } & ExamAttachment)>;
       addExamSection(examId: string, title: string, subject?: string): Promise<ExamSectionRecord>;
       getExamFile(fileId: string): Promise<{ file: OriginalFileView; data: Uint8Array }>;
+      runWholePaper(examId: string, taskId: string, revision: number, config: { baseUrl: string; textModel: string }): Promise<void>;
+      cancelWholePaper(taskId: string): Promise<boolean>;
       prepareWholePaper(examId: string, sectionId: string, fileId: string): Promise<WholePaperTaskView>;
       listWholePaper(examId: string): Promise<WholePaperTaskView[]>;
       getExamFileText(fileId: string): Promise<{ pages: { page: number; text: string }[]; hasText: boolean }>;
