@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
-import { blankSubQuestion, buildContent, contentToForm, dependencyOrderProblems, duplicateSubLabels, moveSubQuestion, newIntakeForm } from "../../../src/shared/intake";
+import { isBlockList } from "../../../src/shared/document";
+import { blankOption, blankSubQuestion, buildContent, buildContentBlocks, contentToForm, dependencyOrderProblems, duplicateSubLabels, moveSubQuestion, newIntakeForm } from "../../../src/shared/intake";
 import { hasContent, isQuestionContent, type Classification, type QuestionContent } from "../../../src/shared/question";
 
 const classification: Classification = {
@@ -23,7 +24,7 @@ function form() {
   const sub = value.subQuestions[0];
   sub.originalLabel = "(1)";
   sub.prompt = [{ kind: "text", text: "求 $x$ 的值。" }];
-  sub.options = "选项甲\n选项乙";
+  sub.options = [blankOption("选项甲"), blankOption("选项乙")];
   sub.answer = [{ kind: "text", text: "4" }];
   sub.explanation = [{ kind: "text", text: "移项后开方。" }];
   sub.originalScore = "5";
@@ -151,7 +152,10 @@ test("回填含样式题目时保留文字样式、段落分组与选项样式",
     { kind: "text", text: " 表示平方。", continuesPrevious: true },
   ]);
   expect(value.subQuestions[0].prompt).toEqual([{ kind: "text", text: "选择正确项。", style: "斜体" }]);
-  expect(value.subQuestions[0].optionStyles).toEqual(["下划线", "普通"]);
+  expect(value.subQuestions[0].options.map((option) => option.blocks)).toEqual([
+    [{ kind: "text", text: "甲", style: "下划线" }],
+    [{ kind: "text", text: "乙" }],
+  ]);
   const again = buildContent(value);
   expect(again.problems).toEqual([]);
   expect(again.content?.stem).toEqual(styled.stem);
@@ -429,4 +433,98 @@ test("作答位置标签为空、标识重复、互换不互指、答案或评�
   danglingScoring.subQuestions[0].slots = [{ id: "slot-a", label: "第一空", kind: "text", required: true, interchangeableWith: [] }];
   danglingScoring.subQuestions[0].scoring = [{ description: "两空正确", score: "5", slotIds: ["slot-b"] }];
   expect(buildContent(danglingScoring).problems.join("；")).toContain("评分点引用了不存在的作答位置");
+});
+
+test("选项含公式、图片与表格时回填并保存保留内容", () => {
+  const content: QuestionContent = {
+    stem: [{ type: "paragraph", runs: [{ type: "text", text: "阅读并选择。", style: "普通" }] }],
+    subQuestions: [{
+      id: "sub-a",
+      originalLabel: "(1)",
+      prompt: [{ type: "paragraph", runs: [{ type: "text", text: "以下正确的一项是", style: "普通" }] }],
+      explanation: [],
+      options: [
+        { label: "A", content: [
+          { type: "paragraph", runs: [{ type: "text", text: "观察 ", style: "普通" }, { type: "formula", latex: "x^2" }] },
+          { type: "image", id: "a".repeat(64), alt: "选项图" },
+        ] },
+        { label: "B", content: [
+          { type: "formula", latex: "\\frac{1}{2}" },
+          { type: "table", rows: [["甲", "乙"]] },
+        ] },
+        { label: "C", content: [{ type: "paragraph", runs: [{ type: "text", text: "普通文字", style: "斜体" }] }] },
+      ],
+      slots: [],
+      answers: [],
+      scoring: [],
+      originalScore: null,
+      materialIds: [],
+      dependsOn: [],
+    }],
+    materials: [],
+    selection: { mode: "all" },
+    source: { section: "全卷", pdfPage: 1, originalNumber: "1" },
+  };
+  const roundtrip = contentToForm(content, classification);
+  expect(roundtrip.problem).toBeUndefined();
+  const again = buildContent(roundtrip.form!);
+  expect(again.problems).toEqual([]);
+  expect(again.content?.subQuestions[0].options).toEqual(content.subQuestions[0].options);
+});
+
+test("选项混合文字样式回填被拒，保存时也拒绝并提示裁图", () => {
+  const mixed: QuestionContent = {
+    stem: [{ type: "paragraph", runs: [{ type: "text", text: "题干", style: "普通" }] }],
+    subQuestions: [{
+      id: "sub-a",
+      originalLabel: "(1)",
+      prompt: [],
+      explanation: [],
+      options: [{ label: "A", content: [{ type: "paragraph", runs: [
+        { type: "text", text: "粗体", style: "粗体" },
+        { type: "text", text: "普通", style: "普通" },
+      ] }] }],
+      slots: [],
+      answers: [],
+      scoring: [],
+      originalScore: null,
+      materialIds: [],
+      dependsOn: [],
+    }],
+    materials: [],
+    selection: { mode: "all" },
+    source: { section: "全卷", pdfPage: 1, originalNumber: "1" },
+  };
+  const problem = contentToForm(mixed, classification).problem ?? "";
+  expect(problem).toContain("混合文字样式");
+  expect(problem).toContain("裁图");
+
+  const value = form();
+  value.subQuestions[0].options = [{ key: "option-a", blocks: [
+    { kind: "text", text: "粗体", style: "粗体" },
+    { kind: "text", text: "普通", style: "普通", continuesPrevious: true },
+  ] }];
+  expect(buildContent(value).problems.join("；")).toContain("选项 A含混合文字样式");
+});
+
+test("材料正文块转换保留公式、图片与表格，旧纯文本转为段落", () => {
+  const imageId = "b".repeat(64);
+  const built = buildContentBlocks([
+    { kind: "text", text: "材料文字" },
+    { kind: "formula", latex: "a+b" },
+    { kind: "image", id: imageId, alt: "材料图" },
+    { kind: "table", rows: [["一", "二"]] },
+  ], "材料正文");
+  expect(built.problems).toEqual([]);
+  expect(isBlockList(built.blocks)).toBe(true);
+  expect(built.blocks).toEqual([
+    { type: "paragraph", runs: [{ type: "text", text: "材料文字", style: "普通" }] },
+    { type: "formula", latex: "a+b" },
+    { type: "image", id: imageId, alt: "材料图" },
+    { type: "table", rows: [["一", "二"]] },
+  ]);
+
+  const plain = buildContentBlocks([{ kind: "text", text: "旧材料正文" }], "材料正文");
+  expect(plain.blocks).toEqual([{ type: "paragraph", runs: [{ type: "text", text: "旧材料正文", style: "普通" }] }]);
+  expect(buildContentBlocks([{ kind: "reference", refKind: "material", targetId: "material-a", fallback: "材料甲" }], "材料正文").problems).toContain("材料正文不支持引用");
 });

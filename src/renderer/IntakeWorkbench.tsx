@@ -4,8 +4,7 @@ import { AI_LIMITS, base64Bytes, isAiDraft, normalizeAiInput, type AiDraft, type
 import type { AiConfig } from "../shared/ai-config";
 import { aiQuestionToIntake, type AiIntakeResult } from "../shared/ai-intake";
 import type { ExamDetailView, ExamQuestionSummary } from "../shared/exam";
-import { TEXT_STYLES, type Block, type TextStyle } from "../shared/document";
-import { blankSubQuestion, buildContent, contentToForm, dependencyOrderProblems, moveSubQuestion, newIntakeForm, type IntakeBlock, type IntakeDuplicateSummary, type IntakeForm, type IntakeMaterial, type IntakeReferenceOption, type IntakeSlot, type IntakeSubQuestion } from "../shared/intake";
+import { blankBlock, blankOption, blankSubQuestion, buildContent, buildContentBlocks, contentToForm, dependencyOrderProblems, moveSubQuestion, newIntakeForm, type IntakeBlock, type IntakeDuplicateSummary, type IntakeForm, type IntakeMaterial, type IntakeReferenceOption, type IntakeSlot, type IntakeSubQuestion } from "../shared/intake";
 import type { Classification, QuestionBlock, QuestionContent, ReviewStatus, Stage } from "../shared/question";
 import BlockListEditor from "./BlockListEditor";
 import ExamPdfPanel from "./ExamPdfPanel";
@@ -16,7 +15,7 @@ const materialLabels: Record<ReviewStatus, string> = { draft: "草稿", pending:
 const answerLabels: Record<"missing" | "pending" | "approved", string> = { missing: "待补", pending: "待核", approved: "已审核" };
 const subFields = ["prompt", "answer", "explanation"] as const;
 type SubField = typeof subFields[number];
-type CropTarget = { field: "stem" } | { field: SubField; subKey: string } | { field: "ai" };
+type CropTarget = { field: "stem" } | { field: SubField; subKey: string } | { field: "option"; subKey: string; optionKey: string } | { field: "material" } | { field: "ai" };
 
 const errorText = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
@@ -59,7 +58,7 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
   const [page, setPage] = useState(1);
   const [cropTarget, setCropTarget] = useState<CropTarget | null>(null);
   const [knowledgeText, setKnowledgeText] = useState("");
-  const [materialForm, setMaterialForm] = useState({ title: "", content: "", source: "" });
+  const [materialForm, setMaterialForm] = useState<{ title: string; content: IntakeBlock[]; source: string }>({ title: "", content: [blankBlock()], source: "" });
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [duplicate, setDuplicate] = useState<{ summary: IntakeDuplicateSummary; submit: boolean } | null>(null);
@@ -175,17 +174,23 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
   const setSubBlocks = (key: string, field: SubField, blocks: IntakeBlock[]) => {
     setForm((current) => current && ({ ...current, subQuestions: current.subQuestions.map((sub) => sub.key === key ? { ...sub, [field]: blocks } : sub) }));
   };
-  const setOptionStyle = (key: string, optionIndex: number, style: TextStyle) => {
+  const setOptionBlocks = (key: string, optionKey: string, blocks: IntakeBlock[]) => {
     setForm((current) => current && ({
       ...current,
-      subQuestions: current.subQuestions.map((sub) => {
-        if (sub.key !== key) return sub;
-        const optionStyles = [...(sub.optionStyles ?? [])];
-        while (optionStyles.length <= optionIndex) optionStyles.push("普通");
-        optionStyles[optionIndex] = style;
-        return { ...sub, optionStyles };
-      }),
+      subQuestions: current.subQuestions.map((sub) => sub.key === key
+        ? { ...sub, options: sub.options.map((option) => option.key === optionKey ? { ...option, blocks } : option) }
+        : sub),
     }));
+  };
+  const addOption = (key: string) => {
+    const sub = form?.subQuestions.find((entry) => entry.key === key);
+    if (!sub) return;
+    updateSub(key, { options: [...sub.options, blankOption()] });
+  };
+  const removeOption = (key: string, optionKey: string) => {
+    const sub = form?.subQuestions.find((entry) => entry.key === key);
+    if (!sub) return;
+    updateSub(key, { options: sub.options.filter((option) => option.key !== optionKey) });
   };
   const setSlotAnswer = (key: string, slotId: string, blocks: IntakeBlock[]) => {
     setForm((current) => current && ({
@@ -323,14 +328,25 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
     try {
       const saved = await window.paperweave.saveIntakeFigure(dataUrl);
       const block: IntakeBlock = { kind: "image", id: saved.id, alt: `第 ${page} 页裁图` };
-      setForm((current) => {
-        if (!current) return current;
-        if (target.field === "stem") return { ...current, stem: [...current.stem, block] };
-        return {
+      if (target.field === "material") {
+        setMaterialForm((current) => ({ ...current, content: [...current.content, block] }));
+      } else if (target.field === "option") {
+        setForm((current) => current && ({
           ...current,
-          subQuestions: current.subQuestions.map((sub) => sub.key === target.subKey ? { ...sub, [target.field]: [...sub[target.field], block] } : sub),
-        };
-      });
+          subQuestions: current.subQuestions.map((sub) => sub.key === target.subKey
+            ? { ...sub, options: sub.options.map((option) => option.key === target.optionKey ? { ...option, blocks: [...option.blocks, block] } : option) }
+            : sub),
+        }));
+      } else {
+        setForm((current) => {
+          if (!current) return current;
+          if (target.field === "stem") return { ...current, stem: [...current.stem, block] };
+          return {
+            ...current,
+            subQuestions: current.subQuestions.map((sub) => sub.key === target.subKey ? { ...sub, [target.field]: [...sub[target.field], block] } : sub),
+          };
+        });
+      }
       setCropTarget(null);
       setMessage("裁图已插入当前编辑目标。");
     } catch (e) {
@@ -340,17 +356,19 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
 
   async function addMaterial() {
     if (!form) return;
-    if (!materialForm.title.trim() || !materialForm.content.trim()) { setError("材料标题与内容都不能为空。"); return; }
+    if (!materialForm.title.trim()) { setError("材料标题不能为空。"); return; }
+    const built = buildContentBlocks(materialForm.content, "材料正文");
+    if (built.problems.length > 0) { setError(built.problems.join("；")); return; }
+    if (built.blocks.length === 0) { setError("材料内容不能为空。"); return; }
     setBusy(true); setError("");
     try {
-      const content: Block[] = [{ type: "paragraph", runs: [{ type: "text", text: materialForm.content, style: "普通" }] }];
-      const created = await window.paperweave.createMaterial({ title: materialForm.title.trim(), content, source: materialForm.source.trim() });
+      const created = await window.paperweave.createMaterial({ title: materialForm.title.trim(), content: built.blocks, source: materialForm.source.trim() });
       setForm((current) => current && ({
         ...current,
         materials: [...current.materials, { materialId: created.materialId, versionId: created.id, title: created.title, status: created.status }],
         subQuestions: current.subQuestions.map((sub) => ({ ...sub, materialIds: [...new Set([...sub.materialIds, created.materialId])] })),
       }));
-      setMaterialForm({ title: "", content: "", source: "" });
+      setMaterialForm({ title: "", content: [blankBlock()], source: "" });
       setMessage("材料草稿已建立，并关联到本组小问。");
     } catch (e) {
       setError(`建立材料失败：${errorText(e)}`);
@@ -433,8 +451,13 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
     if (!cropTarget || !form) return null;
     if (cropTarget.field === "ai") return "AI 拆题选区";
     if (cropTarget.field === "stem") return "题干";
+    if (cropTarget.field === "material") return "材料正文";
     const sub = form.subQuestions.find((entry) => entry.key === cropTarget.subKey);
     const label = sub?.originalLabel || "小问";
+    if (cropTarget.field === "option") {
+      const index = sub?.options.findIndex((option) => option.key === cropTarget.optionKey) ?? -1;
+      return `${label} 选项 ${index >= 0 ? String.fromCharCode(65 + index) : "?"}`;
+    }
     return `${label} ${cropTarget.field === "prompt" ? "题干" : cropTarget.field === "answer" ? "答案" : "解析"}`;
   })();
   const section = exam?.sections.find((entry) => entry.id === sectionId);
@@ -442,7 +465,7 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
   function formHasContent(current: IntakeForm): boolean {
     const blocksHaveText = (blocks: IntakeBlock[]) => blocks.some((block) => block.kind === "text" ? block.text.trim() !== "" : block.kind === "formula" ? block.latex.trim() !== "" : block.kind === "table" ? block.rows.some((row) => row.some((cell) => cell.trim() !== "")) : true);
     return current.stem.some((block) => block.kind !== "image" ? blocksHaveText([block]) : true)
-      || current.subQuestions.some((sub) => blocksHaveText(sub.prompt) || blocksHaveText(sub.answer) || blocksHaveText(sub.explanation) || sub.options.trim() !== "" || sub.originalScore.trim() !== "")
+      || current.subQuestions.some((sub) => blocksHaveText(sub.prompt) || blocksHaveText(sub.answer) || blocksHaveText(sub.explanation) || sub.options.some((option) => blocksHaveText(option.blocks)) || sub.originalScore.trim() !== "")
       || current.materials.length > 0
       || current.source.originalNumber.trim() !== "";
   }
@@ -546,7 +569,7 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
     if (!form) return;
     setBusy(true); setAiError(""); setAiMaterialMessage("");
     try {
-      const content: Block[] = [{ type: "paragraph", runs: [{ type: "text", text: suggestion.content, style: "普通" }] }];
+      const content = buildContentBlocks([{ kind: "text", text: suggestion.content }], "材料正文").blocks;
       const created = await window.paperweave.createMaterial({ title: suggestion.title, content, source: suggestion.source });
       setForm((current) => current && ({
         ...current,
@@ -734,12 +757,22 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
                 <button onClick={() => removeSub(sub.key)} disabled={busy || form.subQuestions.length <= 1}>删除小问</button>
               </div>
               <BlockListEditor label={`小问 ${index + 1} 题干`} blocks={sub.prompt} disabled={busy} referenceOptions={referenceOptionsFor(sub.key)} onChange={(blocks) => setSubBlocks(sub.key, "prompt", blocks)} onCrop={() => requestCrop({ field: "prompt", subKey: sub.key })} />
-              <label>选项（每行一个）<textarea value={sub.options} onChange={(event) => updateSub(sub.key, { options: event.target.value })} placeholder="选项甲&#10;选项乙" /></label>
-              <div className="paper-inline" aria-label={`小问 ${index + 1} 选项文字样式`}>
-                {sub.options.split("\n").map((line, optionIndex) => line.trim() === "" ? null : <label key={optionIndex}>选项 {String.fromCharCode(65 + optionIndex)} 样式<select aria-label={`小问 ${index + 1} 选项样式 ${optionIndex + 1}`} value={sub.optionStyles?.[optionIndex] ?? "普通"} disabled={busy} onChange={(event) => setOptionStyle(sub.key, optionIndex, event.target.value as TextStyle)}>
-                  {TEXT_STYLES.map((style) => <option key={style}>{style}</option>)}
-                </select></label>)}
-              </div>
+              <fieldset className="intake-options" aria-label={`小问 ${index + 1} 选项`}>
+                <legend>选项</legend>
+                {sub.options.length === 0 && <p className="muted">未设置选项。</p>}
+                {sub.options.map((option, optionIndex) => {
+                  const optionLabel = String.fromCharCode(65 + optionIndex);
+                  return <div className="intake-option" key={option.key}>
+                    <div className="paper-inline">
+                      <strong>选项 {optionLabel}</strong>
+                      <button aria-label={`小问 ${index + 1} 删除选项 ${optionLabel}`} onClick={() => removeOption(sub.key, option.key)} disabled={busy}>删除选项</button>
+                    </div>
+                    <BlockListEditor label={`小问 ${index + 1} 选项 ${optionLabel}`} blocks={option.blocks} disabled={busy} onChange={(blocks) => setOptionBlocks(sub.key, option.key, blocks)} onCrop={() => requestCrop({ field: "option", subKey: sub.key, optionKey: option.key })} />
+                  </div>;
+                })}
+                <button onClick={() => addOption(sub.key)} disabled={busy || sub.options.length >= 26}>添加选项</button>
+                <p className="muted">每个选项统一一种文字样式；混合样式请改用原卷裁图。</p>
+              </fieldset>
               <fieldset className="intake-slots" aria-label={`小问 ${index + 1} 作答位置`}>
                 <legend>作答位置</legend>
                 {sub.slots.length === 0 && <p className="muted">未设置作答位置；答案按整题记录。</p>}
@@ -849,7 +882,7 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
                 <label>材料标题<input value={materialForm.title} onChange={(event) => setMaterialForm({ ...materialForm, title: event.target.value })} /></label>
                 <label>材料出处<input value={materialForm.source} onChange={(event) => setMaterialForm({ ...materialForm, source: event.target.value })} /></label>
               </div>
-              <label>材料正文<textarea value={materialForm.content} onChange={(event) => setMaterialForm({ ...materialForm, content: event.target.value })} /></label>
+              <BlockListEditor label="材料正文" blocks={materialForm.content} disabled={busy} onChange={(blocks) => setMaterialForm({ ...materialForm, content: blocks })} onCrop={() => requestCrop({ field: "material" })} />
               <button onClick={() => void addMaterial()} disabled={busy}>建立材料草稿</button>
             </details>
           </section>

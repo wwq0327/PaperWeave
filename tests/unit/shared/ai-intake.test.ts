@@ -43,11 +43,14 @@ test("结构化 AI 题映射为录题表单：小问、选项、答案、原分�
   expect(result.form.subQuestions[0]).toMatchObject({
     originalLabel: "(1)",
     prompt: [{ kind: "text", text: "求 $x^2$ 的值。" }],
-    options: "甲\n乙",
     answer: [{ kind: "text", text: "4" }],
     explanation: [{ kind: "text", text: "代入计算。" }],
     originalScore: "4",
   });
+  expect(result.form.subQuestions[0].options.map((option) => option.blocks)).toEqual([
+    [{ kind: "text", text: "甲" }],
+    [{ kind: "text", text: "乙" }],
+  ]);
   expect(result.form.subQuestions[1].originalScore).toBe("6");
   expect(result.uncertain).toEqual(["整体待核", "第(1)小问：公式待核", "作答位置需手工录入：AI 不生成空位，请在表单中补录。"]);
   expect(result.materials).toEqual([{ title: "材料一", content: "材料正文", source: "自制" }]);
@@ -80,7 +83,10 @@ test("旧格式没有 parts 时按小问文字降级，选项归入第一小问"
     [{ kind: "text", text: "(1) 小问一" }],
     [{ kind: "text", text: "(2) 小问二" }],
   ]);
-  expect(result.form.subQuestions[0].options).toBe("甲\n乙");
+  expect(result.form.subQuestions[0].options.map((option) => option.blocks)).toEqual([
+    [{ kind: "text", text: "甲" }],
+    [{ kind: "text", text: "乙" }],
+  ]);
   expect(result.form.subQuestions[0].originalScore).toBe("");
   expect(result.uncertain).toEqual(["作答位置需手工录入：AI 不生成空位，请在表单中补录。"]);
 });

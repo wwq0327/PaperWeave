@@ -1,5 +1,5 @@
 import type { AiMaterialSuggestion, AiQuestion } from "./ai";
-import { blankSubQuestion, type IntakeBlock, type IntakeForm, type IntakeSubQuestion } from "./intake";
+import { blankOption, blankSubQuestion, type IntakeBlock, type IntakeForm, type IntakeSubQuestion } from "./intake";
 import type { Classification } from "./question";
 
 export interface AiIntakeResult {
@@ -20,7 +20,7 @@ function partSub(part: NonNullable<AiQuestion["parts"]>[number], index: number):
     prompt: textBlock(part.prompt),
     answer: textBlock(part.answer),
     explanation: textBlock(part.explanation),
-    options: part.options.join("\n"),
+    options: part.options.map((option) => blankOption(option)),
     originalScore: part.score === null ? "" : String(part.score),
   };
 }
@@ -43,7 +43,7 @@ export function aiQuestionToIntake(
       ...blankSubQuestion(),
       originalLabel: `(${index + 1})`,
       prompt: textBlock(prompt),
-      options: index === 0 ? question.options.join("\n") : "",
+      options: index === 0 ? question.options.map((option) => blankOption(option)) : [],
     }));
   } else {
     subs = [{ ...blankSubQuestion(), prompt: textBlock(question.stem) }];

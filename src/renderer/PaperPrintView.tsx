@@ -109,8 +109,12 @@ export default function PaperPrintView({ paper, onReady, onCancel }: { paper: Vo
         }
       }
       for (const element of document.querySelectorAll<HTMLElement>(".paper-sheet .katex, .paper-sheet tr")) {
-        const rect = element.getBoundingClientRect();
-        if (rect.width > width + 1 || rect.height > height + 1 || element.scrollWidth > width + 1) {
+        // 独立公式的内层按块级铺满内容宽度，元素自身宽度不代表实际内容；用范围盒子量文字与公式的真实尺寸。
+        const target = element.classList.contains("katex") ? element.querySelector<HTMLElement>(".katex-html") ?? element : element;
+        const range = document.createRange();
+        range.selectNodeContents(target);
+        const rect = range.getBoundingClientRect();
+        if (rect.width > width + 1 || rect.height > height + 1) {
           const label = element.closest("article.paper-item")?.getAttribute("aria-label") ?? "内容";
           problems.push(`${label}的公式或表格超出 A4 可打印区域，请调整后重试`);
         }

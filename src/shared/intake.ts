@@ -1,4 +1,4 @@
-import type { TextStyle } from "./document";
+import type { Block, TextStyle } from "./document";
 import {
   classificationProblem,
   hasContent,
@@ -71,6 +71,12 @@ export interface IntakeSlotAnswer {
   blocks: IntakeBlock[];
 }
 
+/** 一个选项的块内容；选项按出现顺序编号 A、B、C…，同一选项内文字样式必须统一。 */
+export interface IntakeOption {
+  key: string;
+  blocks: IntakeBlock[];
+}
+
 export interface IntakeScoringPoint {
   description: string;
   score: string;
@@ -86,9 +92,7 @@ export interface IntakeSubQuestion {
   answer: IntakeBlock[];
   slotAnswers: IntakeSlotAnswer[];
   explanation: IntakeBlock[];
-  options: string;
-  /** 选项行对应的整行文字样式，与选项行按位置对应；缺省为普通。 */
-  optionStyles?: TextStyle[];
+  options: IntakeOption[];
   scoring: IntakeScoringPoint[];
   slots: IntakeSlot[];
   originalScore: string;
@@ -166,14 +170,17 @@ export function blankSubQuestion(): IntakeSubQuestion {
     answer: [],
     slotAnswers: [],
     explanation: [],
-    options: "",
-    optionStyles: [],
+    options: [],
     scoring: [],
     slots: [],
     originalScore: "",
     materialIds: [],
     dependsOn: [],
   };
+}
+
+export function blankOption(text = ""): IntakeOption {
+  return { key: newId(), blocks: [{ kind: "text", text }] };
 }
 
 export function newIntakeForm(classification: Classification, section: string): IntakeForm {
@@ -302,6 +309,17 @@ function intakeBlocks(blocks: IntakeBlock[], label: string, problems: string[]):
   return result;
 }
 
+/** 材料正文等非题目字段的块转换；引用不属于材料内容，遇引用直接报错。 */
+export function buildContentBlocks(blocks: IntakeBlock[], label: string): { blocks: Block[]; problems: string[] } {
+  const problems: string[] = [];
+  const usable = blocks.filter((block) => {
+    if (block.kind !== "reference") return true;
+    problems.push(`${label}不支持引用`);
+    return false;
+  });
+  return { blocks: intakeBlocks(usable, label, problems) as Block[], problems };
+}
+
 function paragraphToIntake(block: Extract<QuestionBlock, { type: "paragraph" }>): IntakeBlock[] {
   const result: IntakeBlock[] = [];
   let text = "";
@@ -347,22 +365,13 @@ function blocksToIntake(blocks: QuestionBlock[]): IntakeBlock[] {
   return result;
 }
 
-function blocksToText(blocks: QuestionBlock[]): string {
-  return blocks.map((block) => {
-    if (block.type === "paragraph") return block.runs.map((run) => run.type === "text" ? run.text : run.type === "formula" ? `$${run.latex}$` : run.fallback).join("");
-    if (block.type === "formula") return `$$${block.latex}$$`;
-    if (block.type === "image") return "[图]";
-    return block.rows.map((row) => row.join(" | ")).join("\n");
-  }).join("\n");
-}
-
 const parseList = (value: string): string[] => [...new Set(value.split(/[,，、]/).map((item) => item.trim()).filter(Boolean))];
 
 const blockHasReference = (block: QuestionBlock): boolean =>
   block.type === "paragraph" && block.runs.some((run) => run.type === "reference");
 const blocksHaveReference = (blocks: QuestionBlock[]): boolean => blocks.some(blockHasReference);
 
-/** 选项整行只能有一种文字样式；混合样式无法在单行选项表单中无损表达。 */
+/** 选项内的文字样式必须统一；混合样式无法在单一选项内无损表达。 */
 function uniformOptionStyle(content: QuestionBlock[]): TextStyle | null {
   let found: TextStyle | null = null;
   for (const block of content) {
@@ -381,7 +390,6 @@ function editabilityProblem(content: QuestionContent): string | null {
   for (const sub of content.subQuestions) {
     for (const option of sub.options) {
       if (blocksHaveReference(option.content)) return "选项含引用，暂不能在录题工作台编辑";
-      if (option.content.some((block) => block.type === "image" || block.type === "table")) return "选项含图片或表格，暂不能在录题工作台编辑";
       if (uniformOptionStyle(option.content) === null) return "选项含混合文字样式，录题工作台不能完整表达；请改用原卷裁图替代";
     }
     for (const answer of sub.answers) {
@@ -411,8 +419,7 @@ export function contentToForm(
         answer: sub.answers.filter((answer) => answer.slotId === null).flatMap((answer) => blocksToIntake(answer.blocks)),
         slotAnswers: sub.answers.flatMap((answer) => answer.slotId === null ? [] : [{ slotId: answer.slotId, blocks: blocksToIntake(answer.blocks) }]),
         explanation: blocksToIntake(sub.explanation),
-        options: sub.options.map((option) => blocksToText(option.content)).join("\n"),
-        optionStyles: sub.options.map((option) => uniformOptionStyle(option.content) ?? "普通"),
+        options: sub.options.map((option) => ({ key: newId(), blocks: blocksToIntake(option.content) })),
         scoring: sub.scoring.map((point) => ({ description: point.description, score: String(point.score), slotIds: [...point.slotIds] })),
         slots: sub.slots.map((slot) => ({ ...slot, interchangeableWith: [...slot.interchangeableWith] })),
         originalScore: sub.originalScore === null ? "" : String(sub.originalScore),
@@ -485,13 +492,17 @@ export function buildContent(form: IntakeForm): IntakeBuildResult {
       const blocks = intakeBlocks(entry.blocks, `${label}空位答案`, problems);
       if (blocks.length > 0) answers.push({ slotId: entry.slotId, blocks, variants: [] });
     }
-    const lines = sub.options.split("\n").map((line) => line.trim()).filter(Boolean);
-    if (lines.length > 26) problems.push(`${label}的选项超过 26 个`);
-    const optionStyles = sub.optionStyles ?? [];
-    const options = lines.map((line, optionIndex) => ({
-      label: String.fromCharCode(65 + optionIndex),
-      content: parseTextBlocks(line, `${label}选项`, problems, readTextStyle(optionStyles[optionIndex], `${label}选项`, problems)),
-    }));
+    if (sub.options.length > 26) problems.push(`${label}的选项超过 26 个`);
+    const optionEntries = sub.options.map((option, optionIndex) => {
+      const optionLabel = String.fromCharCode(65 + optionIndex);
+      const content = intakeBlocks(option.blocks, `${label}选项 ${optionLabel}`, problems);
+      if (content.length > 0 && uniformOptionStyle(content) === null) {
+        problems.push(`${label}选项 ${optionLabel}含混合文字样式，请统一为一种样式或改用原卷裁图`);
+      }
+      return content;
+    });
+    const options = optionEntries.filter((content) => content.length > 0)
+      .map((content, optionIndex) => ({ label: String.fromCharCode(65 + optionIndex), content }));
     const scoring = [];
     for (const point of sub.scoring) {
       const description = point.description.trim();
