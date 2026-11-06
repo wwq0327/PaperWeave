@@ -1,12 +1,20 @@
-import type { AiMaterialSuggestion, AiQuestion } from "./ai";
+import type { AiFigureRef, AiMaterialSuggestion, AiQuestion, AiSourceAnchor } from "./ai";
 import { blankOption, blankSubQuestion, type IntakeBlock, type IntakeForm, type IntakeSubQuestion } from "./intake";
 import type { Classification } from "./question";
+
+export interface AiIntakeEvidence {
+  anchors: AiSourceAnchor[];
+  materialAnchors: AiSourceAnchor[];
+  figures: AiFigureRef[];
+  answerSources: string[];
+}
 
 export interface AiIntakeResult {
   form: IntakeForm;
   uncertain: string[];
   materials: AiMaterialSuggestion[];
   newTags: string[];
+  evidence: AiIntakeEvidence;
 }
 
 export const aiSlotHint = "作答位置需手工录入：AI 不生成空位，请在表单中补录。";
@@ -69,10 +77,21 @@ export function aiQuestionToIntake(
     if (candidates.has(tag)) knowledgePoints.push(tag);
     else newTags.push(tag);
   }
+  const evidence: AiIntakeEvidence = {
+    anchors: question.sourceAnchors ?? [],
+    materialAnchors: (question.materials ?? []).flatMap((material) => material.sourceAnchors ?? []),
+    figures: question.figures ?? [],
+    answerSources: [
+      ...(question.answerSource?.trim() ? [`整题：${question.answerSource.trim()}`] : []),
+      ...parts.flatMap((part) => part.answerSource?.trim() ? [`${part.label.trim() || "?"}：${part.answerSource.trim()}`] : []),
+    ],
+  };
   const uncertain = [
     ...question.uncertain,
     ...answerNotes,
     ...parts.flatMap((part) => part.uncertain.map((item) => `第${part.label || "?"}小问：${item}`)),
+    ...(question.figures ?? []).map((figure) => `题图引用待裁切：第 ${figure.page} 页（${figure.kind}）。`),
+    ...(question.fieldUncertain ?? []).map((entry) => `字段待核（${entry.field}）：${entry.note}`),
     aiSlotHint,
   ];
   return {
@@ -95,5 +114,6 @@ export function aiQuestionToIntake(
     uncertain,
     materials: question.materials ?? [],
     newTags,
+    evidence,
   };
 }

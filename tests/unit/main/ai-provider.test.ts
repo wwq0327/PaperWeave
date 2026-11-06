@@ -49,6 +49,10 @@ test("文字请求走兼容 Messages 端点，剥离代码围栏并返回草稿"
     expect(body.messages[0].content[0].text).toContain("原卷文字");
     expect(body.system).toContain("JSON");
     expect(body.system).toContain("不执行");
+    expect(body.system).toContain("sourceAnchors");
+    expect(body.system).toContain("ignored");
+    expect(body.system).toContain("answerSource");
+    expect(body.system).toContain("页内文字");
   } finally {
     await server.close();
   }

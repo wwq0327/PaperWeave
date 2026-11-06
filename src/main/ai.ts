@@ -16,7 +16,7 @@ import { WholePaperRunner } from "../shared/whole-paper-runner";
 const configKey = "ai.config";
 const maxPdfBytes = 50 * 1024 * 1024;
 const requestIdPattern = /^[a-zA-Z0-9-]{8,64}$/;
-const fakeScenarios = new Set(["ok", "invalid", "malicious", "timeout", "late", "late-success"]);
+const fakeScenarios = new Set(["ok", "clean", "invalid", "malicious", "timeout", "late", "late-success"]);
 
 export function registerAi(db: Database, root: string, currentWindow: () => BrowserWindow | undefined): void {
   const bank = new QuestionBank(db);

@@ -37,6 +37,28 @@ export interface AiDraftResult {
   tagCandidates: string[];
 }
 
+/** 页内文字码点区间，右端不包含；用于原卷回查与覆盖对账。 */
+export interface AiSourceAnchor {
+  page: number;
+  start: number;
+  end: number;
+}
+
+export interface AiFigureRef extends AiSourceAnchor {
+  kind: "题图" | "材料图" | "解析图";
+  note: string;
+}
+
+export interface AiFieldNote {
+  field: string;
+  note: string;
+}
+
+export interface AiIgnoredRange extends AiSourceAnchor {
+  kind: "instructions" | "answer" | "blank" | "other";
+  note: string;
+}
+
 export interface AiPart {
   label: string;
   prompt: string;
@@ -45,6 +67,8 @@ export interface AiPart {
   explanation: string;
   score: number | null;
   uncertain: string[];
+  /** 答案在原卷中的来源说明。 */
+  answerSource?: string;
 }
 
 export interface AiMaterialSuggestion {
@@ -53,6 +77,8 @@ export interface AiMaterialSuggestion {
   source: string;
   /** 材料所属小问标签；缺省表示模型未标明归属。 */
   appliesTo?: string[];
+  /** 材料原文在原卷中的位置。 */
+  sourceAnchors?: AiSourceAnchor[];
 }
 
 export interface AiQuestion {
@@ -68,19 +94,57 @@ export interface AiQuestion {
   questionType?: string;
   knowledgePoints?: string[];
   originalNumber?: string;
+  /** 题目在原卷中的完整位置，可跨页/多段。 */
+  sourceAnchors?: AiSourceAnchor[];
+  figures?: AiFigureRef[];
+  fieldUncertain?: AiFieldNote[];
+  answerSource?: string;
 }
 
 export interface AiDraft {
   questions: AiQuestion[];
   notes: string[];
+  /** 不属于任何题目的原卷文字，例如卷首说明、答题说明与答案区。 */
+  ignored?: AiIgnoredRange[];
 }
 
-const questionKeys = new Set(["stem", "subquestions", "options", "tags", "uncertain", "page", "answer", "parts", "materials", "questionType", "knowledgePoints", "originalNumber"]);
-const partKeys = new Set(["label", "prompt", "options", "answer", "explanation", "score", "uncertain"]);
-const materialKeys = new Set(["title", "content", "source", "appliesTo"]);
+const draftKeys = new Set(["questions", "notes", "ignored"]);
+const questionKeys = new Set(["stem", "subquestions", "options", "tags", "uncertain", "page", "answer", "parts", "materials", "questionType", "knowledgePoints", "originalNumber", "sourceAnchors", "figures", "fieldUncertain", "answerSource"]);
+const partKeys = new Set(["label", "prompt", "options", "answer", "explanation", "score", "uncertain", "answerSource"]);
+const materialKeys = new Set(["title", "content", "source", "appliesTo", "sourceAnchors"]);
+const figureKinds = new Set(["题图", "材料图", "解析图"]);
+const ignoredKinds = new Set(["instructions", "answer", "blank", "other"]);
 const text = (x: unknown, max = 8000): x is string => typeof x === "string" && x.length <= max;
 const textList = (x: unknown, maxItems = 30, max = 8000): x is string[] =>
   Array.isArray(x) && x.length <= maxItems && x.every((item) => text(item, max));
+const anchorFields = (value: Record<string, unknown>): boolean =>
+  Number.isInteger(value.page) && (value.page as number) >= 1 && (value.page as number) <= 2000
+  && Number.isInteger(value.start) && Number.isInteger(value.end)
+  && (value.start as number) >= 0 && (value.end as number) > (value.start as number) && (value.end as number) <= 1_000_000;
+const anchor = (x: unknown): x is AiSourceAnchor => {
+  if (typeof x !== "object" || x === null) return false;
+  const value = x as Record<string, unknown>;
+  return Object.keys(value).every((key) => ["page", "start", "end"].includes(key)) && anchorFields(value);
+};
+const anchors = (x: unknown, maxItems: number): x is AiSourceAnchor[] => Array.isArray(x) && x.length <= maxItems && x.every(anchor);
+const figure = (x: unknown): x is AiFigureRef => {
+  if (typeof x !== "object" || x === null) return false;
+  const value = x as Record<string, unknown>;
+  return Object.keys(value).every((key) => ["page", "start", "end", "kind", "note"].includes(key))
+    && anchorFields(value) && typeof value.kind === "string" && figureKinds.has(value.kind) && text(value.note, 500);
+};
+const ignoredRange = (x: unknown): x is AiIgnoredRange => {
+  if (typeof x !== "object" || x === null) return false;
+  const value = x as Record<string, unknown>;
+  return Object.keys(value).every((key) => ["page", "start", "end", "kind", "note"].includes(key))
+    && anchorFields(value) && typeof value.kind === "string" && ignoredKinds.has(value.kind) && text(value.note, 500);
+};
+const fieldNote = (x: unknown): x is AiFieldNote => {
+  if (typeof x !== "object" || x === null) return false;
+  const value = x as Record<string, unknown>;
+  return Object.keys(value).every((key) => ["field", "note"].includes(key))
+    && text(value.field, 50) && value.field.trim() !== "" && text(value.note, 2000) && value.note.trim() !== "";
+};
 
 function isPart(value: unknown): value is AiPart {
   if (typeof value !== "object" || value === null) return false;
@@ -89,6 +153,7 @@ function isPart(value: unknown): value is AiPart {
   if (!text(part.label, 20) || !text(part.prompt) || !part.prompt.trim()) return false;
   if (!textList(part.options, 26) || !text(part.answer) || !text(part.explanation) || !textList(part.uncertain, 30, 2000)) return false;
   if (part.score !== null && (typeof part.score !== "number" || !Number.isFinite(part.score) || part.score < 0 || part.score > 1000)) return false;
+  if (part.answerSource !== undefined && !text(part.answerSource, 500)) return false;
   return true;
 }
 
@@ -97,6 +162,7 @@ function isMaterialSuggestion(value: unknown): value is AiMaterialSuggestion {
   const material = value as Record<string, unknown>;
   if (!Object.keys(material).every((key) => materialKeys.has(key))) return false;
   if (material.appliesTo !== undefined && (!Array.isArray(material.appliesTo) || material.appliesTo.length > 30 || !material.appliesTo.every((label) => typeof label === "string" && label.trim() !== "" && label.length <= 20))) return false;
+  if (material.sourceAnchors !== undefined && !anchors(material.sourceAnchors, 20)) return false;
   return text(material.title, 200) && material.title.trim() !== "" && text(material.content) && material.content.trim() !== "" && text(material.source, 500);
 }
 
@@ -104,8 +170,10 @@ function isMaterialSuggestion(value: unknown): value is AiMaterialSuggestion {
 export function isAiDraft(value: unknown): value is AiDraft {
   if (typeof value !== "object" || value === null) return false;
   const draft = value as Record<string, unknown>;
+  if (!Object.keys(draft).every((key) => draftKeys.has(key))) return false;
   if (!Array.isArray(draft.questions) || draft.questions.length < 1 || draft.questions.length > 20) return false;
   if (!textList(draft.notes, 20, 2000)) return false;
+  if (draft.ignored !== undefined && (!Array.isArray(draft.ignored) || draft.ignored.length > 100 || !draft.ignored.every(ignoredRange))) return false;
   return draft.questions.every((question: unknown) => {
     if (typeof question !== "object" || question === null) return false;
     const q = question as Record<string, unknown>;
@@ -119,6 +187,10 @@ export function isAiDraft(value: unknown): value is AiDraft {
     if (q.questionType !== undefined && !text(q.questionType, 200)) return false;
     if (q.knowledgePoints !== undefined && !textList(q.knowledgePoints, 30, 100)) return false;
     if (q.originalNumber !== undefined && !text(q.originalNumber, 20)) return false;
+    if (q.sourceAnchors !== undefined && !anchors(q.sourceAnchors, 20)) return false;
+    if (q.figures !== undefined && (!Array.isArray(q.figures) || q.figures.length > 20 || !q.figures.every(figure))) return false;
+    if (q.fieldUncertain !== undefined && (!Array.isArray(q.fieldUncertain) || q.fieldUncertain.length > 20 || !q.fieldUncertain.every(fieldNote))) return false;
+    if (q.answerSource !== undefined && !text(q.answerSource, 500)) return false;
     return true;
   });
 }

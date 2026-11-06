@@ -102,3 +102,32 @@ test("材料建议可携带 appliesTo 小问归属，并拒绝非法归属", () 
   expect(isAiDraft({ questions: [{ ...base, materials: [{ title: "材料一", content: "正文", source: "自制", appliesTo: "全部" }] }], notes: [] })).toBe(false);
   expect(isAiDraft({ questions: [{ ...base, materials: [{ title: "材料一", content: "正文", source: "自制", appliesTo: [""] }] }], notes: [] })).toBe(false);
 });
+
+test("来源锚点、忽略区、图表、答案来源与字段级不确定项严格校验", () => {
+  const base = { stem: "题干", subquestions: [], options: [], tags: [], uncertain: [], page: 1 };
+  const part = { label: "(1)", prompt: "求值。", options: [], answer: "4", explanation: "", score: 4, uncertain: [], answerSource: "原卷答案第 2 页" };
+  const anchor = { page: 1, start: 0, end: 10 };
+  const valid = {
+    questions: [{
+      ...base,
+      sourceAnchors: [anchor],
+      figures: [{ ...anchor, kind: "题图", note: "第 1 题配图" }],
+      fieldUncertain: [{ field: "answer", note: "答案字迹模糊" }],
+      answerSource: "原卷答案第 2 页",
+      parts: [part],
+      materials: [{ title: "材料一", content: "正文", source: "自制", sourceAnchors: [anchor] }],
+    }],
+    notes: [],
+    ignored: [{ page: 1, start: 10, end: 20, kind: "instructions", note: "卷首说明" }],
+  };
+  expect(isAiDraft(valid)).toBe(true);
+  expect(isAiDraft({ ...valid, questions: [{ ...valid.questions[0], sourceAnchors: [{ page: 1, start: -1, end: 10 }] }] })).toBe(false);
+  expect(isAiDraft({ ...valid, questions: [{ ...valid.questions[0], sourceAnchors: [{ page: 1, start: 10, end: 10 }] }] })).toBe(false);
+  expect(isAiDraft({ ...valid, questions: [{ ...valid.questions[0], sourceAnchors: [{ page: 0, start: 0, end: 10 }] }] })).toBe(false);
+  expect(isAiDraft({ ...valid, questions: [{ ...valid.questions[0], sourceAnchors: [{ ...anchor, extra: 1 }] }] })).toBe(false);
+  expect(isAiDraft({ ...valid, questions: [{ ...valid.questions[0], figures: [{ ...anchor, kind: "表格", note: "" }] }] })).toBe(false);
+  expect(isAiDraft({ ...valid, questions: [{ ...valid.questions[0], fieldUncertain: [{ field: " ", note: "待核" }] }] })).toBe(false);
+  expect(isAiDraft({ ...valid, questions: [{ ...valid.questions[0], answerSource: "来".repeat(501) }] })).toBe(false);
+  expect(isAiDraft({ ...valid, ignored: [{ ...anchor, kind: "unknown", note: "" }] })).toBe(false);
+  expect(isAiDraft({ ...valid, extra: 1 })).toBe(false);
+});
