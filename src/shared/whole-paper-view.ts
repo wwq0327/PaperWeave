@@ -1,4 +1,5 @@
 import type { AiSourceKind } from "./ai";
+import type { WholePaperBatchKind } from "./whole-paper-batches";
 import type { BatchStatus } from "./whole-paper-runner";
 
 export interface WholePaperTaskView {
@@ -10,7 +11,7 @@ export interface WholePaperTaskView {
   sourceKind: AiSourceKind;
   createdAt: string;
   emptyPages: number[];
-  batches: { pages: number[]; status: BatchStatus; reviewBoundaryBefore: boolean }[];
+  batches: { kind: WholePaperBatchKind; pages: number[]; status: BatchStatus; reviewBoundaryBefore: boolean }[];
 }
 
 export interface WholePaperTaskDetail extends WholePaperTaskView {
