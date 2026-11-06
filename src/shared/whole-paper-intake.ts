@@ -1,3 +1,4 @@
+import type { AiFigureRef, AiSourceAnchor } from "./ai";
 import type { AnswerStatus, ReviewStatus } from "./question";
 
 export const wholePaperIntakeStatuses = ["created", "duplicate", "failed", "skipped", "revised"] as const;
@@ -39,10 +40,19 @@ export interface WholePaperIntakeSummary {
   needsAttention: number;
 }
 
+export interface WholePaperEvidence {
+  anchors: AiSourceAnchor[];
+  materialAnchors: AiSourceAnchor[];
+  figures: AiFigureRef[];
+  answerSources: string[];
+}
+
 export interface WholePaperIntakeItem {
   id: string;
   batchIndex: number;
   questionIndex: number;
+  memberKeys: string[];
+  evidence: WholePaperEvidence;
   originalNumber: string;
   page: number;
   status: WholePaperIntakeStatus;

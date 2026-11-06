@@ -54,6 +54,21 @@ function draftOf(...questions: AiDraft["questions"]): AiDraft {
   return { questions, notes: [] };
 }
 
+function makeMultiBatchTask(tasks: WholePaperStore, examId: string, sectionId: string, drafts: AiDraft[]) {
+  const batches = drafts.map((draft, index) => {
+    const text = `第${index + 1}批文字`;
+    return { fragments: [{ page: index + 1, start: 0, end: text.length, text }], pages: [index + 1], text, sendable: true, reviewBoundaryBefore: index > 0 };
+  });
+  const plan: WholePaperBatchPlan = { emptyPages: [], batches };
+  const state = createWholePaperRun(plan);
+  const task = tasks.create(examId, sectionId, state);
+  const done = {
+    ...state,
+    batches: state.batches.map((batch, index) => ({ ...batch, status: "succeeded" as const, result: drafts[index] })),
+  };
+  return tasks.save(task.id, task.revision, done);
+}
+
 const part = (prompt: string, answer = "A") => ({ label: "(1)", prompt, options: [], answer, explanation: "解析", score: 3, uncertain: [] });
 const validQuestion = (originalNumber: string, stem: string, extra: Partial<AiDraft["questions"][number]> = {}) => ({
   stem, subquestions: [], options: [], tags: [], uncertain: [], page: 1,
@@ -62,17 +77,52 @@ const validQuestion = (originalNumber: string, stem: string, extra: Partial<AiDr
 
 const SHARED_MATERIAL = { title: "共享材料", content: "材料正文", source: "固定响应" };
 
-test("数据版本 9：整卷建档记录表带任务内唯一约束与质量字段", () => {
+test("数据版本 10：整卷建档记录表带任务内唯一约束、质量与证据字段", () => {
   const { db } = setup();
-  expect(db.dataVersion()).toBe(9);
+  expect(db.dataVersion()).toBe(10);
   const now = new Date().toISOString();
   const insert = () => db.transaction((s) => {
     s.prepare("INSERT INTO whole_paper_intakes (id, task_id, batch_index, question_index, status, created_at, updated_at) VALUES ('r1','t',0,0,'created',?,?)").run(now, now);
   });
   insert();
-  const row = db.read((s) => s.prepare("SELECT quality, issues FROM whole_paper_intakes WHERE id = 'r1'").get()) as { quality: string; issues: string };
-  expect(row).toEqual({ quality: "needs_attention", issues: "[]" });
+  const row = db.read((s) => s.prepare("SELECT quality, issues, member_keys, evidence FROM whole_paper_intakes WHERE id = 'r1'").get()) as { quality: string; issues: string; member_keys: string; evidence: string };
+  expect(row).toEqual({ quality: "needs_attention", issues: "[]", member_keys: "[]", evidence: "{}" });
   expect(() => insert()).toThrow();
+});
+
+test("跨批同题号合并建档：只建一条记录，成员键与证据齐全，重复建档不新增", () => {
+  const context = setup();
+  const { tasks, wholeIntake, exam, section } = stores(context);
+  const first = validQuestion("6", "跨批题第一段", { page: 1, sourceAnchors: [{ page: 1, start: 0, end: 6 }], parts: [{ ...part("求值。"), answer: "", score: null }] });
+  const second = validQuestion("6", "跨批题第二段", { page: 2, sourceAnchors: [{ page: 2, start: 0, end: 8 }], parts: [{ ...part("求值并说明理由。"), answer: "4", score: 5 }] });
+  const task = makeMultiBatchTask(tasks, exam.id, section.id, [draftOf(first), draftOf(second)]);
+
+  const summary = wholeIntake.create(task.id, classification);
+  expect(summary.created).toBe(1);
+  const items = wholeIntake.list(task.id);
+  expect(items).toHaveLength(1);
+  expect(items[0].memberKeys).toEqual(["0:0", "1:0"]);
+  expect(items[0].evidence.anchors).toEqual([{ page: 1, start: 0, end: 6 }, { page: 2, start: 0, end: 8 }]);
+  expect(items[0].batchIndex).toBe(0);
+  expect(items[0].questionIndex).toBe(0);
+
+  const again = wholeIntake.create(task.id, classification);
+  expect(again.created).toBe(0);
+  expect(again.existing).toBe(1);
+  expect(context.exams.listQuestions(exam.id)).toHaveLength(1);
+});
+
+test("旧记录缺少证据列时按空证据读取", () => {
+  const context = setup();
+  const { tasks, wholeIntake, exam, section } = stores(context);
+  const task = makeTask(tasks, exam.id, section.id, draftOf(validQuestion("1", "占位")));
+  const now = new Date().toISOString();
+  context.db.transaction((s) => {
+    s.prepare("INSERT INTO whole_paper_intakes (id, task_id, batch_index, question_index, status, created_at, updated_at) VALUES ('legacy', ?, 5, 5, 'failed', ?, ?)").run(task.id, now, now);
+  });
+  const legacy = wholeIntake.list(task.id).find((item) => item.id === "legacy");
+  expect(legacy?.memberKeys).toEqual([]);
+  expect(legacy?.evidence).toEqual({ anchors: [], materialAnchors: [], figures: [], answerSources: [] });
 });
 
 test("参数继承：整卷分类的空字段由考试元数据补齐", () => {

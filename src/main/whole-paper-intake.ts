@@ -4,10 +4,12 @@ import { AI_LIMITS } from "../shared/ai";
 import { buildContent, buildContentBlocks, missingAnswerLabels } from "../shared/intake";
 import { buildSearchText, classificationProblem, type Classification, type QuestionContent, type ReviewStatus } from "../shared/question";
 import { contentReviewProblems, type ReviewMaterial } from "../shared/review";
+import { mergeWholePaperQuestions, type WholePaperCandidate } from "../shared/whole-paper-merge";
 import {
   wholePaperIssueCodes,
   wholePaperQualities,
   type WholePaperApprovalResult,
+  type WholePaperEvidence,
   type WholePaperIntakeItem,
   type WholePaperIntakeStatus,
   type WholePaperIntakeSummary,
@@ -38,6 +40,8 @@ interface IntakeRow {
   content: string;
   classification: string;
   material_ids: string;
+  member_keys: string;
+  evidence: string;
   created_at: string;
   updated_at: string;
 }
@@ -75,6 +79,16 @@ function isQuality(value: unknown): value is WholePaperQuality {
   return typeof value === "string" && (wholePaperQualities as readonly string[]).includes(value);
 }
 
+function parseEvidence(raw: string): WholePaperEvidence {
+  const value = parseJson<Partial<WholePaperEvidence>>(raw, {});
+  return {
+    anchors: Array.isArray(value.anchors) ? value.anchors : [],
+    materialAnchors: Array.isArray(value.materialAnchors) ? value.materialAnchors : [],
+    figures: Array.isArray(value.figures) ? value.figures : [],
+    answerSources: Array.isArray(value.answerSources) ? value.answerSources : [],
+  };
+}
+
 const issue = (code: WholePaperIssueCode, message: string): WholePaperIssue => ({ code, message });
 
 /** 整卷识别结果批量建档：复用单题录题链路逐题保存，按（任务，批，题）唯一记录状态，重复候选由教师显式处理。 */
@@ -107,38 +121,49 @@ export class WholePaperIntake {
     if (issueProblem !== null) throw new Error(`整卷分类无效：${issueProblem}`);
     const section = exam.sections.find((item) => item.id === task.sectionId);
     if (section === undefined) throw new Error("考试分部不存在");
-    const existingRows = this.db.read((sqlite) => sqlite.prepare("SELECT batch_index, question_index FROM whole_paper_intakes WHERE task_id = ?").all(taskId)) as unknown as Pick<IntakeRow, "batch_index" | "question_index">[];
-    const existing = new Set(existingRows.map((row) => `${row.batch_index}:${row.question_index}`));
+    const existingRows = this.db.read((sqlite) => sqlite.prepare("SELECT batch_index, question_index, member_keys FROM whole_paper_intakes WHERE task_id = ?").all(taskId)) as unknown as Pick<IntakeRow, "batch_index" | "question_index" | "member_keys">[];
+    const existing = new Set<string>();
+    for (const row of existingRows) {
+      const stored = parseJson<unknown>(row.member_keys, []);
+      const keys = Array.isArray(stored) ? stored.filter((key): key is string => typeof key === "string") : [];
+      if (keys.length === 0) existing.add(`${row.batch_index}:${row.question_index}`);
+      else keys.forEach((key) => existing.add(key));
+    }
     const tagCandidates = this.bank.knowledgePointCandidates(effective.stage, effective.subject, AI_LIMITS.tagCount);
-    const pending: { batchIndex: number; questionIndex: number; derived: AiIntakeResult; materials: MaterialPlan[]; materialIssues: WholePaperIssue[] }[] = [];
+    const candidates: WholePaperCandidate[] = [];
     task.state.batches.forEach((batch, batchIndex) => {
       if (batch.status !== "succeeded" || batch.result === undefined) return;
-      batch.result.questions.forEach((question, questionIndex) => {
-        if (existing.has(`${batchIndex}:${questionIndex}`)) return;
-        const derived = aiQuestionToIntake(question, effective, section.title, tagCandidates);
-        const materialIssues: WholePaperIssue[] = [];
-        const materials: MaterialPlan[] = [];
-        for (const suggestion of derived.materials) {
-          const key = `${suggestion.title.trim()}|${suggestion.content.trim()}`;
-          try {
-            const material = this.createOrReuseMaterial(key, suggestion);
-            const appliesTo = (suggestion.appliesTo ?? []).map((label) => label.trim()).filter(Boolean);
-            const labels = derived.form.subQuestions.map((sub) => sub.originalLabel);
-            if (appliesTo.length === 0 && labels.length > 1) {
-              materialIssues.push(issue("material_scope", `材料「${suggestion.title}」未标明归属小问，暂关联全部小问，请核对。`));
-            } else if (appliesTo.length > 0 && !appliesTo.some((label) => labels.includes(label))) {
-              materialIssues.push(issue("material_scope", `材料「${suggestion.title}」的归属小问标签不存在，暂关联全部小问，请核对。`));
-            }
-            materials.push({ ...material, appliesTo });
-          } catch (error) {
-            materialIssues.push(issue("material_pending", `材料「${suggestion.title}」建立失败：${errorMessage(error)}`));
-          }
-        }
-        pending.push({ batchIndex, questionIndex, derived, materials, materialIssues });
-      });
+      batch.result.questions.forEach((question, questionIndex) => candidates.push({ batchIndex, questionIndex, question }));
     });
+    const pending: { batchIndex: number; questionIndex: number; memberKeys: string[]; evidence: WholePaperEvidence; derived: AiIntakeResult; materials: MaterialPlan[]; materialIssues: WholePaperIssue[] }[] = [];
+    for (const group of mergeWholePaperQuestions(candidates)) {
+      const memberKeys = group.members.map((member) => `${member.batchIndex}:${member.questionIndex}`);
+      // 任一成员已建档即整组跳过：跨批合并题不会因后续批次重跑而重复建档。
+      if (memberKeys.some((key) => existing.has(key))) continue;
+      const derived = aiQuestionToIntake(group.question, effective, section.title, tagCandidates);
+      const materialIssues: WholePaperIssue[] = [];
+      const materials: MaterialPlan[] = [];
+      for (const suggestion of derived.materials) {
+        const key = `${suggestion.title.trim()}|${suggestion.content.trim()}`;
+        try {
+          const material = this.createOrReuseMaterial(key, suggestion);
+          const appliesTo = (suggestion.appliesTo ?? []).map((label) => label.trim()).filter(Boolean);
+          const labels = derived.form.subQuestions.map((sub) => sub.originalLabel);
+          if (appliesTo.length === 0 && labels.length > 1) {
+            materialIssues.push(issue("material_scope", `材料「${suggestion.title}」未标明归属小问，暂关联全部小问，请核对。`));
+          } else if (appliesTo.length > 0 && !appliesTo.some((label) => labels.includes(label))) {
+            materialIssues.push(issue("material_scope", `材料「${suggestion.title}」的归属小问标签不存在，暂关联全部小问，请核对。`));
+          }
+          materials.push({ ...material, appliesTo });
+        } catch (error) {
+          materialIssues.push(issue("material_pending", `材料「${suggestion.title}」建立失败：${errorMessage(error)}`));
+        }
+      }
+      const first = group.members[0];
+      pending.push({ batchIndex: first.batchIndex, questionIndex: first.questionIndex, memberKeys, evidence: derived.evidence, derived, materials, materialIssues });
+    }
     if (pending.length === 0) {
-      return { created: 0, duplicates: 0, failed: 0, existing: existing.size, materials: 0, needsAttention: 0 };
+      return { created: 0, duplicates: 0, failed: 0, existing: existingRows.length, materials: 0, needsAttention: 0 };
     }
     let created = 0;
     let duplicates = 0;
@@ -149,6 +174,7 @@ export class WholePaperIntake {
       const now = new Date().toISOString();
       const record = {
         id: randomUUID(), taskId, batchIndex: item.batchIndex, questionIndex: item.questionIndex,
+        memberKeys: item.memberKeys, evidence: item.evidence,
         originalNumber: "", page: 0, status: "failed" as WholePaperIntakeStatus, quality: "needs_attention" as WholePaperQuality,
         issues: [] as WholePaperIssue[], message: "",
         questionId: null as string | null, versionId: null as string | null, content: "", classification: "",
@@ -197,7 +223,7 @@ export class WholePaperIntake {
       for (const material of item.materials) materialKeys.add(material.materialId);
       this.insertRecord(record, now);
     });
-    return { created, duplicates, failed, existing: existing.size, materials: materialKeys.size, needsAttention };
+    return { created, duplicates, failed, existing: existingRows.length, materials: materialKeys.size, needsAttention };
   }
 
   list(taskId: string): WholePaperIntakeItem[] {
@@ -241,6 +267,11 @@ export class WholePaperIntake {
         id: row.id,
         batchIndex: row.batch_index,
         questionIndex: row.question_index,
+        memberKeys: (() => {
+          const stored = parseJson<unknown>(row.member_keys, []);
+          return Array.isArray(stored) ? stored.filter((key): key is string => typeof key === "string") : [];
+        })(),
+        evidence: parseEvidence(row.evidence),
         originalNumber: row.original_number,
         page: row.page,
         status: row.status,
@@ -405,11 +436,12 @@ export class WholePaperIntake {
     });
   }
 
-  private insertRecord(record: { id: string; taskId: string; batchIndex: number; questionIndex: number; originalNumber: string; page: number; status: WholePaperIntakeStatus; quality: WholePaperQuality; issues: WholePaperIssue[]; message: string; questionId: string | null; versionId: string | null; content: string; classification: string; materialIds: string[] }, now: string): void {
+  private insertRecord(record: { id: string; taskId: string; batchIndex: number; questionIndex: number; memberKeys: string[]; evidence: WholePaperEvidence; originalNumber: string; page: number; status: WholePaperIntakeStatus; quality: WholePaperQuality; issues: WholePaperIssue[]; message: string; questionId: string | null; versionId: string | null; content: string; classification: string; materialIds: string[] }, now: string): void {
     this.db.transaction((sqlite) => {
-      sqlite.prepare(`INSERT INTO whole_paper_intakes (id, task_id, batch_index, question_index, original_number, page, status, quality, issues, message, question_id, version_id, content, classification, material_ids, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-        record.id, record.taskId, record.batchIndex, record.questionIndex, record.originalNumber, record.page,
+      sqlite.prepare(`INSERT INTO whole_paper_intakes (id, task_id, batch_index, question_index, member_keys, evidence, original_number, page, status, quality, issues, message, question_id, version_id, content, classification, material_ids, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        record.id, record.taskId, record.batchIndex, record.questionIndex, JSON.stringify(record.memberKeys), JSON.stringify(record.evidence),
+        record.originalNumber, record.page,
         record.status, record.quality, JSON.stringify(record.issues), record.message, record.questionId, record.versionId,
         record.content, record.classification, JSON.stringify(record.materialIds), now, now,
       );
