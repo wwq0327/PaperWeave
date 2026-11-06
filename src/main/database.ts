@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { createMigrationSnapshot } from "./migration-snapshot";
 
-const DATA_VERSION = 9;
+const DATA_VERSION = 10;
 
 /** 主进程持有的唯一数据库写入口；不向渲染进程暴露 SQL。 */
 export class Database {
@@ -262,6 +262,13 @@ export class Database {
           ALTER TABLE whole_paper_intakes ADD COLUMN quality TEXT NOT NULL DEFAULT 'needs_attention';
           ALTER TABLE whole_paper_intakes ADD COLUMN issues TEXT NOT NULL DEFAULT '[]';
           PRAGMA user_version = 9
+        `);
+      }
+      if (version < 10) {
+        this.db.exec(`
+          ALTER TABLE whole_paper_intakes ADD COLUMN member_keys TEXT NOT NULL DEFAULT '[]';
+          ALTER TABLE whole_paper_intakes ADD COLUMN evidence TEXT NOT NULL DEFAULT '{}';
+          PRAGMA user_version = 10
         `);
       }
       this.db.exec("COMMIT");

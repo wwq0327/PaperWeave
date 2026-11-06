@@ -1,0 +1,19 @@
+{
+  "note": "自编固定响应黄金样本，仅用于一键自动录题回归，不代表真实模型识读。",
+  "questions": [
+    {
+      "originalNumber": "1",
+      "stem": "自编黄金题：下列句子中加点词语使用正确的一项是",
+      "answer": "B",
+      "score": 3,
+      "anchor": { "page": 1, "start": 0, "end": 2 }
+    },
+    {
+      "originalNumber": "2",
+      "stem": "自编黄金题：第二题请说明理由",
+      "answer": "示例答案。",
+      "score": 4,
+      "anchor": { "page": 2, "start": 0, "end": 2 }
+    }
+  ]
+}

@@ -30,3 +30,22 @@ test("扫描件没有可提取文字时明确返回 hasText=false", async () => 
 test("损坏的 PDF 给出可理解错误", async () => {
   await expect(extractPdfText(new TextEncoder().encode("not a pdf"))).rejects.toThrow("无法读取 PDF");
 });
+
+test("文本块保留阅读顺序、页内码点偏移与坐标", async () => {
+  const result = await extractPdfText(fixture("text.pdf"));
+  const page = result.pages[0];
+  expect(page.blocks.length).toBeGreaterThan(0);
+  const chars = [...page.text];
+  for (const block of page.blocks) {
+    expect(Number.isInteger(block.start)).toBe(true);
+    expect(Number.isInteger(block.end)).toBe(true);
+    expect(block.start).toBeGreaterThanOrEqual(0);
+    expect(block.end).toBeGreaterThan(block.start);
+    expect(chars.slice(block.start, block.end).join("")).toBe(block.text);
+    expect(Number.isFinite(block.x)).toBe(true);
+    expect(Number.isFinite(block.y)).toBe(true);
+    expect(Number.isFinite(block.width)).toBe(true);
+    expect(Number.isFinite(block.height)).toBe(true);
+  }
+  expect(page.blocks.map((block) => block.start)).toEqual([...page.blocks.map((block) => block.start)].sort((a, b) => a - b));
+});

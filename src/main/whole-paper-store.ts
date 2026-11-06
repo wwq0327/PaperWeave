@@ -9,6 +9,14 @@ const errors = new Set(["上次执行中断，请重试", "已取消，请重试
 const object = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const keys = (value: Record<string, unknown>, allowed: string[]) => Object.keys(value).every((key) => allowed.includes(key));
 const pageNumber = (page: unknown): page is number => Number.isInteger(page) && (page as number) >= 1 && (page as number) <= 2000;
+const finiteNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+const validBlocks = (blocks: unknown, start: number, end: number): boolean =>
+  Array.isArray(blocks) && blocks.every((block: unknown) =>
+    object(block) && keys(block, ["start", "end", "text", "x", "y", "width", "height"])
+    && Number.isInteger(block.start) && Number.isInteger(block.end)
+    && (block.start as number) >= start && (block.end as number) <= end && (block.end as number) > (block.start as number)
+    && typeof block.text === "string" && (block.end as number) - (block.start as number) === [...block.text].length
+    && finiteNumber(block.x) && finiteNumber(block.y) && finiteNumber(block.width) && finiteNumber(block.height));
 
 /** 不信任数据库中的 JSON；拒绝不一致、未知字段和未校验的模型结果。 */
 function validState(value: unknown): value is WholePaperRunState {
@@ -19,7 +27,7 @@ function validState(value: unknown): value is WholePaperRunState {
     const plan = value.plan.batches[i];
     const batch = value.batches[i];
     if (!object(plan) || !keys(plan, ["fragments", "pages", "text", "sendable", "reviewBoundaryBefore"]) || !Array.isArray(plan.fragments) || plan.fragments.length === 0 || !Array.isArray(plan.pages) || plan.pages.length > 50 || typeof plan.text !== "string" || [...plan.text].length > AI_LIMITS.textChars || plan.sendable !== !!plan.text.trim() || plan.reviewBoundaryBefore !== (i > 0)) return false;
-    if (!plan.fragments.every((part: unknown) => object(part) && keys(part, ["page", "start", "end", "text"]) && pageNumber(part.page) && Number.isInteger(part.start) && Number.isInteger(part.end) && (part.start as number) >= 0 && typeof part.text === "string" && (part.end as number) - (part.start as number) === [...part.text].length && (part.end as number) > (part.start as number))) return false;
+    if (!plan.fragments.every((part: unknown) => object(part) && keys(part, ["page", "start", "end", "text", "blocks"]) && pageNumber(part.page) && Number.isInteger(part.start) && Number.isInteger(part.end) && (part.start as number) >= 0 && typeof part.text === "string" && (part.end as number) - (part.start as number) === [...part.text].length && (part.end as number) > (part.start as number) && (part.blocks === undefined || validBlocks(part.blocks, part.start as number, part.end as number)))) return false;
     if (plan.fragments.map((part: { text: string }) => part.text).join("") !== plan.text || JSON.stringify([...new Set(plan.fragments.map((part: { page: number }) => part.page))]) !== JSON.stringify(plan.pages)) return false;
     if (!object(batch) || !keys(batch, ["status", "result", "error"]) || !["pending", "running", "succeeded", "failed", "skipped"].includes(batch.status as string)) return false;
     if ((batch.status === "skipped") !== !plan.sendable || (batch.status === "succeeded" ? !isAiDraft(batch.result) : batch.result !== undefined) || (batch.status === "failed" ? typeof batch.error !== "string" || !errors.has(batch.error) : batch.error !== undefined)) return false;

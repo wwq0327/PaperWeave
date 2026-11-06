@@ -125,3 +125,22 @@ test("材料建议保留 appliesTo 小问归属", () => {
   question.materials = [{ title: "材料一", content: "材料正文", source: "自制", appliesTo: ["(1)"] }];
   expect(aiQuestionToIntake(question, classification, "数学").materials).toEqual([{ title: "材料一", content: "材料正文", source: "自制", appliesTo: ["(1)"] }]);
 });
+
+test("来源锚点、材料锚点、图表与答案来源进入证据，字段级不确定进入待核", () => {
+  const question = structured();
+  question.sourceAnchors = [{ page: 2, start: 0, end: 50 }];
+  question.materials = [{ title: "材料一", content: "材料正文", source: "自制", sourceAnchors: [{ page: 2, start: 55, end: 70 }] }];
+  question.figures = [{ page: 2, start: 20, end: 40, kind: "题图", note: "第 1 题配图" }];
+  question.fieldUncertain = [{ field: "answer", note: "答案字迹模糊" }];
+  question.answerSource = "原卷答案第 3 页";
+  question.parts![0].answerSource = "原卷答案第 3 页 (1)";
+  const result = aiQuestionToIntake(question, classification, "数学");
+  expect(result.evidence).toEqual({
+    anchors: [{ page: 2, start: 0, end: 50 }],
+    materialAnchors: [{ page: 2, start: 55, end: 70 }],
+    figures: [{ page: 2, start: 20, end: 40, kind: "题图", note: "第 1 题配图" }],
+    answerSources: ["整题：原卷答案第 3 页", "(1)：原卷答案第 3 页 (1)"],
+  });
+  expect(result.uncertain).toContain("题图引用待裁切：第 2 页（题图）。");
+  expect(result.uncertain).toContain("字段待核（answer）：答案字迹模糊");
+});

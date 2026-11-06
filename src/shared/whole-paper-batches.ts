@@ -1,8 +1,20 @@
 import { AI_LIMITS, sourceUnitLabel, type AiSourceKind } from "./ai";
 
+export interface WholePaperBlock {
+  /** 页内 Unicode 码点偏移，右端不包含。 */
+  start: number;
+  end: number;
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface WholePaperPage {
   page: number;
   text: string;
+  blocks?: WholePaperBlock[];
 }
 
 export interface WholePaperFragment {
@@ -11,6 +23,7 @@ export interface WholePaperFragment {
   start: number;
   end: number;
   text: string;
+  blocks?: WholePaperBlock[];
 }
 
 export interface WholePaperBatch {
@@ -65,7 +78,8 @@ export function planWholePaperBatches(pages: WholePaperPage[], limit: number = A
       if (size + headerSize >= limit || (fragments.length > 0 && new Set(fragments.map((part) => part.page)).size === 50)) flush();
       const end = Math.min(start + limit - size - headerSize, chars.length);
       const part = chars.slice(start, end).join("");
-      fragments.push({ page: page.page, start, end, text: part });
+      const partBlocks = page.blocks?.filter((block) => block.end > start && block.start < end).map((block) => ({ ...block }));
+      fragments.push({ page: page.page, start, end, text: part, ...(partBlocks === undefined ? {} : { blocks: partBlocks }) });
       size += headerSize + end - start;
       start = end;
     }

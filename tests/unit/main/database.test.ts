@@ -75,7 +75,7 @@ test("首次建库、写入、更新并重开", () => {
   expect(reopened.getSetting("标题")).toBe("拾题成卷");
   reopened.close();
   const raw = new DatabaseSync(path);
-  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(9);
+  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(10);
   raw.close();
 });
 
@@ -89,7 +89,7 @@ test("版本 2 升级到 3 时保留设置与草稿，并建好题目表", () =>
   expect(db.getDraft()).toBe("旧草稿");
   db.close();
   const raw = new DatabaseSync(path);
-  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(9);
+  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(10);
   const tables = raw.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all().map((row) => (row as { name: string }).name);
   for (const table of ["questions", "question_versions", "materials", "material_versions", "question_material_refs", "import_batches", "import_records"]) expect(tables).toContain(table);
   raw.close();
@@ -107,7 +107,7 @@ test("版本 3 升级到 4 时保留题目与审核状态，并增加分类列",
   const db = new Database(path);
   db.close();
   const raw = new DatabaseSync(path);
-  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(9);
+  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(10);
   expect(raw.prepare("SELECT content_status, answer_status, search_text FROM question_versions WHERE id = 'v1'").get()).toEqual({ content_status: "pending", answer_status: "approved", search_text: "" });
   const migrated = JSON.parse((raw.prepare("SELECT content FROM question_versions WHERE id = 'v1'").get() as { content: string }).content);
   expect(migrated.subQuestions[0].originalScore).toBe(2);
@@ -156,7 +156,7 @@ test("版本 4 升级到 6 时补齐原分值与小问材料，并建好组卷�
   const db = new Database(path);
   db.close();
   const raw = new DatabaseSync(path);
-  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(9);
+  expect(raw.prepare("PRAGMA user_version").get()?.user_version).toBe(10);
   const migrated = JSON.parse((raw.prepare("SELECT content FROM question_versions WHERE id = 'v1'").get() as { content: string }).content);
   expect(migrated.subQuestions[0].originalScore).toBe(2);
   expect(migrated.subQuestions[1].originalScore).toBeNull();

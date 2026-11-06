@@ -3,6 +3,7 @@ import { sourceUnitLabel, type AiSourceKind } from "../shared/ai";
 import type { AiConfig } from "../shared/ai-config";
 import type { AnswerStatus, Classification, ReviewStatus, Stage } from "../shared/question";
 import type { WholePaperIntakeItem, WholePaperIntakeSummary, WholePaperQuality } from "../shared/whole-paper-intake";
+import type { WholePaperCoverage } from "../shared/whole-paper-coverage";
 import type { WholePaperTaskDetail, WholePaperTaskView } from "../shared/whole-paper-view";
 
 const status = { pending: "待处理", running: "进行中", succeeded: "已处理", failed: "失败待重试", skipped: "无文字" };
@@ -69,7 +70,7 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
   const [detail, setDetail] = useState<WholePaperTaskDetail | null>(null);
   const [busy, setBusy] = useState(false);
   const [running, setRunning] = useState<string | null>(null);
-  const [confirmation, setConfirmation] = useState<{ task: WholePaperTaskView; config: AiConfig & { hasKey: boolean } } | null>(null);
+  const [confirmation, setConfirmation] = useState<{ task: WholePaperTaskView; config: AiConfig & { hasKey: boolean }; auto?: boolean } | null>(null);
   const [error, setError] = useState("");
   const [intakes, setIntakes] = useState<WholePaperIntakeItem[]>([]);
   const [intakeFilter, setIntakeFilter] = useState<IntakeFilter>("all");
@@ -77,6 +78,7 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
   const [knowledgeText, setKnowledgeText] = useState("");
   const [intakeConfirm, setIntakeConfirm] = useState(false);
   const [intakeBusy, setIntakeBusy] = useState(false);
+  const [coverage, setCoverage] = useState<WholePaperCoverage | null>(null);
   const [createNotice, setCreateNotice] = useState("");
   const [createAlert, setCreateAlert] = useState("");
   const [auditNotice, setAuditNotice] = useState("");
@@ -115,11 +117,51 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
     try { setConfirmation({ task, config: await window.paperweave.getAiConfig() }); }
     catch (reason) { setError(`读取模型设置失败：${String(reason)}`); }
   }
+  async function autoPrepare() {
+    if (!fileId || !sectionId || busy || running) return;
+    setBusy(true); setError("");
+    try {
+      const task = await window.paperweave.prepareWholePaper(examId, sectionId, fileId);
+      setTasks((previous) => [...previous, task]); setSelected(task.id);
+      setConfirmation({ task, config: await window.paperweave.getAiConfig(), auto: true });
+    } catch (reason) { setError(`准备自动录题失败：${String(reason)}`); }
+    finally { setBusy(false); }
+  }
+  async function autoIntake(taskId: string) {
+    const summary = await window.paperweave.createWholePaperIntake(examId, taskId, intakeForm);
+    setCreateNotice(intakeSummaryText(summary));
+    const rows = await window.paperweave.listWholePaperIntakes(examId, taskId);
+    setIntakes(rows);
+    const report = await window.paperweave.getWholePaperCoverage(examId, taskId);
+    setCoverage(report);
+    await refresh().catch(() => undefined);
+    const current = (await window.paperweave.listWholePaper(examId)).find((entry) => entry.id === taskId);
+    const reasons: string[] = [];
+    if (!current || current.batches.some((batch) => batch.status !== "succeeded" && batch.status !== "skipped")) reasons.push("仍有批次未成功");
+    if (report.percent !== 100) reasons.push(`覆盖率 ${report.percent}%`);
+    if (report.gaps.length > 0) reasons.push(`存在 ${report.gaps.length} 处未归属或重叠片段`);
+    if (report.duplicates.length > 0) reasons.push(`存在 ${report.duplicates.length} 个重号`);
+    if (report.missingAnchors.length > 0) reasons.push(`有 ${report.missingAnchors.length} 题缺少来源锚点`);
+    const ids = rows.filter(intakeSelectable).map((row) => row.id);
+    if (reasons.length === 0 && ids.length === 0) reasons.push("没有可自动确认的题目");
+    if (reasons.length > 0) {
+      setAuditAlert(`未自动确认：${reasons.join("；")}。请核对后手动确认。`);
+      return;
+    }
+    const result = await window.paperweave.approveWholePaperIntakes(examId, taskId, ids);
+    setSelectedIds(new Set());
+    await refreshIntakes().catch(() => undefined);
+    setAuditNotice(`自动通过 ${result.approved} 题。`);
+    if (result.rejected.length > 0) setAuditAlert(`有 ${result.rejected.length} 题未确认通过：${result.rejected.map((entry) => entry.reason).join("；")}`);
+  }
   async function run() {
     if (!confirmation || running) return;
-    const { task, config } = confirmation;
+    const { task, config, auto } = confirmation;
     setConfirmation(null); setRunning(task.id); setError("");
-    try { await window.paperweave.runWholePaper(examId, task.id, task.revision, { baseUrl: config.baseUrl, textModel: config.textModel }); }
+    try {
+      await window.paperweave.runWholePaper(examId, task.id, task.revision, { baseUrl: config.baseUrl, textModel: config.textModel });
+      if (auto) await autoIntake(task.id);
+    }
     catch (reason) { setError(`执行任务失败：${String(reason)}`); }
     finally { await refresh().catch(() => undefined); setRunning(null); }
   }
@@ -140,6 +182,17 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
     if (task) window.paperweave.listWholePaperIntakes(examId, task.id).then((rows) => { if (live) setIntakes(rows); }).catch((reason: unknown) => { if (live) setAuditAlert(`读取建档记录失败：${String(reason)}`); });
     return () => { live = false; };
   }, [examId, task?.id]);
+  useEffect(() => {
+    let live = true;
+    setCoverage(null);
+    if (task) window.paperweave.getWholePaperCoverage(examId, task.id).then((result) => { if (live) setCoverage(result); }).catch((reason: unknown) => { if (live) setError(`读取覆盖对账失败：${String(reason)}`); });
+    return () => { live = false; };
+  }, [examId, task?.id, task?.revision]);
+  async function refreshCoverage() {
+    if (!task) { setCoverage(null); return; }
+    try { setCoverage(await window.paperweave.getWholePaperCoverage(examId, task.id)); }
+    catch (reason) { setError(`读取覆盖对账失败：${String(reason)}`); }
+  }
   async function refreshIntakes() {
     if (!task) { setIntakes([]); setSelectedIds(new Set()); return; }
     const rows = await window.paperweave.listWholePaperIntakes(examId, task.id);
@@ -249,6 +302,7 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
     <header><h2>整卷任务</h2></header>
     <p>{sourceKind === "docx" ? "准备 DOCX 段落文字的整卷任务" : "准备文字 PDF 的整卷任务"}，当前分部：{sectionName || "未选择"}。准备步骤不发送模型，也不创建题目。</p>
     <button onClick={() => void prepare()} disabled={busy || !fileId || !sectionId}>{busy ? "正在准备…" : "准备整卷文字任务"}</button>
+    <button onClick={() => void autoPrepare()} disabled={busy || !!running || !fileId || !sectionId}>自动录题并建档</button>
     {error && <p role="alert" className="error">{error}</p>}
     {tasks.length === 0 ? <p className="muted">尚无整卷任务。</p> : <ul>{tasks.map((entry, index) => <li key={entry.id}><button onClick={() => { setSelected(entry.id); setConfirmation(null); }}>查看任务 {index + 1}</button> · {entry.batches.length} 批</li>)}</ul>}
     {task && <div aria-label="整卷任务详情" role="region">
@@ -257,6 +311,20 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
         ? `第 ${task.emptyPages.join("、")} 段没有文字，尚未处理。`
         : `第 ${task.emptyPages.join("、")} 页没有可提取文字，可能是扫描页，尚未处理。`}</p>}
       <ul>{task.batches.map((batch, index) => <li key={index}>第 {index + 1} 批 · 原卷{unitList(batch.pages)} · {status[batch.status]}{batch.reviewBoundaryBefore ? " · 跨批边界待核" : ""}</li>)}</ul>
+      {coverage && <section aria-label="原卷覆盖" role="region">
+        <h3>原卷覆盖</h3>
+        <p>覆盖率 {coverage.percent}% · 页数 {coverage.pages.length}</p>
+        <ul>
+          <li>未归属片段：{coverage.gaps.filter((gap) => gap.kind === "unassigned").length}</li>
+          <li>重叠：{coverage.gaps.filter((gap) => gap.kind === "overlap").length}</li>
+          <li>重号：{coverage.duplicates.length}</li>
+          <li>缺锚点：{coverage.missingAnchors.length}</li>
+        </ul>
+        {coverage.gaps.length > 0 && <ul>{coverage.gaps.slice(0, 20).map((gap, index) => <li key={index}>第 {gap.page} {taskKind === "docx" ? "段" : "页"} · {gap.kind === "overlap" ? "重叠" : "未归属"}：{gap.text.slice(0, 80) || "空白"}</li>)}</ul>}
+        {coverage.duplicates.length > 0 && <ul>{coverage.duplicates.slice(0, 20).map((duplicate) => <li key={duplicate.originalNumber}>重号「{duplicate.originalNumber}」：第 {duplicate.pages.join("、")} {taskKind === "docx" ? "段" : "页"}</li>)}</ul>}
+        {coverage.missingAnchors.length > 0 && <ul>{coverage.missingAnchors.slice(0, 20).map((entry, index) => <li key={index}>缺锚点：题 {entry.originalNumber || "待核"}（第 {entry.page} {taskKind === "docx" ? "段" : "页"}）</li>)}</ul>}
+        <button onClick={() => void refreshCoverage()}>重新对账</button>
+      </section>}
       {detail?.results.map((result, batchIndex) => result && <section key={batchIndex} aria-label={`第 ${batchIndex + 1} 批识别结果`}>
         <h3>第 {batchIndex + 1} 批识别结果 · 均待核对</h3>
         {result.notes.map((note, index) => <p key={index}>整体提示：{note}</p>)}
@@ -352,8 +420,8 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
     {confirmation && <section aria-label="确认整卷发送" role="region">
       <p>服务：{confirmation.config.baseUrl} · 文字模型：{confirmation.config.textModel}</p>
       <p>将发送 {toSend.length} 个批次，原卷第 {pages.join("、")} {confirmationKind === "docx" ? "段" : "页"}的提取文字；费用按服务商规则计收。</p>
-      <p>{confirmationKind === "docx" ? "未识别段" : "未识别页"}：{confirmation.task.emptyPages.length ? confirmation.task.emptyPages.join("、") : "无"}。请确认发送范围与费用后继续；结果不会自动入库。</p>
-      <button onClick={() => void run()}>确认发送整卷文字</button><button onClick={() => setConfirmation(null)}>取消发送</button>
+      <p>{confirmationKind === "docx" ? "未识别段" : "未识别页"}：{confirmation.task.emptyPages.length ? confirmation.task.emptyPages.join("、") : "无"}。{confirmation.auto ? "执行后自动建档；只有覆盖干净时才会自动确认通过，异常仍保留待核。" : "请确认发送范围与费用后继续；结果不会自动入库。"}</p>
+      <button onClick={() => void run()}>{confirmation.auto ? "确认发送并自动建档" : "确认发送整卷文字"}</button><button onClick={() => setConfirmation(null)}>取消发送</button>
     </section>}
   </section>;
 }
