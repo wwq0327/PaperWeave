@@ -39,6 +39,8 @@ export interface AiMaterialSuggestion {
   title: string;
   content: string;
   source: string;
+  /** 材料所属小问标签；缺省表示模型未标明归属。 */
+  appliesTo?: string[];
 }
 
 export interface AiQuestion {
@@ -63,7 +65,7 @@ export interface AiDraft {
 
 const questionKeys = new Set(["stem", "subquestions", "options", "tags", "uncertain", "page", "answer", "parts", "materials", "questionType", "knowledgePoints", "originalNumber"]);
 const partKeys = new Set(["label", "prompt", "options", "answer", "explanation", "score", "uncertain"]);
-const materialKeys = new Set(["title", "content", "source"]);
+const materialKeys = new Set(["title", "content", "source", "appliesTo"]);
 const text = (x: unknown, max = 8000): x is string => typeof x === "string" && x.length <= max;
 const textList = (x: unknown, maxItems = 30, max = 8000): x is string[] =>
   Array.isArray(x) && x.length <= maxItems && x.every((item) => text(item, max));
@@ -82,6 +84,7 @@ function isMaterialSuggestion(value: unknown): value is AiMaterialSuggestion {
   if (typeof value !== "object" || value === null) return false;
   const material = value as Record<string, unknown>;
   if (!Object.keys(material).every((key) => materialKeys.has(key))) return false;
+  if (material.appliesTo !== undefined && (!Array.isArray(material.appliesTo) || material.appliesTo.length > 30 || !material.appliesTo.every((label) => typeof label === "string" && label.trim() !== "" && label.length <= 20))) return false;
   return text(material.title, 200) && material.title.trim() !== "" && text(material.content) && material.content.trim() !== "" && text(material.source, 500);
 }
 

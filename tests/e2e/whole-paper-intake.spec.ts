@@ -55,26 +55,6 @@ async function intake(page: Page) {
   await confirmation.getByRole("button", { name: "确认建档" }).click();
 }
 
-/** 题目审核页把该题的共享材料推进到已审核，返回整卷面板。 */
-async function approveFirstMaterial(page: Page, stem: string) {
-  await page.getByRole("button", { name: "返回考试原卷" }).click();
-  await page.getByRole("button", { name: "返回录题草稿" }).click();
-  await page.getByRole("button", { name: "题目审核" }).click();
-  const card = page.locator(".paper-card", { hasText: stem });
-  await expect(card).toBeVisible();
-  await card.getByRole("button", { name: "查看并审核" }).click();
-  const detail = page.getByRole("region", { name: "题目审核详情" });
-  await expect(detail).toBeVisible();
-  const material = detail.getByRole("region", { name: "题目材料" });
-  await material.getByRole("button", { name: "提交材料待核" }).click();
-  await material.getByRole("button", { name: "通过材料审核" }).click();
-  await expect(page.getByText("材料已通过审核。", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "返回录题草稿" }).click();
-  await page.getByRole("button", { name: "考试原卷" }).click();
-  await page.locator(".paper-card").filter({ hasText: "九年级数学单元卷" }).getByRole("button", { name: "进入录题" }).click();
-  await page.getByRole("region", { name: "整卷任务", exact: true }).getByRole("button", { name: "查看任务 1" }).click();
-}
-
 /** 已有一道同卷分部、原题号「1」的已审核题，用来触发重复候选。 */
 function seedApprovedDuplicate(dir: string) {
   const db = new Database(path.join(dir, "paperweave.sqlite"));
@@ -114,22 +94,34 @@ test("整卷建档：分类继承、材料门槛与整卷审核批量通过", as
     const review = page.getByRole("region", { name: "整卷审核" });
     await expect(review).toContainText("第 1 批 · 原卷第 1 页 · 题 1");
     await expect(review).toContainText("固定响应：下列句子中加点词语使用正确的一项是");
-    await expect(review).toContainText("材料「固定响应材料」尚未审核");
+    await expect(review).toContainText("材料草稿待审核：固定响应材料");
     const firstCheckbox = review.getByRole("checkbox", { name: "选择第 1 批第 1 题" });
+    const secondCheckbox = review.getByRole("checkbox", { name: "选择第 1 批第 2 题" });
     await expect(firstCheckbox).toBeDisabled();
+    await expect(secondCheckbox).toBeDisabled();
 
-    // 材料未审核时不能批量通过；先到题目审核页推进材料，再回来批量确认。
-    await approveFirstMaterial(page, "固定响应：下列句子中加点词语使用正确的一项是");
-    const reviewAgain = page.getByRole("region", { name: "整卷审核" });
-    await expect(reviewAgain.getByRole("checkbox", { name: "选择第 1 批第 1 题" })).toBeEnabled();
-    await expect(reviewAgain.getByRole("checkbox", { name: "选择第 1 批第 2 题" })).toBeEnabled();
-    await reviewAgain.getByRole("checkbox", { name: "选择第 1 批第 1 题" }).check();
-    await reviewAgain.getByRole("checkbox", { name: "选择第 1 批第 2 题" }).check();
-    await reviewAgain.getByRole("button", { name: /批量确认通过/ }).click();
+    // 材料在整卷审核区集中审核；通过后材料类异常自动消除，其余异常仍需教师逐题处理。
+    const materials = review.getByRole("region", { name: "整卷材料审核" });
+    await expect(materials).toContainText("固定响应材料");
+    await materials.getByRole("button", { name: "材料全部确认通过" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "已确认 1 份材料通过" })).toBeVisible();
+    await expect(firstCheckbox).toBeDisabled();
+    await expect(review).not.toContainText("材料草稿待审核：固定响应材料");
+
+    const firstRow = review.locator("li.intake-review-row").filter({ hasText: "· 题 1" });
+    const secondRow = review.locator("li.intake-review-row").filter({ hasText: "· 题 2" });
+    await firstRow.getByRole("button", { name: "标记已处理" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "已标记该题异常处理完成" })).toBeVisible();
+    await secondRow.getByRole("button", { name: "标记已处理" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "已标记该题异常处理完成" })).toBeVisible();
+    await expect(firstCheckbox).toBeEnabled();
+    await expect(secondCheckbox).toBeEnabled();
+
+    await review.getByRole("button", { name: /确认全部自动通过项/ }).click();
     await expect(page.getByRole("status").filter({ hasText: "已确认通过 2 题" })).toBeVisible();
-    await expect(reviewAgain).toContainText("内容已通过");
-    await reviewAgain.getByRole("button", { name: "已通过" }).click();
-    await expect(reviewAgain.locator("li")).toHaveCount(2);
+    await expect(review).toContainText("内容已通过");
+    await review.getByRole("button", { name: "已通过" }).click();
+    await expect(review.locator("li.intake-review-row")).toHaveCount(2);
   } finally {
     await closeApp(app);
     rmSync(dir, { recursive: true, force: true });
@@ -172,7 +164,7 @@ test("重复候选：同卷同号记录候选，建修订版追加版本且不�
     await importExam(page, app);
     await prepareAndRun(page);
     await intake(page);
-    await expect(page.getByRole("status").filter({ hasText: "已建档 1 题，重复候选 1 题" })).toBeVisible();
+    await expect(page.getByRole("status").filter({ hasText: /已建档 1 题.*重复候选 1 题/ })).toBeVisible();
     const review = page.getByRole("region", { name: "整卷审核" });
     await expect(review).toContainText("原题号「1」已存在");
     await review.getByRole("button", { name: "建修订版" }).click();

@@ -95,3 +95,10 @@ test("旧格式没有结构化小问时仍可采纳为文字草稿", () => {
   ]);
   expect(result.answer).toBe("4");
 });
+
+test("材料建议可携带 appliesTo 小问归属，并拒绝非法归属", () => {
+  const base = { stem: "题干", subquestions: [], options: [], tags: [], uncertain: [], page: 1 };
+  expect(isAiDraft({ questions: [{ ...base, materials: [{ title: "材料一", content: "正文", source: "自制", appliesTo: ["(1)", "(2)"] }] }], notes: [] })).toBe(true);
+  expect(isAiDraft({ questions: [{ ...base, materials: [{ title: "材料一", content: "正文", source: "自制", appliesTo: "全部" }] }], notes: [] })).toBe(false);
+  expect(isAiDraft({ questions: [{ ...base, materials: [{ title: "材料一", content: "正文", source: "自制", appliesTo: [""] }] }], notes: [] })).toBe(false);
+});

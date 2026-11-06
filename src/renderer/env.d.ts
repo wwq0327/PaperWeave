@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import type { AiDraftResult, AiInput } from "../shared/ai";
 import type { WholePaperTaskDetail, WholePaperTaskView } from "../shared/whole-paper-view";
-import type { WholePaperIntakeItem, WholePaperIntakeSummary } from "../shared/whole-paper-intake";
+import type { WholePaperApprovalResult, WholePaperIntakeItem, WholePaperIntakeSummary } from "../shared/whole-paper-intake";
 import type { AiConfig } from "../shared/ai-config";
 import type { BackupSummary } from "../shared/backup";
 import type { BasketSelection } from "../shared/basket";
@@ -102,7 +102,8 @@ declare global {
       listWholePaper(examId: string): Promise<WholePaperTaskView[]>;
       createWholePaperIntake(examId: string, taskId: string, classification: unknown): Promise<WholePaperIntakeSummary>;
       listWholePaperIntakes(examId: string, taskId: string): Promise<WholePaperIntakeItem[]>;
-      resolveWholePaperIntake(examId: string, taskId: string, recordId: string, action: "skip" | "revise"): Promise<void>;
+      resolveWholePaperIntake(examId: string, taskId: string, recordId: string, action: "skip" | "revise" | "resolve" | "exclude"): Promise<void>;
+      approveWholePaperIntakes(examId: string, taskId: string, recordIds: string[]): Promise<WholePaperApprovalResult>;
       getExamFileText(fileId: string): Promise<{ pages: { page: number; text: string }[]; hasText: boolean }>;
       listExamQuestions(examId: string): Promise<ExamQuestionSummary[]>;
       scanImports(kind: "tiku" | "mathvault"): Promise<{ status: "canceled" } | { status: "scanned"; scan: ImportScanView }>;

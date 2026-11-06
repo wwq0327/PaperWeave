@@ -609,3 +609,10 @@ export function buildContent(form: IntakeForm): IntakeBuildResult {
 export function answerPresent(content: QuestionContent): boolean {
   return content.subQuestions.some((sub) => sub.answers.some((answer) => hasContent(answer.blocks) || answer.variants.length > 0));
 }
+
+/** 缺少答案的小问标签；自动录题逐小问判断完整性，避免“有任一答案即整题可过”。 */
+export function missingAnswerLabels(content: QuestionContent): string[] {
+  return content.subQuestions
+    .filter((sub) => !sub.answers.some((answer) => hasContent(answer.blocks) || answer.variants.length > 0))
+    .map((sub) => sub.originalLabel.trim() || sub.id);
+}

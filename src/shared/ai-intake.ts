@@ -9,7 +9,7 @@ export interface AiIntakeResult {
   newTags: string[];
 }
 
-const slotHint = "作答位置需手工录入：AI 不生成空位，请在表单中补录。";
+export const aiSlotHint = "作答位置需手工录入：AI 不生成空位，请在表单中补录。";
 const textBlock = (text: string): IntakeBlock[] => text.trim() ? [{ kind: "text", text }] : [];
 
 function partSub(part: NonNullable<AiQuestion["parts"]>[number], index: number): IntakeSubQuestion {
@@ -35,6 +35,10 @@ export function aiQuestionToIntake(
   const parts = question.parts ?? [];
   const legacy = parts.length === 0 && question.subquestions.length > 0;
   const single = parts.length === 0 && question.subquestions.length === 0;
+  const topAnswer = question.answer?.trim() ?? "";
+  const answerNotes: string[] = [];
+  if (topAnswer && legacy) answerNotes.push("整题答案未能对应到具体小问，请核对。");
+  if (topAnswer && parts.length > 0) answerNotes.push("模型同时返回整题答案和小问答案，请核对。");
   let subs: IntakeSubQuestion[];
   if (parts.length > 0) {
     subs = parts.map(partSub);
@@ -46,7 +50,7 @@ export function aiQuestionToIntake(
       options: index === 0 ? question.options.map((option) => blankOption(option)) : [],
     }));
   } else {
-    subs = [{ ...blankSubQuestion(), prompt: textBlock(question.stem) }];
+    subs = [{ ...blankSubQuestion(), prompt: textBlock(question.stem), answer: textBlock(topAnswer) }];
   }
   const candidates = new Set(tagCandidates.map((point) => point.trim()).filter(Boolean));
   const knowledgePoints = [...new Set(classification.knowledgePoints.map((point) => point.trim()).filter(Boolean))];
@@ -58,8 +62,9 @@ export function aiQuestionToIntake(
   }
   const uncertain = [
     ...question.uncertain,
+    ...answerNotes,
     ...parts.flatMap((part) => part.uncertain.map((item) => `第${part.label || "?"}小问：${item}`)),
-    slotHint,
+    aiSlotHint,
   ];
   return {
     form: {
