@@ -12,7 +12,7 @@ const pageNumber = (page: unknown): page is number => Number.isInteger(page) && 
 
 /** 不信任数据库中的 JSON；拒绝不一致、未知字段和未校验的模型结果。 */
 function validState(value: unknown): value is WholePaperRunState {
-  if (!object(value) || !keys(value, ["plan", "batches"]) || !object(value.plan) || !keys(value.plan, ["batches", "emptyPages"]) || !Array.isArray(value.plan.batches) || !Array.isArray(value.plan.emptyPages) || !Array.isArray(value.batches)) return false;
+  if (!object(value) || !keys(value, ["plan", "batches"]) || !object(value.plan) || !keys(value.plan, ["sourceKind", "batches", "emptyPages"]) || (value.plan.sourceKind !== undefined && value.plan.sourceKind !== "pdf" && value.plan.sourceKind !== "docx") || !Array.isArray(value.plan.batches) || !Array.isArray(value.plan.emptyPages) || !Array.isArray(value.batches)) return false;
   if (value.plan.batches.length !== value.batches.length || value.batches.length > 20000 || !value.plan.emptyPages.every(pageNumber)) return false;
   if (value.plan.emptyPages.some((p, i, a) => i > 0 && p <= a[i - 1])) return false;
   for (let i = 0; i < value.batches.length; i++) {

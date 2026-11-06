@@ -1,4 +1,4 @@
-import { AI_LIMITS } from "./ai";
+import { AI_LIMITS, sourceUnitLabel, type AiSourceKind } from "./ai";
 
 export interface WholePaperPage {
   page: number;
@@ -24,18 +24,21 @@ export interface WholePaperBatch {
 }
 
 export interface WholePaperBatchPlan {
+  /** 缺省视为 PDF 页；旧任务数据没有此字段。 */
+  sourceKind?: AiSourceKind;
   batches: WholePaperBatch[];
   emptyPages: number[];
 }
 
-/** 向模型发送时标明每段原页；原始文本和页内偏移保持不变。 */
-export function wholePaperRequestText(batch: WholePaperBatch): string {
-  return batch.fragments.map((part) => `\n[原卷第 ${part.page} 页]\n${part.text}`).join("");
+/** 向模型发送时标明每段来源位置；原始文本和页内偏移保持不变。 */
+export function wholePaperRequestText(batch: WholePaperBatch, sourceKind: AiSourceKind = "pdf"): string {
+  return batch.fragments.map((part) => `\n[原卷${sourceUnitLabel(sourceKind, part.page)}]\n${part.text}`).join("");
 }
 
 /** 按原页顺序无损切分文字；空页单独报告，不能假定空页没有题目。 */
-export function planWholePaperBatches(pages: WholePaperPage[], limit: number = AI_LIMITS.textChars): WholePaperBatchPlan {
+export function planWholePaperBatches(pages: WholePaperPage[], limit: number = AI_LIMITS.textChars, sourceKind: AiSourceKind = "pdf"): WholePaperBatchPlan {
   if (!Number.isInteger(limit) || limit < 20 || limit > AI_LIMITS.textChars) throw new Error("分批字符上限无效");
+  if (sourceKind !== "pdf" && sourceKind !== "docx") throw new Error("来源类型无效");
   let lastPage = 0;
   const batches: WholePaperBatch[] = [];
   const emptyPages: number[] = [];
@@ -68,5 +71,5 @@ export function planWholePaperBatches(pages: WholePaperPage[], limit: number = A
     }
   }
   flush();
-  return { batches, emptyPages };
+  return { sourceKind, batches, emptyPages };
 }
