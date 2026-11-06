@@ -5,6 +5,7 @@ import { buildContent, buildContentBlocks, missingAnswerLabels } from "../shared
 import { buildSearchText, classificationProblem, type Classification, type QuestionContent, type ReviewStatus } from "../shared/question";
 import { contentReviewProblems, type ReviewMaterial } from "../shared/review";
 import { mergeWholePaperQuestions, type WholePaperCandidate } from "../shared/whole-paper-merge";
+import { locateWholePaperAnchor, wholePaperCoverage, type WholePaperCoverage } from "../shared/whole-paper-coverage";
 import {
   wholePaperIssueCodes,
   wholePaperQualities,
@@ -130,12 +131,26 @@ export class WholePaperIntake {
       else keys.forEach((key) => existing.add(key));
     }
     const tagCandidates = this.bank.knowledgePointCandidates(effective.stage, effective.subject, AI_LIMITS.tagCount);
+    const planFragments = task.state.plan.batches.flatMap((batch) => batch.fragments);
+    const pageEnds = new Map<number, number>();
+    for (const fragment of planFragments) pageEnds.set(fragment.page, Math.max(pageEnds.get(fragment.page) ?? 0, fragment.end));
+    const anchorIssueOf = (question: WholePaperCandidate["question"]): WholePaperIssue | null => {
+      const anchors = question.sourceAnchors ?? [];
+      const valid = anchors.some((anchor) => {
+        const end = pageEnds.get(anchor.page);
+        return end !== undefined && anchor.start < anchor.end && anchor.start >= 0 && anchor.end <= end;
+      });
+      if (valid) return null;
+      if (locateWholePaperAnchor(planFragments, question.originalNumber ?? "", question.page) !== undefined) return null;
+      const number = question.originalNumber?.trim() || `第 ${question.page} 页`;
+      return issue("anchor_missing", `原题号「${number}」缺少来源锚点，且无法按题号定位，请核对原卷。`);
+    };
     const candidates: WholePaperCandidate[] = [];
     task.state.batches.forEach((batch, batchIndex) => {
       if (batch.status !== "succeeded" || batch.result === undefined) return;
       batch.result.questions.forEach((question, questionIndex) => candidates.push({ batchIndex, questionIndex, question }));
     });
-    const pending: { batchIndex: number; questionIndex: number; memberKeys: string[]; evidence: WholePaperEvidence; derived: AiIntakeResult; materials: MaterialPlan[]; materialIssues: WholePaperIssue[] }[] = [];
+    const pending: { batchIndex: number; questionIndex: number; memberKeys: string[]; evidence: WholePaperEvidence; derived: AiIntakeResult; materials: MaterialPlan[]; materialIssues: WholePaperIssue[]; anchorIssue: WholePaperIssue | null }[] = [];
     for (const group of mergeWholePaperQuestions(candidates)) {
       const memberKeys = group.members.map((member) => `${member.batchIndex}:${member.questionIndex}`);
       // 任一成员已建档即整组跳过：跨批合并题不会因后续批次重跑而重复建档。
@@ -160,7 +175,7 @@ export class WholePaperIntake {
         }
       }
       const first = group.members[0];
-      pending.push({ batchIndex: first.batchIndex, questionIndex: first.questionIndex, memberKeys, evidence: derived.evidence, derived, materials, materialIssues });
+      pending.push({ batchIndex: first.batchIndex, questionIndex: first.questionIndex, memberKeys, evidence: derived.evidence, derived, materials, materialIssues, anchorIssue: anchorIssueOf(group.question) });
     }
     if (pending.length === 0) {
       return { created: 0, duplicates: 0, failed: 0, existing: existingRows.length, materials: 0, needsAttention: 0 };
@@ -189,7 +204,7 @@ export class WholePaperIntake {
         record.page = Number.isInteger(page) && page >= 1 ? page : 0;
         record.content = JSON.stringify(built.content);
         record.classification = JSON.stringify(form.classification);
-        const contentIssues = this.contentIssues(item.derived, built.content, item.materials, item.materialIssues);
+        const contentIssues = this.contentIssues(item.derived, built.content, item.materials, item.materialIssues, item.anchorIssue);
         const saved = this.intake.save({
           examId: task.examId,
           sectionId: task.sectionId,
@@ -290,6 +305,17 @@ export class WholePaperIntake {
     });
   }
 
+  coverage(taskId: string): WholePaperCoverage {
+    const task = this.tasks.get(taskId);
+    const fragments = task.state.plan.batches.flatMap((batch, index) =>
+      task.state.batches[index].status === "succeeded" ? batch.fragments : []);
+    const ignored = task.state.batches.flatMap((batch) => batch.result?.ignored ?? []);
+    const records = this.list(taskId)
+      .filter((item) => item.status !== "failed" && item.status !== "skipped")
+      .map((item) => ({ originalNumber: item.originalNumber, page: item.page, anchors: item.evidence.anchors }));
+    return wholePaperCoverage({ fragments, ignored, records });
+  }
+
   resolve(taskId: string, recordId: string, action: "skip" | "revise" | "resolve" | "exclude"): void {
     const task = this.tasks.get(taskId);
     const row = this.db.read((sqlite) => sqlite.prepare("SELECT * FROM whole_paper_intakes WHERE id = ? AND task_id = ?").get(recordId, taskId)) as unknown as IntakeRow | undefined;
@@ -381,8 +407,9 @@ export class WholePaperIntake {
     return null;
   }
 
-  private contentIssues(derived: AiIntakeResult, content: QuestionContent, materials: MaterialPlan[], materialIssues: WholePaperIssue[]): WholePaperIssue[] {
+  private contentIssues(derived: AiIntakeResult, content: QuestionContent, materials: MaterialPlan[], materialIssues: WholePaperIssue[], anchorIssue: WholePaperIssue | null): WholePaperIssue[] {
     const issues: WholePaperIssue[] = [];
+    if (anchorIssue !== null) issues.push(anchorIssue);
     const uncertain = derived.uncertain.filter((item) => item !== aiSlotHint);
     if (uncertain.length > 0) issues.push(issue("uncertain", `模型待核：${uncertain.join("；")}`));
     if (derived.newTags.length > 0) issues.push(issue("new_tag", `候选外标签建议未写入：${derived.newTags.join("、")}`));

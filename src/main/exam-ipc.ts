@@ -134,6 +134,10 @@ export function registerExams(db: Database, root: string, currentWindow: () => B
     permitted(event);
     return wholeIntake.list(ownedWholeTask(examId, taskId).id);
   });
+  ipcMain.handle("wholePaper:intakeCoverage", (event, examId: unknown, taskId: unknown) => {
+    permitted(event);
+    return wholeIntake.coverage(ownedWholeTask(examId, taskId).id);
+  });
   ipcMain.handle("wholePaper:intakeResolve", (event, examId: unknown, taskId: unknown, recordId: unknown, action: unknown) => {
     permitted(event);
     const id = text(recordId, "建档记录");

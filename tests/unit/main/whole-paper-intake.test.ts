@@ -72,7 +72,8 @@ function makeMultiBatchTask(tasks: WholePaperStore, examId: string, sectionId: s
 const part = (prompt: string, answer = "A") => ({ label: "(1)", prompt, options: [], answer, explanation: "解析", score: 3, uncertain: [] });
 const validQuestion = (originalNumber: string, stem: string, extra: Partial<AiDraft["questions"][number]> = {}) => ({
   stem, subquestions: [], options: [], tags: [], uncertain: [], page: 1,
-  parts: [part("选择正确项。")], questionType: "选择题", knowledgePoints: ["词语运用"], originalNumber, ...extra,
+  parts: [part("选择正确项。")], questionType: "选择题", knowledgePoints: ["词语运用"], originalNumber,
+  sourceAnchors: [{ page: 1, start: 0, end: 10 }], ...extra,
 });
 
 const SHARED_MATERIAL = { title: "共享材料", content: "材料正文", source: "固定响应" };
@@ -110,6 +111,27 @@ test("跨批同题号合并建档：只建一条记录，成员键与证据齐�
   expect(again.created).toBe(0);
   expect(again.existing).toBe(1);
   expect(context.exams.listQuestions(exam.id)).toHaveLength(1);
+});
+
+test("覆盖对账汇总成功批次与记录锚点", () => {
+  const context = setup();
+  const { tasks, wholeIntake, exam, section } = stores(context);
+  const task = makeTask(tasks, exam.id, section.id, draftOf(validQuestion("1", "覆盖题题干")));
+  wholeIntake.create(task.id, classification);
+  const coverage = wholeIntake.coverage(task.id);
+  expect(coverage.percent).toBe(100);
+  expect(coverage.gaps).toEqual([]);
+  expect(coverage.pages).toEqual([{ page: 1, total: 10, covered: 10 }]);
+});
+
+test("无锚点且题号无法定位时记 anchor_missing 并阻止自动通过", () => {
+  const context = setup();
+  const { tasks, wholeIntake, exam, section } = stores(context);
+  const task = makeTask(tasks, exam.id, section.id, draftOf(validQuestion("1", "无锚点题题干", { sourceAnchors: [] })));
+  wholeIntake.create(task.id, classification);
+  const item = wholeIntake.list(task.id)[0];
+  expect(item.quality).toBe("needs_attention");
+  expect(item.issues.map((entry) => entry.code)).toContain("anchor_missing");
 });
 
 test("旧记录缺少证据列时按空证据读取", () => {
