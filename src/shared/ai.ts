@@ -371,6 +371,34 @@ export function normalizeAiInput(value: unknown): { ok: true; input: AiInput } |
   return { ok: false, error: "未知的输入方式" };
 }
 
+/** 答案／评分输入只由主进程构造，仍统一校验，避免把任意内容发给模型。 */
+export function normalizeAiAnswerInput(value: unknown): { ok: true; input: AiAnswerInput } | { ok: false; error: string } {
+  if (typeof value !== "object" || value === null) return { ok: false, error: "答案输入格式无效" };
+  const input = value as Record<string, unknown>;
+  if (typeof input.sourceName !== "string" || !input.sourceName.trim() || input.sourceName.length > 255) return { ok: false, error: "答案文件名称无效" };
+  const parsed = parseContext(input.context);
+  if (!parsed.ok) return parsed;
+  if (input.mode === "answer-text") {
+    if (typeof input.text !== "string" || !pageList(input.pages)) return { ok: false, error: "答案文字或页码无效" };
+    const error = checkText(input.text);
+    if (error) return { ok: false, error };
+    return { ok: true, input: { mode: "answer-text", text: input.text, pages: input.pages, sourceName: input.sourceName, context: parsed.context } };
+  }
+  if (input.mode === "answer-images") {
+    if (!Array.isArray(input.images) || !(input.images as unknown[]).every((image) => typeof image === "object" && image !== null &&
+      typeof (image as Record<string, unknown>).dataUrl === "string" &&
+      /^data:image\/(png|jpeg);base64,/.test((image as Record<string, unknown>).dataUrl as string) &&
+      Number.isInteger((image as Record<string, unknown>).page) && ((image as Record<string, unknown>).page as number) >= 1 && ((image as Record<string, unknown>).page as number) <= 2000)) {
+      return { ok: false, error: "答案页面图格式无效" };
+    }
+    const images = input.images as { dataUrl: string; page: number }[];
+    const error = checkImages(images.map((image) => ({ bytes: base64Bytes(image.dataUrl) })));
+    if (error) return { ok: false, error };
+    return { ok: true, input: { mode: "answer-images", images, sourceName: input.sourceName, context: parsed.context } };
+  }
+  return { ok: false, error: "未知的答案输入方式" };
+}
+
 export function questionToBlocks(question: AiQuestion): { blocks: Block[]; answer: string } {
   const blocks: Block[] = [];
   const append = (value: string) => {

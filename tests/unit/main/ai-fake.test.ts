@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
-import { isAiDraft } from "../../../src/shared/ai";
-import { fakeAiDraft } from "../../../src/main/ai-fake";
+import { isAiAnswerDraft, isAiDraft } from "../../../src/shared/ai";
+import { fakeAiAnswers, fakeAiDraft } from "../../../src/main/ai-fake";
 
 const input = { mode: "text" as const, text: "\n[原卷第 1 页]\n甲乙\n[原卷第 2 页]\n丙丁", pages: [1, 2] };
 
@@ -53,4 +53,19 @@ test("clean 场景按 DOCX 输入段落逐段返回稳定题目", async () => {
   expect(draft.questions.map((question) => question.originalNumber)).toEqual(["1", "2", "3", "4"]);
   expect(draft.questions.map((question) => question.page)).toEqual([1, 2, 3, 5]);
   expect(draft.questions.every((question) => question.sourceAnchors?.length === 1)).toBe(true);
+});
+
+test("扫描页固定响应返回归一化区域且答案留空", async () => {
+  const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  const draft = await fakeAiDraft("clean", { mode: "images", images: [{ dataUrl: image, page: 3 }], scan: true });
+  expect(isAiDraft(draft)).toBe(true);
+  expect(draft.questions).toHaveLength(1);
+  expect(draft.questions[0].scanAreas).toEqual([{ page: 3, rect: { x: 0.06, y: 0.06, width: 0.88, height: 0.4 } }]);
+  expect(draft.questions[0].parts?.[0]).toMatchObject({ answer: "", score: 3 });
+});
+
+test("答案固定响应返回一题答案并通过协议校验", async () => {
+  const answers = await fakeAiAnswers("clean", { mode: "answer-text", text: "1. 4", pages: [1], sourceName: "答案.pdf" });
+  expect(isAiAnswerDraft(answers)).toBe(true);
+  expect(answers.answers).toEqual([{ originalNumber: "1", label: "", answer: "4", page: 1 }]);
 });

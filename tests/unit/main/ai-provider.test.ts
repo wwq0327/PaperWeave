@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 import { expect, test } from "vitest";
-import { requestAiDraft } from "../../../src/main/ai-provider";
+import { requestAiAnswers, requestAiDraft } from "../../../src/main/ai-provider";
 
 const draft = {
   questions: [{ stem: "题干", subquestions: [], options: [], tags: ["标签"], uncertain: [], page: 2, answer: "答案" }],
@@ -141,6 +141,44 @@ test("图像模型不支持图像输入时，提示换模型或手工录入", as
   try {
     await expect(requestAiDraft({ ...config, baseUrl: server.url }, "sk-test", { mode: "images", images: [{ dataUrl: png, page: 7 }] }))
       .rejects.toThrow("支持图像");
+  } finally {
+    await server.close();
+  }
+});
+
+test("扫描页请求使用图像模型并要求归一化 scanAreas", async () => {
+  const server = await startServer(() => ({ json: { content: [{ type: "text", text: JSON.stringify({ questions: [{ stem: "题", subquestions: [], options: [], tags: [], uncertain: [], page: 3, scanAreas: [{ page: 3, rect: { x: 0.1, y: 0.1, width: 0.8, height: 0.4 } }] }], notes: [] }) }] } }));
+  const png = "data:image/png;base64," + Buffer.alloc(8, 1).toString("base64");
+  try {
+    const result = await requestAiDraft({ ...config, baseUrl: server.url }, "sk-test", { mode: "images", images: [{ dataUrl: png, page: 3 }], scan: true });
+    expect(result.questions[0].scanAreas).toHaveLength(1);
+    const body = JSON.parse(server.received().body);
+    expect(body.model).toBe("image-model");
+    const userText = body.messages[0].content.map((block: { text?: string }) => block.text ?? "").join("\n");
+    expect(userText).toContain("scanAreas");
+    expect(userText).toContain("归一化");
+    expect(userText).toContain("不要返回 sourceAnchors");
+  } finally {
+    await server.close();
+  }
+});
+
+test("答案文字与答案图分别使用文字/图像模型并解析 answers", async () => {
+  const answer = { answers: [{ originalNumber: "1", label: "", answer: "4", page: 1 }], notes: [] };
+  const server = await startServer(() => ({ json: { content: [{ type: "text", text: JSON.stringify(answer) }] } }));
+  try {
+    const textResult = await requestAiAnswers({ ...config, baseUrl: server.url }, "sk-test", { mode: "answer-text", text: "1. 4", pages: [1], sourceName: "答案.pdf" });
+    expect(textResult).toEqual(answer);
+    let body = JSON.parse(server.received().body);
+    expect(body.model).toBe("text-model");
+    expect(body.system).toContain("answers");
+    expect(body.system).toContain("不编造");
+
+    const png = "data:image/png;base64," + Buffer.alloc(8, 1).toString("base64");
+    await requestAiAnswers({ ...config, baseUrl: server.url }, "sk-test", { mode: "answer-images", images: [{ dataUrl: png, page: 1 }], sourceName: "答案.pdf" });
+    body = JSON.parse(server.received().body);
+    expect(body.model).toBe("image-model");
+    expect(body.messages[0].content.some((block: { type: string }) => block.type === "image")).toBe(true);
   } finally {
     await server.close();
   }
