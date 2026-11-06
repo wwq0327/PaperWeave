@@ -73,7 +73,7 @@ describe("备份创建与检查", () => {
     expect(existsSync(path.join(directory, "ai-key.bin"))).toBe(false);
     expect(existsSync(path.join(directory, "database", "paperweave.sqlite-wal"))).toBe(false);
 
-    const inspected = await inspectBackup(directory, 8);
+    const inspected = await inspectBackup(directory, 9);
     expect(inspected.fileCount).toBe(5);
     expect(inspected.totalBytes).toBe(summary.totalBytes);
     const manifest = JSON.parse(readFileSync(path.join(directory, "manifest.json"), "utf8")) as { totalBytes: number; files: { path: string }[] };
@@ -119,14 +119,14 @@ describe("备份创建与检查", () => {
 
     const attachmentFile = path.join(directory, "attachments", attachment);
     writeFileSync(attachmentFile, "被篡改");
-    await expect(inspectBackup(directory, 8)).rejects.toThrow("备份文件校验失败");
+    await expect(inspectBackup(directory, 9)).rejects.toThrow("备份文件校验失败");
     rmSync(attachmentFile);
-    await expect(inspectBackup(directory, 8)).rejects.toThrow("备份文件缺失");
+    await expect(inspectBackup(directory, 9)).rejects.toThrow("备份文件缺失");
 
     const manifestPath = path.join(directory, "manifest.json");
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
     writeFileSync(manifestPath, JSON.stringify({ ...manifest, dataVersion: 99 }));
-    await expect(inspectBackup(directory, 8)).rejects.toThrow("备份数据版本高于当前应用");
+    await expect(inspectBackup(directory, 9)).rejects.toThrow("备份数据版本高于当前应用");
   });
 });
 

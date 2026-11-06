@@ -2,14 +2,15 @@ import { useEffect, useState } from "react";
 import { sourceUnitLabel, type AiSourceKind } from "../shared/ai";
 import type { AiConfig } from "../shared/ai-config";
 import type { AnswerStatus, Classification, ReviewStatus, Stage } from "../shared/question";
-import type { WholePaperIntakeItem, WholePaperIntakeSummary } from "../shared/whole-paper-intake";
+import type { WholePaperIntakeItem, WholePaperIntakeSummary, WholePaperQuality } from "../shared/whole-paper-intake";
 import type { WholePaperTaskDetail, WholePaperTaskView } from "../shared/whole-paper-view";
 
 const status = { pending: "待处理", running: "进行中", succeeded: "已处理", failed: "失败待重试", skipped: "无文字" };
 const stages: Stage[] = ["小学", "初中", "高中"];
-const intakeFilters = ["all", "pending", "duplicate", "failed", "approved"] as const;
+const intakeFilters = ["all", "attention", "pending", "duplicate", "failed", "approved"] as const;
 type IntakeFilter = (typeof intakeFilters)[number];
-const intakeFilterLabels: Record<IntakeFilter, string> = { all: "全部", pending: "待核", duplicate: "重复候选", failed: "失败", approved: "已通过" };
+const intakeFilterLabels: Record<IntakeFilter, string> = { all: "全部", attention: "异常", pending: "待核", duplicate: "重复候选", failed: "失败", approved: "已通过" };
+const qualityLabels: Record<WholePaperQuality, string> = { auto_passed: "自动通过", needs_attention: "需处理", resolved: "已处理", excluded: "已排除" };
 const contentStatusLabels: Record<ReviewStatus, string> = { draft: "内容草稿", pending: "内容待核", approved: "内容已通过" };
 const answerStatusLabels: Record<AnswerStatus, string> = { missing: "答案待补", pending: "答案待核", approved: "答案已通过" };
 const emptyClassification: Classification = { stage: "初中", subject: "", grade: "", examType: "", year: "", sourceName: "", questionType: "", knowledgePoints: [] };
@@ -29,11 +30,13 @@ function intakeRowLabel(row: WholePaperIntakeItem, sourceKind: AiSourceKind): st
 }
 
 function intakeSelectable(row: WholePaperIntakeItem): boolean {
-  return (row.status === "created" || row.status === "revised") && row.problems.length === 0 && row.contentStatus !== "approved";
+  return (row.status === "created" || row.status === "revised") && (row.quality === "auto_passed" || row.quality === "resolved")
+    && row.contentStatus !== "approved" && row.materials.every((material) => material.status === "approved");
 }
 
 function intakeMatches(row: WholePaperIntakeItem, filter: IntakeFilter): boolean {
   if (filter === "all") return true;
+  if (filter === "attention") return row.quality === "needs_attention";
   if (filter === "pending") return (row.status === "created" || row.status === "revised") && row.contentStatus !== "approved";
   if (filter === "duplicate") return row.status === "duplicate";
   if (filter === "failed") return row.status === "failed";
@@ -41,7 +44,7 @@ function intakeMatches(row: WholePaperIntakeItem, filter: IntakeFilter): boolean
 }
 
 function intakeSummaryText(summary: WholePaperIntakeSummary): string {
-  const parts = [`已建档 ${summary.created} 题`, `重复候选 ${summary.duplicates} 题`, `失败 ${summary.failed} 题`];
+  const parts = [`已建档 ${summary.created} 题`, `需处理 ${summary.needsAttention} 题`, `重复候选 ${summary.duplicates} 题`, `失败 ${summary.failed} 题`];
   if (summary.existing > 0) parts.push(`已有 ${summary.existing} 题`);
   if (summary.materials > 0) parts.push(`新建材料 ${summary.materials} 份`);
   return `${parts.join("，")}。`;
@@ -90,6 +93,14 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
     const timer = setInterval(() => { void refresh().catch(() => undefined); }, 1000);
     return () => clearInterval(timer);
   }, [running, examId]);
+  useEffect(() => {
+    let live = true;
+    window.paperweave.getExam(examId).then(({ exam }) => {
+      if (!live) return;
+      setIntakeForm((current) => current.subject ? current : { stage: exam.stage, subject: exam.subject, grade: exam.grade, examType: exam.examType, year: exam.year, sourceName: exam.sourceName, questionType: "", knowledgePoints: [] });
+    }).catch(() => undefined);
+    return () => { live = false; };
+  }, [examId]);
   async function prepare() {
     if (!fileId || !sectionId || busy) return;
     setBusy(true); setError("");
@@ -158,26 +169,60 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
       setAuditAlert(`处理重复候选失败：${String(reason)}`);
     } finally { setIntakeBusy(false); }
   }
-  async function approveSelected() {
-    if (!task || intakeBusy || selectedIds.size === 0) return;
+  async function approveRecords(ids: string[]) {
+    if (!task || intakeBusy || ids.length === 0) return;
     setIntakeBusy(true); setAuditAlert(""); setAuditNotice("");
-    const targets = intakes.filter((row) => selectedIds.has(row.id));
-    let ok = 0;
-    const failures: string[] = [];
     try {
-      for (const row of targets) {
-        const label = `第 ${row.batchIndex + 1} 批第 ${row.questionIndex + 1} 题`;
-        try {
-          if (row.versionId === null) throw new Error("缺少最新题目版本");
-          await window.paperweave.setQuestionContentStatus(row.versionId, "approved");
-          if (row.answerStatus === "pending") await window.paperweave.setQuestionAnswerStatus(row.versionId, "approved");
-          ok += 1;
-        } catch (reason) { failures.push(`${label}：${String(reason)}`); }
-      }
-      setAuditNotice(`已确认通过 ${ok} 题。`);
+      const result = await window.paperweave.approveWholePaperIntakes(examId, task.id, ids);
+      const byId = new Map(intakes.map((row) => [row.id, row]));
+      const failures = result.rejected.map((entry) => {
+        const row = byId.get(entry.id);
+        return `${row ? `第 ${row.batchIndex + 1} 批第 ${row.questionIndex + 1} 题` : entry.id}：${entry.reason}`;
+      });
+      setAuditNotice(`已确认通过 ${result.approved} 题。`);
       if (failures.length > 0) setAuditAlert(`有 ${failures.length} 题未确认通过：${failures.join("；")}`);
       setSelectedIds(new Set());
       await refreshIntakes().catch(() => undefined);
+    } catch (reason) {
+      setAuditAlert(`批量确认失败：${String(reason)}`);
+    } finally { setIntakeBusy(false); }
+  }
+  function approveSelected() { return approveRecords([...selectedIds]); }
+  function approveAutoPassed() {
+    return approveRecords(intakes.filter(intakeSelectable).map((row) => row.id));
+  }
+  async function resolveQuality(row: WholePaperIntakeItem, action: "resolve" | "exclude") {
+    if (!task || intakeBusy) return;
+    setIntakeBusy(true); setAuditAlert(""); setAuditNotice("");
+    try {
+      await window.paperweave.resolveWholePaperIntake(examId, task.id, row.id, action);
+      await refreshIntakes().catch(() => undefined);
+      setAuditNotice(action === "resolve" ? "已标记该题异常处理完成。" : "已排除该题，不再参与批量确认。");
+    } catch (reason) {
+      setAuditAlert(`更新质量状态失败：${String(reason)}`);
+    } finally { setIntakeBusy(false); }
+  }
+  async function advanceMaterials(target: "pending" | "approved") {
+    if (!task || intakeBusy) return;
+    setIntakeBusy(true); setAuditAlert(""); setAuditNotice("");
+    try {
+      const versions = new Map<string, ReviewStatus>();
+      for (const row of intakes) {
+        if (row.status !== "created" && row.status !== "revised") continue;
+        for (const material of row.materials) versions.set(material.versionId, material.status);
+      }
+      let count = 0;
+      for (const [versionId, current] of versions) {
+        if (target === "pending" && current === "draft") { await window.paperweave.setMaterialStatus(versionId, "pending"); count += 1; }
+        if (target === "approved") {
+          if (current === "draft") await window.paperweave.setMaterialStatus(versionId, "pending");
+          if (current !== "approved") { await window.paperweave.setMaterialStatus(versionId, "approved"); count += 1; }
+        }
+      }
+      await refreshIntakes().catch(() => undefined);
+      setAuditNotice(target === "pending" ? `已提交 ${count} 份材料待核。` : `已确认 ${count} 份材料通过。`);
+    } catch (reason) {
+      setAuditAlert(`材料状态更新失败：${String(reason)}`);
     } finally { setIntakeBusy(false); }
   }
   function toggleSelected(id: string, checked: boolean) {
@@ -197,6 +242,9 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
   const materialCount = succeededResults.reduce((sum, result) => sum + result.questions.reduce((count, question) => count + (question.materials?.length ?? 0), 0), 0);
   const failedBatches = task?.batches.filter((batch) => batch.status === "failed").length ?? 0;
   const visibleIntakes = intakes.filter((row) => intakeMatches(row, intakeFilter));
+  const autoPassedIds = intakes.filter(intakeSelectable).map((row) => row.id);
+  const materialVersions = [...new Map(intakes.filter((row) => row.status === "created" || row.status === "revised").flatMap((row) => row.materials).map((material) => [material.versionId, material])).values()];
+  const pendingMaterialCount = materialVersions.filter((material) => material.status !== "approved").length;
   return <section className="paper-panel" aria-label="整卷任务">
     <header><h2>整卷任务</h2></header>
     <p>{sourceKind === "docx" ? "准备 DOCX 段落文字的整卷任务" : "准备文字 PDF 的整卷任务"}，当前分部：{sectionName || "未选择"}。准备步骤不发送模型，也不创建题目。</p>
@@ -256,7 +304,15 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
     </section>}
     {task && intakes.length > 0 && <section className="paper-panel" aria-label="整卷审核" role="region">
       <h2>整卷审核</h2>
-      <p className="muted">识别结果均为待核草稿；逐题核对后勾选并批量确认通过，才会进入题库。</p>
+      <p className="muted">系统自动校验后，只有无异常的题目可直接确认；异常题先处理或排除，再批量通过。</p>
+      {materialVersions.length > 0 && <section aria-label="整卷材料审核" role="region">
+        <h3>材料审核（{materialVersions.length} 份，待审 {pendingMaterialCount} 份）</h3>
+        <ul>{materialVersions.map((material) => <li key={material.versionId}>{material.title} · {material.status === "approved" ? "已通过" : material.status === "pending" ? "待核" : "草稿"}</li>)}</ul>
+        <div className="paper-inline">
+          <button onClick={() => void advanceMaterials("pending")} disabled={intakeBusy || materialVersions.every((material) => material.status !== "draft")}>材料全部提交待核</button>
+          <button onClick={() => void advanceMaterials("approved")} disabled={intakeBusy || pendingMaterialCount === 0}>材料全部确认通过</button>
+        </div>
+      </section>}
       <div className="intake-filters">{intakeFilters.map((filter) => <button key={filter} aria-pressed={intakeFilter === filter} onClick={() => setIntakeFilter(filter)}>{intakeFilterLabels[filter]}</button>)}</div>
       {visibleIntakes.length === 0 ? <p className="muted">当前筛选没有记录。</p> : <ul>
         {visibleIntakes.map((row) => {
@@ -267,13 +323,18 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
             <div>
               <p><strong>{intakeRowLabel(row, taskKind)}</strong>{row.status === "duplicate" ? " · 重复候选" : row.status === "failed" ? " · 建档失败" : row.status === "skipped" ? " · 已跳过" : ""}</p>
               {row.preview && <p>{row.preview}</p>}
-              <p><span className="intake-badge">{contentText}</span> <span className="intake-badge">{answerText}</span></p>
+              <p><span className="intake-badge">{qualityLabels[row.quality]}</span> <span className="intake-badge">{contentText}</span> <span className="intake-badge">{answerText}</span></p>
               {row.message && <p className="muted">{row.message}</p>}
+              {row.issues.length > 0 && <ul>{row.issues.map((entry, index) => <li key={index}>{entry.message}</li>)}</ul>}
               {row.problems.length > 0 && <ul>{row.problems.map((problem, index) => <li key={index}>{problem}</li>)}</ul>}
               <div className="paper-inline">
                 {row.status === "duplicate" && <>
                   <button onClick={() => void resolveDuplicate(row, "skip")} disabled={intakeBusy}>跳过</button>
                   <button onClick={() => void resolveDuplicate(row, "revise")} disabled={intakeBusy}>建修订版</button>
+                </>}
+                {(row.status === "created" || row.status === "revised") && row.quality === "needs_attention" && <>
+                  <button onClick={() => void resolveQuality(row, "resolve")} disabled={intakeBusy}>标记已处理</button>
+                  <button onClick={() => void resolveQuality(row, "exclude")} disabled={intakeBusy}>排除</button>
                 </>}
                 {row.page > 0 && <button onClick={() => onPageChange(row.page)}>{taskKind === "docx" ? "定位原段落" : "定位原页"}</button>}
               </div>
@@ -281,7 +342,10 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
           </li>;
         })}
       </ul>}
-      <button onClick={() => void approveSelected()} disabled={intakeBusy || selectedIds.size === 0}>批量确认通过({selectedIds.size})</button>
+      <div className="paper-inline">
+        <button onClick={() => void approveAutoPassed()} disabled={intakeBusy || autoPassedIds.length === 0}>确认全部自动通过项({autoPassedIds.length})</button>
+        <button onClick={() => void approveSelected()} disabled={intakeBusy || selectedIds.size === 0}>批量确认通过({selectedIds.size})</button>
+      </div>
       {auditNotice && <p role="status">{auditNotice}</p>}
       {auditAlert && <p role="alert" className="error">{auditAlert}</p>}
     </section>}

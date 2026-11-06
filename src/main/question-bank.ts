@@ -373,6 +373,27 @@ export class QuestionBank {
     });
   }
 
+  /** 整卷审批专用：调用方负责事务，确认版本仍是最新后推进内容与答案状态，缺失答案保持待补。 */
+  approveVersionWithin(sqlite: DatabaseSync, questionId: string, versionId: string): { contentStatus: ReviewStatus; answerStatus: AnswerStatus } {
+    const row = sqlite.prepare("SELECT content_status, answer_status FROM question_versions WHERE id = ? AND question_id = ?").get(versionId, questionId) as { content_status: string; answer_status: string } | undefined;
+    if (row === undefined) throw new Error("题目版本不存在");
+    const latest = sqlite.prepare("SELECT id FROM question_versions WHERE question_id = ? ORDER BY version DESC LIMIT 1").get(questionId) as { id: string } | undefined;
+    if (latest === undefined || latest.id !== versionId) throw new Error("题目已有新版本，请重新读取后再确认");
+    if (!isReviewStatus(row.content_status) || !isAnswerStatus(row.answer_status)) throw new Error("题目审核状态损坏");
+    let contentStatus = row.content_status;
+    let answerStatus = row.answer_status;
+    if (contentStatus !== "approved") {
+      if (!contentTransitions[contentStatus].includes("approved")) throw new Error(`内容审核状态不能从「${contentStatus}」改为「approved」`);
+      sqlite.prepare("UPDATE question_versions SET content_status = 'approved' WHERE id = ?").run(versionId);
+      contentStatus = "approved";
+    }
+    if (answerStatus === "pending") {
+      sqlite.prepare("UPDATE question_versions SET answer_status = 'approved' WHERE id = ?").run(versionId);
+      answerStatus = "approved";
+    }
+    return { contentStatus, answerStatus };
+  }
+
   createMaterial(input: unknown): MaterialVersionRecord {
     const valid = this.validMaterial(input);
     return this.db.transaction((sqlite) => this.createMaterialWithin(sqlite, valid, "draft"));

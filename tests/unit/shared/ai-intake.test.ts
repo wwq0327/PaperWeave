@@ -88,7 +88,7 @@ test("旧格式没有 parts 时按小问文字降级，选项归入第一小问"
     [{ kind: "text", text: "乙" }],
   ]);
   expect(result.form.subQuestions[0].originalScore).toBe("");
-  expect(result.uncertain).toEqual(["作答位置需手工录入：AI 不生成空位，请在表单中补录。"]);
+  expect(result.uncertain).toEqual(["整题答案未能对应到具体小问，请核对：参考答案", "作答位置需手工录入：AI 不生成空位，请在表单中补录。"]);
 });
 
 test("只有题干没有小问时作为单小问录入，避免空题干", () => {
@@ -97,4 +97,31 @@ test("只有题干没有小问时作为单小问录入，避免空题干", () =>
   expect(result.form.subQuestions).toHaveLength(1);
   expect(result.form.subQuestions[0].prompt).toEqual([{ kind: "text", text: "单独一题。" }]);
   expect(result.form.source.originalNumber).toBe("");
+});
+
+test("顶层答案在单小问题中保留；旧格式与结构化题无法对应时标待核", () => {
+  const single = aiQuestionToIntake({ stem: "单独一题。", subquestions: [], options: [], tags: [], uncertain: [], page: 1, answer: "参考答案" }, classification, "数学");
+  expect(single.form.subQuestions[0].answer).toEqual([{ kind: "text", text: "参考答案" }]);
+
+  const legacy: AiQuestion = { stem: "题干", subquestions: ["(1) 小问一"], options: [], tags: [], uncertain: [], page: 2, answer: "参考答案" };
+  expect(aiQuestionToIntake(legacy, classification, "数学").uncertain).toContain("整题答案未能对应到具体小问，请核对：参考答案");
+
+  const both = structured();
+  both.answer = "整题答案";
+  expect(aiQuestionToIntake(both, classification, "数学").uncertain).toContain("模型同时返回整题答案和小问答案，请核对：整题答案");
+
+  const onePart: AiQuestion = { stem: "题干", subquestions: [], options: [], tags: [], uncertain: [], page: 3, answer: "唯一答案", parts: [{ label: "(1)", prompt: "小问", options: [], answer: "", explanation: "", score: null, uncertain: [] }] };
+  expect(aiQuestionToIntake(onePart, classification, "数学").form.subQuestions[0].answer).toEqual([{ kind: "text", text: "唯一答案" }]);
+
+  const emptyParts: AiQuestion = { stem: "题干", subquestions: [], options: [], tags: [], uncertain: [], page: 4, answer: "整题答案", parts: [
+    { label: "(1)", prompt: "小问一", options: [], answer: "", explanation: "", score: null, uncertain: [] },
+    { label: "(2)", prompt: "小问二", options: [], answer: "", explanation: "", score: null, uncertain: [] },
+  ] };
+  expect(aiQuestionToIntake(emptyParts, classification, "数学").uncertain).toContain("整题答案未能对应到具体小问，请核对：整题答案");
+});
+
+test("材料建议保留 appliesTo 小问归属", () => {
+  const question = structured();
+  question.materials = [{ title: "材料一", content: "材料正文", source: "自制", appliesTo: ["(1)"] }];
+  expect(aiQuestionToIntake(question, classification, "数学").materials).toEqual([{ title: "材料一", content: "材料正文", source: "自制", appliesTo: ["(1)"] }]);
 });

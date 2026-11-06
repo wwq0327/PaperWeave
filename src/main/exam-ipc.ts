@@ -137,9 +137,15 @@ export function registerExams(db: Database, root: string, currentWindow: () => B
   ipcMain.handle("wholePaper:intakeResolve", (event, examId: unknown, taskId: unknown, recordId: unknown, action: unknown) => {
     permitted(event);
     const id = text(recordId, "建档记录");
-    if (action !== "skip" && action !== "revise") throw new Error("处理动作无效");
+    if (action !== "skip" && action !== "revise" && action !== "resolve" && action !== "exclude") throw new Error("处理动作无效");
     const task = ownedWholeTask(examId, taskId);
     wholeIntake.resolve(task.id, id, action);
+  });
+  ipcMain.handle("wholePaper:intakeApprove", (event, examId: unknown, taskId: unknown, recordIds: unknown) => {
+    permitted(event);
+    if (!Array.isArray(recordIds) || recordIds.some((id) => typeof id !== "string")) throw new Error("待确认题目无效");
+    const task = ownedWholeTask(examId, taskId);
+    return wholeIntake.approve(task.id, recordIds as string[]);
   });
   ipcMain.handle("intake:save", (event, input: unknown) => {
     permitted(event);

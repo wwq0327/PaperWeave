@@ -17,12 +17,12 @@ import { note } from "../fixtures/questions";
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
-function setup() {
+function setup(metadata: Partial<{ stage: "小学" | "初中" | "高中"; subject: string; grade: string; examType: string; year: string; sourceName: string }> = {}) {
   const root = mkdtempSync(join(tmpdir(), "whole-paper-intake-")); dirs.push(root);
   const db = new Database(join(root, "db.sqlite"));
   const source = join(root, "paper.pdf"); writeFileSync(source, "%PDF-1.4\n%%EOF");
   const exams = new ExamStore(db, root);
-  const exam = exams.importPaper({ title: "自制卷", stage: "初中", subject: "数学", grade: "九年级", region: "", examType: "", year: "", sourceName: "" }, source).exam;
+  const exam = exams.importPaper({ title: "自制卷", stage: "初中", subject: "数学", grade: "九年级", region: "", examType: "", year: "", sourceName: "", ...metadata }, source).exam;
   const section = exams.getExam(exam.id).sections[0];
   return { root, db, exams, exam, section };
 }
@@ -62,15 +62,28 @@ const validQuestion = (originalNumber: string, stem: string, extra: Partial<AiDr
 
 const SHARED_MATERIAL = { title: "共享材料", content: "材料正文", source: "固定响应" };
 
-test("数据版本 8：整卷建档记录表带任务内唯一约束", () => {
+test("数据版本 9：整卷建档记录表带任务内唯一约束与质量字段", () => {
   const { db } = setup();
-  expect(db.dataVersion()).toBe(8);
+  expect(db.dataVersion()).toBe(9);
   const now = new Date().toISOString();
   const insert = () => db.transaction((s) => {
     s.prepare("INSERT INTO whole_paper_intakes (id, task_id, batch_index, question_index, status, created_at, updated_at) VALUES ('r1','t',0,0,'created',?,?)").run(now, now);
   });
   insert();
+  const row = db.read((s) => s.prepare("SELECT quality, issues FROM whole_paper_intakes WHERE id = 'r1'").get()) as { quality: string; issues: string };
+  expect(row).toEqual({ quality: "needs_attention", issues: "[]" });
   expect(() => insert()).toThrow();
+});
+
+test("参数继承：整卷分类的空字段由考试元数据补齐", () => {
+  const context = setup({ stage: "初中", subject: "数学", grade: "八年级", examType: "期中", year: "2025", sourceName: "区统考" });
+  const { bank, tasks, wholeIntake, exam, section } = stores(context);
+  const task = makeTask(tasks, exam.id, section.id, draftOf(validQuestion("1", "继承分类题")));
+  const summary = wholeIntake.create(task.id, { ...classification, stage: "高中", subject: " ", grade: "", examType: "", year: "", sourceName: "", questionType: "选择题" });
+  expect(summary.created).toBe(1);
+  const questionId = context.exams.listQuestions(exam.id)[0].questionId;
+  const row = context.db.read((s) => s.prepare("SELECT stage, subject, grade, exam_type, year, source_name FROM questions WHERE id = ?").get(questionId));
+  expect(row).toEqual({ stage: "高中", subject: "数学", grade: "八年级", exam_type: "期中", year: "2025", source_name: "区统考" });
 });
 
 test("建档：分类继承、材料去重、提交待核，重复建档幂等", () => {
@@ -87,7 +100,7 @@ test("建档：分类继承、材料去重、提交待核，重复建档幂等",
   const task = makeTask(tasks, exam.id, section.id, draft);
 
   const summary = wholeIntake.create(task.id, classification);
-  expect(summary).toEqual({ created: 2, duplicates: 0, failed: 0, existing: 0, materials: 1 });
+  expect(summary).toEqual({ created: 2, duplicates: 0, failed: 0, existing: 0, materials: 1, needsAttention: 2 });
 
   // 提交待核：题 1 有答案 → 内容/答案均待核；题 2 无答案 → 答案缺失。
   const questions = context.exams.listQuestions(exam.id);
@@ -111,16 +124,21 @@ test("建档：分类继承、材料去重、提交待核，重复建档幂等",
   expect(items[0].problems.join()).toContain("尚未审核");
   expect(items[0].materialIds).toEqual(items[1].materialIds);
   expect(items[0].materialIds).toHaveLength(1);
+  expect(items[0].quality).toBe("needs_attention");
+  expect(items[0].issues.map((entry) => entry.code)).toEqual(["material_pending"]);
+  expect(items[1].issues.map((entry) => entry.code)).toEqual(["answer_missing", "material_pending"]);
 
   // 重复建档幂等：不产生新题、不重建材料。
   const again = wholeIntake.create(task.id, classification);
-  expect(again).toEqual({ created: 0, duplicates: 0, failed: 0, existing: 2, materials: 0 });
+  expect(again).toEqual({ created: 0, duplicates: 0, failed: 0, existing: 2, materials: 0, needsAttention: 0 });
   expect(context.exams.listQuestions(exam.id)).toHaveLength(2);
 });
 
 test("重复候选：记录并提示，可跳过或建修订版，已审核旧版本不覆盖", () => {
   const context = setup();
   const { bank, intake, tasks, wholeIntake, exam, section } = stores(context);
+  const seeded = bank.createQuestion(note());
+  bank.setClassification(seeded.questionId, { ...classification, questionType: "选择题", knowledgePoints: ["词语运用"] });
   const existing = intake.save({
     examId: exam.id, sectionId: section.id,
     content: { ...note(), source: { section: section.title, pdfPage: 1, originalNumber: "1" } },
@@ -135,7 +153,7 @@ test("重复候选：记录并提示，可跳过或建修订版，已审核旧�
     validQuestion("2", "整卷第二题题干"),
   ));
   const summary = wholeIntake.create(task.id, classification);
-  expect(summary).toEqual({ created: 1, duplicates: 1, failed: 0, existing: 0, materials: 0 });
+  expect(summary).toEqual({ created: 1, duplicates: 1, failed: 0, existing: 0, materials: 0, needsAttention: 1 });
 
   const items = wholeIntake.list(task.id);
   expect(items[0].status).toBe("duplicate");
@@ -178,7 +196,9 @@ test("建修订版：追加版本、旧版本内容与已审核状态不变", ()
 
 test("单题校验失败记 failed 不中断整批；进行中批次与无效分类拒绝建档", () => {
   const context = setup();
-  const { tasks, wholeIntake, exam, section } = stores(context);
+  const { bank, tasks, wholeIntake, exam, section } = stores(context);
+  const seeded = bank.createQuestion(note());
+  bank.setClassification(seeded.questionId, { ...classification, questionType: "选择题", knowledgePoints: ["词语运用"] });
   const broken = { stem: "整卷缺号题题干", subquestions: [], options: [], tags: [], uncertain: [], page: 1, parts: [part("说明理由。")] };
   const task = makeTask(tasks, exam.id, section.id, draftOf(
     validQuestion("1", "整卷第一题题干"),
@@ -188,6 +208,7 @@ test("单题校验失败记 failed 不中断整批；进行中批次与无效分
   const summary = wholeIntake.create(task.id, classification);
   expect(summary.created).toBe(2);
   expect(summary.failed).toBe(1);
+  expect(summary.needsAttention).toBe(1);
   const items = wholeIntake.list(task.id);
   expect(items[1].status).toBe("failed");
   expect(items[1].message).toContain("原题号");
@@ -204,5 +225,94 @@ test("单题校验失败记 failed 不中断整批；进行中批次与无效分
   const runningTask = tasks.save(running.id, running.revision, runningState);
   expect(() => wholeIntake.create(runningTask.id, classification)).toThrow(/正在执行/);
 
-  expect(() => wholeIntake.create(task.id, { ...classification, subject: "" })).toThrow(/学科无效/);
+  expect(() => wholeIntake.create(task.id, { ...classification, subject: 123 as unknown as string })).toThrow(/学科无效/);
+});
+
+test("异常持久化：不确定项、新标签、缺答案、缺分值与材料待审阻止自动通过", () => {
+  const context = setup();
+  const { bank, tasks, wholeIntake, exam, section } = stores(context);
+  const question = validQuestion("5", "异常题题干", {
+    uncertain: ["公式待核"],
+    parts: [{ label: "(1)", prompt: "求值。", options: [], answer: "", explanation: "", score: null, uncertain: [] }],
+    materials: [{ title: "材料X", content: "材料正文", source: "自制" }],
+  });
+  const task = makeTask(tasks, exam.id, section.id, draftOf(question));
+  const summary = wholeIntake.create(task.id, classification);
+  expect(summary).toEqual({ created: 1, duplicates: 0, failed: 0, existing: 0, materials: 1, needsAttention: 1 });
+
+  const before = wholeIntake.list(task.id)[0];
+  expect(before.quality).toBe("needs_attention");
+  expect(new Set(before.issues.map((entry) => entry.code))).toEqual(new Set(["uncertain", "new_tag", "answer_missing", "score_missing", "material_pending"]));
+  expect(wholeIntake.approve(task.id, [before.id])).toEqual({ approved: 0, rejected: [{ id: before.id, reason: expect.stringContaining("仍有未处理异常") }] });
+
+  // 材料审核通过后，材料待审异常自动消除，其余异常仍需教师处理。
+  bank.setMaterialStatus(before.materials[0].versionId, "pending");
+  bank.setMaterialStatus(before.materials[0].versionId, "approved");
+  const afterMaterial = wholeIntake.list(task.id)[0];
+  expect(afterMaterial.issues.map((entry) => entry.code)).not.toContain("material_pending");
+  expect(afterMaterial.problems).toEqual([]);
+  expect(wholeIntake.approve(task.id, [before.id]).approved).toBe(0);
+
+  wholeIntake.resolve(task.id, before.id, "resolve");
+  expect(wholeIntake.list(task.id)[0].quality).toBe("resolved");
+  expect(wholeIntake.approve(task.id, [before.id])).toEqual({ approved: 1, rejected: [] });
+  const latest = bank.getLatestQuestionVersion(before.questionId!)!;
+  expect(latest.contentStatus).toBe("approved");
+  expect(latest.answerStatus).toBe("missing");
+});
+
+test("材料 appliesTo 只关联指定小问；未标明归属的多小问记异常", () => {
+  const context = setup();
+  const { bank, tasks, wholeIntake, exam, section } = stores(context);
+  const seeded = bank.createQuestion(note());
+  bank.setClassification(seeded.questionId, { ...classification, questionType: "选择题", knowledgePoints: ["词语运用"] });
+
+  const scoped = validQuestion("1", "带归属题", {
+    parts: [{ ...part("小问一。"), label: "(1)" }, { ...part("小问二。"), label: "(2)" }],
+    materials: [{ title: "材料一", content: "正文一", source: "自制", appliesTo: ["(1)"] }],
+  });
+  const unscoped = validQuestion("2", "无归属题", {
+    parts: [{ ...part("小问一。"), label: "(1)" }, { ...part("小问二。"), label: "(2)" }],
+    materials: [{ title: "材料二", content: "正文二", source: "自制" }],
+  });
+  const task = makeTask(tasks, exam.id, section.id, draftOf(scoped, unscoped));
+  wholeIntake.create(task.id, classification);
+
+  const items = wholeIntake.list(task.id);
+  const scopedContent = bank.getLatestQuestionVersion(items[0].questionId!)!.content;
+  expect(scopedContent.subQuestions[0].materialIds).toEqual([items[0].materialIds[0]]);
+  expect(scopedContent.subQuestions[1].materialIds).toEqual([]);
+  expect(items[0].issues.map((entry) => entry.code)).not.toContain("material_scope");
+
+  const unscopedContent = bank.getLatestQuestionVersion(items[1].questionId!)!.content;
+  expect(unscopedContent.subQuestions[0].materialIds).toEqual([items[1].materialIds[0]]);
+  expect(unscopedContent.subQuestions[1].materialIds).toEqual([items[1].materialIds[0]]);
+  expect(items[1].issues.map((entry) => entry.code)).toContain("material_scope");
+});
+
+test("审批拒绝已有新版本的旧记录，并支持排除", () => {
+  const context = setup();
+  const { bank, intake, tasks, wholeIntake, exam, section } = stores(context);
+  const seeded = bank.createQuestion(note());
+  bank.setClassification(seeded.questionId, { ...classification, questionType: "选择题", knowledgePoints: ["词语运用"] });
+
+  const task = makeTask(tasks, exam.id, section.id, draftOf(validQuestion("1", "第一版题干")));
+  wholeIntake.create(task.id, classification);
+  const record = wholeIntake.list(task.id)[0];
+  expect(record.quality).toBe("auto_passed");
+
+  const latestContent = bank.getLatestQuestionVersion(record.questionId!)!.content;
+  const edited = intake.save({
+    examId: exam.id, sectionId: section.id, questionId: record.questionId!,
+    content: { ...latestContent, subQuestions: latestContent.subQuestions.map((sub) => ({ ...sub, prompt: [{ type: "paragraph", runs: [{ type: "text", text: "第二版题干", style: "普通" }] }] })) },
+    classification, submit: true,
+  });
+  if (!edited.saved) throw new Error("修订失败");
+  const stale = wholeIntake.approve(task.id, [record.id]);
+  expect(stale.approved).toBe(0);
+  expect(stale.rejected[0].reason).toContain("已有新版本");
+
+  wholeIntake.resolve(task.id, record.id, "exclude");
+  expect(wholeIntake.list(task.id)[0].quality).toBe("excluded");
+  expect(wholeIntake.approve(task.id, [record.id]).rejected[0].reason).toContain("已排除");
 });
