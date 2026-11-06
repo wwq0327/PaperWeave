@@ -137,6 +137,17 @@ describe("整卷任务调度", () => {
     expect(result.batches[0]).toEqual({ status: "failed", error: "批次处理失败，请重试" });
   });
 
+  it("扫描题页码与本页不一致时失败，避免裁图归属错页", async () => {
+    const image = { page: 1, attachmentId: "a".repeat(64), width: 1200, height: 1600 };
+    const scan = createWholePaperRun({
+      batches: [{ kind: "scan", fragments: [], pages: [1], text: "", sendable: true, reviewBoundaryBefore: false, image }],
+      emptyPages: [],
+    });
+    const request = vi.fn().mockResolvedValue({ questions: [{ stem: "题", subquestions: [], options: [], tags: [], uncertain: [], page: 2, scanAreas: [{ page: 1, rect: { x: 0.1, y: 0.1, width: 0.8, height: 0.4 } }] }], notes: [] });
+    const result = await new WholePaperRunner(async () => {}, request).run(scan, new AbortController().signal);
+    expect(result.batches[0]).toEqual({ status: "failed", error: "批次处理失败，请重试" });
+  });
+
   it("答案批次保存 answers 而非原卷结果，并校验答案页码", async () => {
     const answer = { fileId: "file-1", role: "answer" as const, name: "答案.pdf" };
     const plan = {

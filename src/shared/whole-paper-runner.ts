@@ -39,7 +39,7 @@ function validResult(batch: WholePaperRunState["plan"]["batches"][number], resul
   }
   if (!isAiDraft(result)) return false;
   if (kind === "scan") {
-    return result.questions.every((question) => question.scanAreas?.some((area) => area.page === batch.pages[0]));
+    return result.questions.every((question) => question.page === batch.pages[0] && question.scanAreas?.some((area) => area.page === batch.pages[0]));
   }
   return result.questions.every((question) => batch.pages.includes(question.page));
 }
