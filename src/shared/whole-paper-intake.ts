@@ -12,6 +12,8 @@ export const wholePaperIssueCodes = [
   "material_pending",
   "material_scope",
   "anchor_missing",
+  "formula_review",
+  "image_review",
   "duplicate",
   "failed",
 ] as const;

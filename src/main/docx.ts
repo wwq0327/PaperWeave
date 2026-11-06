@@ -16,12 +16,25 @@ export interface DocxUnit {
   text: string;
 }
 
+export interface DocxMedia {
+  name: string;
+  unit: number;
+  /** 占位符 `[图片：name]` 在单元文字中的码点区间，右端不包含。 */
+  start: number;
+  end: number;
+  mime: "image/png" | "image/jpeg" | null;
+  data?: Buffer;
+  problem?: string;
+}
+
 export interface DocxExtraction {
   units: DocxUnit[];
   /** units 中是否存在非空文字（只有空段落/空表格时为 false）。 */
   hasText: boolean;
   /** 内嵌图片清单：按文档顺序，name 为 media 文件名，unit 为所在单元编号。 */
   images: { name: string; unit: number }[];
+  /** 可定位的内嵌媒体；仅 PNG/JPEG 带字节，其余保留占位与待核原因。 */
+  media: DocxMedia[];
   /** 解析中发现的待核问题（图片关系缺失、嵌套表格被忽略等）。 */
   warnings: string[];
 }
@@ -459,8 +472,49 @@ export function extractDocxText(bytes: Buffer): DocxExtraction {
     units,
     hasText: units.some((unit) => unit.text.trim().length > 0),
     images: state.images,
+    media: extractMedia(data, entries, state.images, units),
     warnings: [...new Set(state.warnings)],
   };
+}
+
+function mediaType(data: Buffer): "image/png" | "image/jpeg" | null {
+  if (data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return "image/png";
+  if (data.length > 3 && data[0] === 255 && data[1] === 216 && data[2] === 255) return "image/jpeg";
+  return null;
+}
+
+function extractMedia(data: Buffer, entries: Map<string, ZipEntry>, images: { name: string; unit: number }[], units: DocxUnit[]): DocxMedia[] {
+  const cursors = new Map<number, number>();
+  return images.map((image) => {
+    const text = units.find((unit) => unit.unit === image.unit)?.text ?? "";
+    const chars = [...text];
+    const placeholder = [...`[图片：${image.name}]`];
+    const cursor = cursors.get(image.unit) ?? 0;
+    let start = -1;
+    for (let index = cursor; index <= chars.length - placeholder.length; index++) {
+      if (placeholder.every((char, offset) => chars[index + offset] === char)) { start = index; break; }
+    }
+    if (start === -1) {
+      for (let index = 0; index <= chars.length - placeholder.length; index++) {
+        if (placeholder.every((char, offset) => chars[index + offset] === char)) { start = index; break; }
+      }
+    }
+    const resolved = start === -1 ? 0 : start;
+    const end = start === -1 ? 0 : start + placeholder.length;
+    cursors.set(image.unit, end);
+    const entry = entries.get(`word/media/${image.name}`)
+      ?? [...entries.values()].find((candidate) => candidate.name.endsWith(`/media/${image.name}`));
+    if (!entry) return { name: image.name, unit: image.unit, start: resolved, end, mime: null, problem: "媒体文件缺失" };
+    let bytes: Buffer;
+    try {
+      bytes = readZipEntry(data, entry);
+    } catch {
+      return { name: image.name, unit: image.unit, start: resolved, end, mime: null, problem: "媒体文件无法读取" };
+    }
+    const mime = mediaType(bytes);
+    if (mime === null) return { name: image.name, unit: image.unit, start: resolved, end, mime, problem: "不支持的图片格式（仅支持 PNG/JPEG）" };
+    return { name: image.name, unit: image.unit, start: resolved, end, mime, data: bytes };
+  });
 }
 
 function extractBodyUnits(body: XmlElement, state: ExtractState): DocxUnit[] {

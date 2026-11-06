@@ -130,5 +130,9 @@ test("拒绝非 ZIP、缺 document.xml 的损坏 DOCX 与不支持的扩展名",
   writeFileSync(unsupported, pdf("伪装成原卷"));
   expect(() => store.importPaper(input, unsupported)).toThrow("原卷必须是 PDF 或 DOCX 文件");
 
+  const legacy = join(source, "旧版原卷.doc");
+  writeFileSync(legacy, "legacy word");
+  expect(() => store.importPaper(input, legacy)).toThrow("旧版 .doc 不支持，请另存为 .docx");
+
   expect(store.listExams()).toHaveLength(0);
 });

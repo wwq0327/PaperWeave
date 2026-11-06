@@ -46,6 +46,27 @@ test("真实 DOCX 夹具：公式与图片以占位符保留，图片清单可�
   expect(result.warnings).toEqual([]);
 });
 
+test("真实 DOCX 夹具：PNG 媒体带段落内码点区间、MIME 与字节", () => {
+  const result = extractDocxText(fixture("sample.docx"));
+  expect(result.media).toHaveLength(1);
+  const media = result.media[0];
+  expect(media).toMatchObject({ name: "image1.png", unit: 3, mime: "image/png" });
+  const text = [...result.units[2].text].slice(media.start, media.end).join("");
+  expect(text).toBe("[图片：image1.png]");
+  expect(media.data?.length).toBeGreaterThan(0);
+});
+
+test("不支持的媒体格式保留定位并给出待核原因", () => {
+  const rels = relsXml(
+    `<Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/pic.emf"/>`,
+  );
+  const result = extractDocxText(makeDocx(drawing("rId5"), rels, [{ name: "word/media/pic.emf", data: Buffer.from("emf") }]));
+  expect(result.media).toEqual([
+    expect.objectContaining({ name: "pic.emf", unit: 1, mime: null, problem: "不支持的图片格式（仅支持 PNG/JPEG）" }),
+  ]);
+  expect(result.media[0].data).toBeUndefined();
+});
+
 test("真实 DOCX 夹具：空段落保留为空单元，不打断编号", () => {
   const result = extractDocxText(fixture("sample.docx"));
   const empty = result.units.filter((unit) => unit.text === "");
@@ -144,10 +165,10 @@ function documentXml(body: string): string {
   );
 }
 
-function makeDocx(body: string, rels?: string): Buffer {
+function makeDocx(body: string, rels?: string, extra: ZipInput[] = []): Buffer {
   const files: ZipInput[] = [{ name: "word/document.xml", data: documentXml(body) }];
   if (rels !== undefined) files.push({ name: "word/_rels/document.xml.rels", data: rels });
-  return buildZip(files);
+  return buildZip([...files, ...extra]);
 }
 
 function relsXml(relationships: string): string {

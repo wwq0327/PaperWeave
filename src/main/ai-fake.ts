@@ -44,34 +44,32 @@ export async function fakeAiDraft(scenario: FakeScenario, input: AiInput, signal
   // 模拟已发出、取消后仍会返回的响应，验证主进程丢弃而不是交给界面。
   if (scenario === "late-success") await new Promise((resolve) => setTimeout(resolve, 1200));
   if (scenario === "clean") {
-    const questions: AiDraft["questions"] = [{
-      stem: "自编黄金题：下列句子中加点词语使用正确的一项是",
-      subquestions: [],
-      options: ["A. 第一项", "B. 第二项"],
-      tags: [],
-      uncertain: [],
-      page,
-      parts: [{ label: "(1)", prompt: "选择正确项。", options: ["A. 第一项", "B. 第二项"], answer: "B", explanation: "", score: 3, uncertain: [] }],
-      questionType: "选择题",
-      knowledgePoints: [],
-      originalNumber: "1",
-      sourceAnchors: anchorsFor(lengths, page),
-    }];
-    if (page + 1 <= 2000) {
-      questions.push({
-        stem: "自编黄金题：第二题请说明理由",
-        subquestions: [],
-        options: [],
-        tags: [],
-        uncertain: [],
-        page: page + 1,
-        parts: [{ label: "(1)", prompt: "请说明理由。", options: [], answer: "示例答案。", explanation: "", score: 4, uncertain: [] }],
-        questionType: "解答题",
-        knowledgePoints: [],
-        originalNumber: "2",
-        sourceAnchors: anchorsFor(lengths, page + 1),
-      });
-    }
+    const cleanPages = input.mode === "text" ? input.pages : [page];
+    const questions: AiDraft["questions"] = cleanPages.map((unit, index) => {
+      const number = String(index + 1);
+      if (index === 0) {
+        return {
+          stem: "自编黄金题：下列句子中加点词语使用正确的一项是",
+          subquestions: [], options: ["A. 第一项", "B. 第二项"], tags: [], uncertain: [], page: unit,
+          parts: [{ label: "(1)", prompt: "选择正确项。", options: ["A. 第一项", "B. 第二项"], answer: "B", explanation: "", score: 3, uncertain: [] }],
+          questionType: "选择题", knowledgePoints: [], originalNumber: number, sourceAnchors: anchorsFor(lengths, unit),
+        };
+      }
+      if (index === 1) {
+        return {
+          stem: "自编黄金题：第二题请说明理由",
+          subquestions: [], options: [], tags: [], uncertain: [], page: unit,
+          parts: [{ label: "(1)", prompt: "请说明理由。", options: [], answer: "示例答案。", explanation: "", score: 4, uncertain: [] }],
+          questionType: "解答题", knowledgePoints: [], originalNumber: number, sourceAnchors: anchorsFor(lengths, unit),
+        };
+      }
+      return {
+        stem: `自编黄金题：第 ${number} 题请核对内嵌图片与表格内容`,
+        subquestions: [], options: [], tags: [], uncertain: [], page: unit,
+        parts: [{ label: "(1)", prompt: "请核对并说明。", options: [], answer: "示例答案。", explanation: "", score: 4, uncertain: [] }],
+        questionType: "解答题", knowledgePoints: [], originalNumber: number, sourceAnchors: anchorsFor(lengths, unit),
+      };
+    });
     return { questions, notes: ["自编黄金样本，仅用于一键自动录题回归。"] };
   }
   const questions: AiDraft["questions"] = [{

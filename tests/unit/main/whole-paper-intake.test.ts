@@ -76,6 +76,22 @@ const validQuestion = (originalNumber: string, stem: string, extra: Partial<AiDr
   sourceAnchors: [{ page: 1, start: 0, end: 10 }], ...extra,
 });
 
+function makeDocxTask(tasks: WholePaperStore, examId: string, sectionId: string, text: string, images: NonNullable<WholePaperBatchPlan["docxImages"]>) {
+  const fragments = [{ page: 1, start: 0, end: [...text].length, text }];
+  const plan: WholePaperBatchPlan = {
+    sourceKind: "docx",
+    emptyPages: [],
+    batches: [{ fragments, pages: [1], text, sendable: true, reviewBoundaryBefore: false }],
+    docxImages: images,
+  };
+  const state = createWholePaperRun(plan);
+  const task = tasks.create(examId, sectionId, state);
+  const done = { ...state, batches: state.batches.map((batch) => ({ ...batch, status: "succeeded" as const, result: draftOf(validQuestion("1", "DOCX 题", { sourceAnchors: [{ page: 1, start: 0, end: [...text].length }] })) })) };
+  return tasks.save(task.id, task.revision, done);
+}
+
+const attachment = "a".repeat(64);
+
 const SHARED_MATERIAL = { title: "共享材料", content: "材料正文", source: "固定响应" };
 
 test("数据版本 10：整卷建档记录表带任务内唯一约束、质量与证据字段", () => {
@@ -132,6 +148,47 @@ test("无锚点且题号无法定位时记 anchor_missing 并阻止自动通过"
   const item = wholeIntake.list(task.id)[0];
   expect(item.quality).toBe("needs_attention");
   expect(item.issues.map((entry) => entry.code)).toContain("anchor_missing");
+});
+
+test("DOCX 内嵌 PNG 按来源锚点绑定到小问", () => {
+  const context = setup();
+  const { bank, tasks, wholeIntake, exam, section } = stores(context);
+  const seeded = bank.createQuestion(note());
+  bank.setClassification(seeded.questionId, { ...classification, questionType: "选择题", knowledgePoints: ["词语运用"] });
+  const text = "1. 观察图片：[图片：pic.png]";
+  const start = text.indexOf("[图片：pic.png]");
+  const task = makeDocxTask(tasks, exam.id, section.id, text, [{ unit: 1, start, end: start + [..."[图片：pic.png]"].length, name: "pic.png", attachmentId: attachment }]);
+  wholeIntake.create(task.id, classification);
+  const item = wholeIntake.list(task.id)[0];
+  expect(item.quality).toBe("auto_passed");
+  const content = bank.getLatestQuestionVersion(item.questionId!)!.content;
+  expect(content.subQuestions[0].prompt).toContainEqual({ type: "image", id: attachment, alt: "内嵌图 pic.png" });
+});
+
+test("DOCX 公式与无法自动提取的图片进入待核异常", () => {
+  const context = setup();
+  const { tasks, wholeIntake, exam, section } = stores(context);
+  const formula = makeDocxTask(tasks, exam.id, section.id, "1. 已知 f(x) = [公式]，求值。", []);
+  wholeIntake.create(formula.id, classification);
+  const formulaItem = wholeIntake.list(formula.id)[0];
+  expect(formulaItem.quality).toBe("needs_attention");
+  expect(formulaItem.issues.map((entry) => entry.code)).toContain("formula_review");
+  expect(formulaItem.issues.find((entry) => entry.code === "formula_review")?.message).toContain("OMML 公式");
+
+  const image = makeDocxTask(tasks, exam.id, section.id, "1. 图形：[图片：pic.emf]", [{ unit: 1, start: 4, end: 17, name: "pic.emf", note: "不支持的图片格式（仅支持 PNG/JPEG）" }]);
+  wholeIntake.create(image.id, classification);
+  const imageItem = wholeIntake.list(image.id)[0];
+  expect(imageItem.issues.map((entry) => entry.code)).toContain("image_review");
+  expect(imageItem.issues.find((entry) => entry.code === "image_review")?.message).toContain("pic.emf");
+});
+
+test("DOCX 缺失图片关系提示人工补录", () => {
+  const context = setup();
+  const { tasks, wholeIntake, exam, section } = stores(context);
+  const task = makeDocxTask(tasks, exam.id, section.id, "1. 图形：[图片]", []);
+  wholeIntake.create(task.id, classification);
+  const item = wholeIntake.list(task.id)[0];
+  expect(item.issues.map((entry) => entry.code)).toContain("image_review");
 });
 
 test("旧记录缺少证据列时按空证据读取", () => {

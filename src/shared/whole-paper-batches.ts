@@ -36,11 +36,26 @@ export interface WholePaperBatch {
   reviewBoundaryBefore: boolean;
 }
 
+export interface WholePaperDocxImage {
+  /** DOCX 段落序号。 */
+  unit: number;
+  /** 占位符在段落文字中的码点区间，右端不包含。 */
+  start: number;
+  end: number;
+  name: string;
+  /** PNG/JPEG 已写入附件池时的标识；缺省表示需人工裁切。 */
+  attachmentId?: string;
+  /** 无法自动提取时的待核原因。 */
+  note?: string;
+}
+
 export interface WholePaperBatchPlan {
   /** 缺省视为 PDF 页；旧任务数据没有此字段。 */
   sourceKind?: AiSourceKind;
   batches: WholePaperBatch[];
   emptyPages: number[];
+  /** DOCX 内嵌媒体定位；旧任务或 PDF 任务没有此字段。 */
+  docxImages?: WholePaperDocxImage[];
 }
 
 /** 向模型发送时标明每段来源位置；原始文本和页内偏移保持不变。 */

@@ -111,7 +111,7 @@ export function registerExams(db: Database, root: string, currentWindow: () => B
   });
   ipcMain.handle("wholePaper:prepare", async (event, examId: unknown, sectionId: unknown, fileId: unknown) => {
     permitted(event);
-    return taskView(await prepareWholePaper(store, wholePaper, text(examId, "考试标识"), text(sectionId, "考试分部"), text(fileId, "原卷文件")));
+    return taskView(await prepareWholePaper(store, wholePaper, attachments, text(examId, "考试标识"), text(sectionId, "考试分部"), text(fileId, "原卷文件")));
   });
   ipcMain.handle("wholePaper:list", (event, examId: unknown) => {
     permitted(event);
