@@ -37,11 +37,20 @@ export function aiQuestionToIntake(
   const single = parts.length === 0 && question.subquestions.length === 0;
   const topAnswer = question.answer?.trim() ?? "";
   const answerNotes: string[] = [];
-  if (topAnswer && legacy) answerNotes.push("整题答案未能对应到具体小问，请核对。");
-  if (topAnswer && parts.length > 0) answerNotes.push("模型同时返回整题答案和小问答案，请核对。");
+  if (topAnswer && legacy) answerNotes.push(`整题答案未能对应到具体小问，请核对：${topAnswer}`);
   let subs: IntakeSubQuestion[];
   if (parts.length > 0) {
     subs = parts.map(partSub);
+    if (topAnswer) {
+      const answered = parts.filter((part) => part.answer.trim()).length;
+      if (parts.length === 1 && answered === 0) {
+        subs[0] = { ...subs[0], answer: textBlock(topAnswer) };
+      } else if (answered === 0) {
+        answerNotes.push(`整题答案未能对应到具体小问，请核对：${topAnswer}`);
+      } else {
+        answerNotes.push(`模型同时返回整题答案和小问答案，请核对：${topAnswer}`);
+      }
+    }
   } else if (legacy) {
     subs = question.subquestions.map((prompt, index) => ({
       ...blankSubQuestion(),
