@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { checkImages, checkText, isAiDraft, questionToBlocks, normalizeAiInput, base64Bytes, AI_LIMITS } from "../../../src/shared/ai";
+import { checkImages, checkText, isAiAnswerDraft, isAiDraft, questionToBlocks, normalizeAiInput, base64Bytes, AI_LIMITS } from "../../../src/shared/ai";
 
 test("文字限额按 Unicode 码点计算，超限给出拆分提示", () => {
   expect(checkText("字".repeat(AI_LIMITS.textChars))).toBeNull();
@@ -130,4 +130,35 @@ test("来源锚点、忽略区、图表、答案来源与字段级不确定项�
   expect(isAiDraft({ ...valid, questions: [{ ...valid.questions[0], answerSource: "来".repeat(501) }] })).toBe(false);
   expect(isAiDraft({ ...valid, ignored: [{ ...anchor, kind: "unknown", note: "" }] })).toBe(false);
   expect(isAiDraft({ ...valid, extra: 1 })).toBe(false);
+});
+
+test("扫描区域使用归一化坐标，越界、过小与未知字段被拒绝", () => {
+  const base = { stem: "题干", subquestions: [], options: [], tags: [], uncertain: [], page: 1 };
+  const rect = { x: 0.1, y: 0.2, width: 0.5, height: 0.3 };
+  const area = { page: 1, rect, figures: [{ ...rect, kind: "题图", note: "第 1 题配图" }] };
+  expect(isAiDraft({ questions: [{ ...base, scanAreas: [area] }], notes: [] })).toBe(true);
+  expect(isAiDraft({ questions: [{ ...base, scanAreas: [{ ...area, rect: { ...rect, x: 0.6 } }] }], notes: [] })).toBe(false);
+  expect(isAiDraft({ questions: [{ ...base, scanAreas: [{ ...area, rect: { ...rect, width: 0 } }] }], notes: [] })).toBe(false);
+  expect(isAiDraft({ questions: [{ ...base, scanAreas: [{ ...area, rect: { ...rect, x: -0.1 } }] }], notes: [] })).toBe(false);
+  expect(isAiDraft({ questions: [{ ...base, scanAreas: [{ ...area, rect: { ...rect, extra: 1 } }] }], notes: [] })).toBe(false);
+  expect(isAiDraft({ questions: [{ ...base, scanAreas: [{ ...area, figures: [{ ...rect, kind: "表格", note: "" }] }] }], notes: [] })).toBe(false);
+  expect(isAiDraft({ questions: [{ ...base, scanAreas: [area, area, area, area, area] }], notes: [] })).toBe(false);
+});
+
+test("答案草稿严格校验题号、小问号、答案与页码", () => {
+  expect(isAiAnswerDraft({ answers: [{ originalNumber: "19", label: "(1)", answer: "4", page: 2 }], notes: [] })).toBe(true);
+  expect(isAiAnswerDraft({ answers: [], notes: [] })).toBe(false);
+  expect(isAiAnswerDraft({ answers: [{ originalNumber: " ", label: "(1)", answer: "4", page: 2 }], notes: [] })).toBe(false);
+  expect(isAiAnswerDraft({ answers: [{ originalNumber: "19", label: "字".repeat(21), answer: "4", page: 2 }], notes: [] })).toBe(false);
+  expect(isAiAnswerDraft({ answers: [{ originalNumber: "19", label: "(1)", answer: "", page: 2 }], notes: [] })).toBe(false);
+  expect(isAiAnswerDraft({ answers: [{ originalNumber: "19", label: "(1)", answer: "4", page: 0 }], notes: [] })).toBe(false);
+  expect(isAiAnswerDraft({ answers: [{ originalNumber: "19", label: "(1)", answer: "4", page: 2, extra: 1 }], notes: [] })).toBe(false);
+  expect(isAiAnswerDraft({ answers: [{ originalNumber: "19", label: "(1)", answer: "4", page: 2 }], notes: [], extra: 1 })).toBe(false);
+});
+
+test("扫描图像输入必须显式标记，其他值被拒绝", () => {
+  const png = "data:image/png;base64," + Buffer.alloc(1024, 1).toString("base64");
+  const ok = normalizeAiInput({ mode: "images", images: [{ dataUrl: png, page: 2 }], scan: true });
+  expect(ok.ok && ok.input.mode === "images" && ok.input.scan).toBe(true);
+  expect(normalizeAiInput({ mode: "images", images: [{ dataUrl: png, page: 2 }], scan: "yes" }).ok).toBe(false);
 });
