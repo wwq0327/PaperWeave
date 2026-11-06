@@ -31,7 +31,7 @@ export class WholePaperRunner {
   private running = false;
   constructor(private readonly save: Save, private readonly request: Request) {}
 
-  async run(initial: WholePaperRunState, signal: AbortSignal, retryFailed = false): Promise<WholePaperRunState> {
+  async run(initial: WholePaperRunState, signal: AbortSignal, retryFailed = false, autoRetry = false): Promise<WholePaperRunState> {
     if (this.running) throw new Error("整卷任务正在执行");
     this.running = true;
     try {
@@ -47,10 +47,8 @@ export class WholePaperRunner {
         }
       }
       if (recovered) await this.save(structuredClone(state));
-      for (let index = 0; index < state.batches.length; index++) {
+      const attempt = async (index: number): Promise<void> => {
         const batch = state.batches[index];
-        if (signal.aborted) break;
-        if (batch.status !== "pending" && !(retryFailed && batch.status === "failed")) continue;
         const input = state.plan.batches[index];
         if (!input.sendable) throw new Error("不可发送的空白批次状态无效");
         batch.status = "running";
@@ -61,7 +59,7 @@ export class WholePaperRunner {
           batch.status = "failed";
           batch.error = "已取消，请重试";
           await this.save(structuredClone(state));
-          break;
+          return;
         }
         try {
           const sourceKind = state.plan.sourceKind ?? "pdf";
@@ -78,6 +76,19 @@ export class WholePaperRunner {
           batch.error = signal.aborted ? "已取消，请重试" : "批次处理失败，请重试";
         }
         await this.save(structuredClone(state));
+      };
+      // 自动重试只在本轮末尾对被判定失败的批次再尝试一次；取消后不再发起请求。
+      const passes = autoRetry ? 2 : 1;
+      for (let pass = 0; pass < passes; pass++) {
+        for (let index = 0; index < state.batches.length; index++) {
+          if (signal.aborted) break;
+          const status = state.batches[index].status;
+          const eligible = pass === 0
+            ? status === "pending" || (retryFailed && status === "failed")
+            : status === "failed";
+          if (!eligible) continue;
+          await attempt(index);
+        }
         if (signal.aborted) break;
       }
       return state;

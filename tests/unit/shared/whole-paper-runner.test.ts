@@ -20,6 +20,33 @@ describe("整卷任务调度", () => {
     expect(snapshots[0]).toEqual(["running", "pending", "pending"]);
   });
 
+  it("自动重试失败批次一次，不重复成功批次", async () => {
+    const state = createWholePaperRun(planWholePaperBatches([{ page: 1, text: "甲" }, { page: 2, text: "乙" }], 20));
+    const request = vi.fn().mockRejectedValueOnce(new Error("secret")).mockResolvedValue(draft);
+    const result = await new WholePaperRunner(async () => {}, request).run(state, new AbortController().signal, false, true);
+    expect(result.batches.map((batch) => batch.status)).toEqual(["succeeded", "succeeded"]);
+    expect(request).toHaveBeenCalledTimes(3);
+    expect(request.mock.calls.map((call) => call[0].pages)).toEqual([[1], [2], [1]]);
+  });
+
+  it("自动重试仍失败时保留固定错误文案，最多请求两次", async () => {
+    const request = vi.fn().mockRejectedValue(new Error("secret"));
+    const state = createWholePaperRun(planWholePaperBatches([{ page: 1, text: "题" }]));
+    const result = await new WholePaperRunner(async () => {}, request).run(state, new AbortController().signal, false, true);
+    expect(result.batches[0].status).toBe("failed");
+    expect(result.batches[0].error).toBe("批次处理失败，请重试");
+    expect(JSON.stringify(result)).not.toContain("secret");
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it("取消后不自动重试", async () => {
+    const controller = new AbortController();
+    const request = vi.fn(async () => { controller.abort(); throw new Error("已取消"); });
+    const result = await new WholePaperRunner(async () => {}, request).run(input(), controller.signal, false, true);
+    expect(result.batches[0].status).toBe("failed");
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
   it("取消后丢弃迟到结果并保留未执行批次", async () => {
     const controller = new AbortController();
     const runner = new WholePaperRunner(async () => {}, async () => { controller.abort(); return draft; });
