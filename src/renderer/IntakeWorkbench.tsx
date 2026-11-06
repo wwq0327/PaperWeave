@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import katex from "katex";
-import { AI_LIMITS, base64Bytes, isAiDraft, normalizeAiInput, type AiDraft, type AiMaterialSuggestion, type AiQuestion } from "../shared/ai";
+import { AI_LIMITS, base64Bytes, isAiDraft, normalizeAiInput, originalFileKind, sourceUnitLabel, type AiDraft, type AiMaterialSuggestion, type AiQuestion } from "../shared/ai";
 import type { AiConfig } from "../shared/ai-config";
 import { aiQuestionToIntake, type AiIntakeResult } from "../shared/ai-intake";
 import type { ExamDetailView, ExamQuestionSummary } from "../shared/exam";
 import { blankBlock, blankOption, blankSubQuestion, buildContent, buildContentBlocks, contentToForm, dependencyOrderProblems, moveSubQuestion, newIntakeForm, type IntakeBlock, type IntakeDuplicateSummary, type IntakeForm, type IntakeMaterial, type IntakeReferenceOption, type IntakeSlot, type IntakeSubQuestion } from "../shared/intake";
 import type { Classification, QuestionBlock, QuestionContent, ReviewStatus, Stage } from "../shared/question";
 import BlockListEditor from "./BlockListEditor";
+import DocxSourcePanel from "./DocxSourcePanel";
 import ExamPdfPanel from "./ExamPdfPanel";
 import WholePaperPanel from "./WholePaperPanel";
 
@@ -307,6 +308,11 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
   }
 
   function requestCrop(target: CropTarget) {
+    if (isDocx) {
+      setCropTarget(null);
+      setError("DOCX 原卷暂不支持裁图，请使用文字输入，或返回上传 PDF 原卷。");
+      return;
+    }
     setCropTarget(target);
     setMessage("请在左栏原卷页面上拖选区域。");
     setError("");
@@ -448,6 +454,10 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
   }
 
   const paper = exam?.files.find((file) => file.role === "paper");
+  /** 原卷类型决定来源位置单位：PDF 按页、DOCX 按文档段落序号。 */
+  const sourceKind = paper ? originalFileKind(paper.originalName) : "pdf";
+  const isDocx = sourceKind === "docx";
+  const unitLabel = (value: number) => sourceUnitLabel(sourceKind, value);
   const cropLabel = (() => {
     if (!cropTarget || !form) return null;
     if (cropTarget.field === "ai") return "AI 拆题选区";
@@ -557,12 +567,16 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
       const result = await window.paperweave.getExamFileText(paper.id);
       const pages = result.pages.filter((entry) => entry.text.trim());
       if (!result.hasText || pages.length === 0) {
-        setAiError("本卷没有可提取的文字，可能是扫描件。请改用裁图输入。");
+        setAiError(isDocx
+          ? "本卷没有可提取的文字，请检查 DOCX 文档内容。"
+          : "本卷没有可提取的文字，可能是扫描件。请改用裁图输入。");
         return;
       }
-      setAiText(pages.map((entry) => `【第 ${entry.page} 页】\n${entry.text}`).join("\n\n"));
+      setAiText(pages.map((entry) => `【${unitLabel(entry.page)}】\n${entry.text}`).join("\n\n"));
       setAiPages(pages.map((entry) => entry.page).join(","));
-      setAiMessage(`已读取本卷 ${pages.length} 页文字，可修改或勾选页码后确认发送。`);
+      setAiMessage(isDocx
+        ? `已读取本卷 ${pages.length} 段文字，可修改或勾选页码后确认发送。`
+        : `已读取本卷 ${pages.length} 页文字，可修改或勾选页码后确认发送。`);
     } catch (e) { setAiError(`读取本卷文字失败：${errorText(e)}`); }
   }
 
@@ -605,7 +619,7 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
     {duplicate && <section role="alertdialog" aria-label="重复题提示" className="paper-panel intake-duplicate">
       <h2>发现同号题</h2>
       <p>本卷同一分部已有原题号「{duplicate.summary.source.originalNumber || "未填"}」的题目：{duplicate.summary.preview || "（无题干预览）"}</p>
-      <p className="muted">原卷第 {duplicate.summary.source.pdfPage} 页 · 版本 {duplicate.summary.version} · {statusLabels[duplicate.summary.contentStatus]} · 答案{answerLabels[duplicate.summary.answerStatus]}</p>
+      <p className="muted">原卷{unitLabel(duplicate.summary.source.pdfPage)} · 版本 {duplicate.summary.version} · {statusLabels[duplicate.summary.contentStatus]} · 答案{answerLabels[duplicate.summary.answerStatus]}</p>
       <div className="paper-actions">
         <button className="primary" onClick={editDuplicate} disabled={busy}>继续编辑已有题</button>
         <button onClick={reviseDuplicate} disabled={busy}>建立修订版</button>
@@ -614,9 +628,11 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
     </section>}
 
     <div className="intake-grid">
-      <aside className="intake-left">
-        {paper ? <ExamPdfPanel fileId={paper.id} page={page} cropLabel={cropLabel} disabled={busy} onPageChange={setPage} onCrop={(dataUrl) => void insertCrop(dataUrl)} onError={setError} /> : <p role="alert" className="error">这场考试没有原卷文件，请先返回考试原卷页挂接 PDF。</p>}
-      </aside>
+      {paper && isDocx
+        ? <DocxSourcePanel fileId={paper.id} unit={page} disabled={busy} onUnitChange={setPage} onError={setError} />
+        : <aside className="intake-left">
+          {paper ? <ExamPdfPanel fileId={paper.id} page={page} cropLabel={cropLabel} disabled={busy} onPageChange={setPage} onCrop={(dataUrl) => void insertCrop(dataUrl)} onError={setError} /> : <p role="alert" className="error">这场考试没有原卷文件，请先返回考试原卷页挂接 PDF。</p>}
+        </aside>}
 
       <section className="intake-right" aria-label="录题编辑">
         <section className="paper-panel" aria-label="本卷题目">
@@ -625,21 +641,21 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
             {questions.map((question) => <li key={question.questionId} className="paper-card">
               <div>
                 <strong>{question.preview || "（无题干预览）"}</strong>
-                <p className="muted">{exam?.sections.find((entry) => entry.id === question.sectionId)?.title ?? "分部待补"} · 原卷第 {question.source.pdfPage} 页 · 题 {question.source.originalNumber} · {statusLabels[question.contentStatus]} · 答案{answerLabels[question.answerStatus]}</p>
+                <p className="muted">{exam?.sections.find((entry) => entry.id === question.sectionId)?.title ?? "分部待补"} · 原卷{unitLabel(question.source.pdfPage)} · 题 {question.source.originalNumber} · {statusLabels[question.contentStatus]} · 答案{answerLabels[question.answerStatus]}</p>
               </div>
               <div className="paper-actions">
                 <button onClick={() => void loadQuestion(question)} disabled={busy}>编辑</button>
-                <button onClick={() => { setPage(question.source.pdfPage); setMessage(`已定位到原卷第 ${question.source.pdfPage} 页。`); }}>定位原页</button>
+                <button onClick={() => { setPage(question.source.pdfPage); setMessage(`已定位到原卷${unitLabel(question.source.pdfPage)}。`); }}>{isDocx ? "定位原段" : "定位原页"}</button>
               </div>
             </li>)}
           </ul>}
         </section>
 
         {form && <>
-          <WholePaperPanel examId={examId} sectionId={sectionId} fileId={paper?.id} sectionName={section?.title ?? ""} onPageChange={setPage} />
+          <WholePaperPanel examId={examId} sectionId={sectionId} fileId={paper?.id} sectionName={section?.title ?? ""} sourceKind={sourceKind} onPageChange={setPage} />
           <section className="paper-panel" aria-label="AI 拆题">
             <header><h2>AI 拆题</h2><button onClick={() => setAiOpen((value) => !value)}>{aiOpen ? "收起" : "展开"}</button></header>
-            {!aiOpen && <p className="muted">从原卷裁图或读取文字，生成结构化草稿，逐题核对后采纳。AI 结果不会自动入库。</p>}
+            {!aiOpen && <p className="muted">{isDocx ? "读取原卷段落文字，生成结构化草稿，逐题核对后采纳。AI 结果不会自动入库。" : "从原卷裁图或读取文字，生成结构化草稿，逐题核对后采纳。AI 结果不会自动入库。"}</p>}
             {aiOpen && <>
               <p className="muted">只上传你确认的文字或裁图；整份原卷、题库与其他资料留在本机。生成内容必须对照原卷逐题核对。</p>
               {aiConfig && <p className="muted">服务：{aiConfig.baseUrl} · 文字模型 {aiConfig.textModel} · 图像模型 {aiConfig.imageModel}{aiConfig.hasKey ? "" : " · 尚未配置密钥"}</p>}
@@ -648,8 +664,10 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
                 <button role="tab" aria-selected={aiMode === "text"} className={aiMode === "text" ? "primary" : ""} onClick={() => changeAiMode("text")} disabled={aiSending}>文字输入</button>
               </div>
               {aiMode === "images" ? <>
-                <p className="muted">最多 {AI_LIMITS.imageCount} 张，单张不超过 5 MiB，合计不超过 15 MiB；点「添加选区」后在左栏拖选，可跨页累积。</p>
-                <button onClick={() => { setCropTarget({ field: "ai" }); setAiMessage("请在左栏原卷页面上拖选 AI 拆题区域。"); setAiError(""); }} disabled={aiSending || aiImages.length >= AI_LIMITS.imageCount}>添加选区</button>
+                <p className="muted">{isDocx
+                  ? "DOCX 原卷暂不支持裁图输入，请使用文字输入或返回上传 PDF。"
+                  : `最多 ${AI_LIMITS.imageCount} 张，单张不超过 5 MiB，合计不超过 15 MiB；点「添加选区」后在左栏拖选，可跨页累积。`}</p>
+                <button onClick={() => { setCropTarget({ field: "ai" }); setAiMessage("请在左栏原卷页面上拖选 AI 拆题区域。"); setAiError(""); }} disabled={aiSending || isDocx || aiImages.length >= AI_LIMITS.imageCount}>添加选区</button>
                 {aiImages.length > 0 && <ul className="paper-list">{aiImages.map((image, index) => <li key={index} className="paper-card">
                   <div><img src={image.dataUrl} alt={`AI 裁图 ${index + 1}`} className="ai-crop-thumb" /><p className="muted">第 {image.page} 页 · {Math.ceil(base64Bytes(image.dataUrl) / 1024)} KiB</p></div>
                   <button onClick={() => removeAiImage(index)} disabled={aiSending}>移除</button>
@@ -658,7 +676,7 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
               </> : <>
                 <div className="paper-actions"><button onClick={() => void loadExamText()} disabled={!paper || aiSending}>读取本卷文字</button></div>
                 <label>文字（可修改）<textarea aria-label="AI 文字" value={aiText} onChange={(event) => setAiText(event.target.value)} /><span className="muted">{[...aiText].length} / {AI_LIMITS.textChars} 字符（按码点）</span></label>
-                <label>原卷页码（逗号分隔）<input aria-label="AI 页码" value={aiPages} onChange={(event) => setAiPages(event.target.value)} placeholder="例如 3,4" /></label>
+                <label>{isDocx ? "原卷段号" : "原卷页码"}（逗号分隔）<input aria-label="AI 页码" value={aiPages} onChange={(event) => setAiPages(event.target.value)} placeholder="例如 3,4" /></label>
               </>}
               <div className="paper-actions">
                 <button className="primary" onClick={requestAiSend} disabled={aiSending}>确认发送</button>
@@ -666,7 +684,7 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
               </div>
               {aiConfirming && <section className="ai-confirm" aria-label="确认发送">
                 <p>将向 {aiMode === "images" ? aiConfig?.imageModel ?? "图像模型" : aiConfig?.textModel ?? "文字模型"}（{aiConfig?.baseUrl ?? "服务地址待配置"}）发送
-                  {aiMode === "images" ? ` ${aiImages.length} 张裁图，页码 ${[...new Set(aiImages.map((image) => image.page))].join("、")}` : `第 ${parsedAiPages().join("、")} 页文字，共 ${[...aiText].length} 个字符`}。</p>
+                  {aiMode === "images" ? ` ${aiImages.length} 张裁图，页码 ${[...new Set(aiImages.map((image) => image.page))].join("、")}` : `第 ${parsedAiPages().join("、")} ${isDocx ? "段" : "页"}文字，共 ${[...aiText].length} 个字符`}。</p>
                 <p className="muted">确认只发送以上内容；原卷整份文件与题库不会上传。</p>
                 <button className="primary" onClick={() => void sendAi()}>确认发送给模型</button>
                 <button onClick={() => setAiConfirming(false)}>取消</button>
@@ -677,7 +695,7 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
                 <h3>AI 草稿（{aiDraft.questions.length} 题）</h3>
                 {aiDraft.notes.length > 0 && <ul>{aiDraft.notes.map((note, index) => <li key={index} className="muted">{note}</li>)}</ul>}
                 {aiDraft.questions.map((question, index) => <article key={index} className="paper-card ai-question">
-                  <header><strong>AI 第 {index + 1} 题 · 原卷第 {question.page} 页{question.originalNumber ? ` · 题 ${question.originalNumber}` : ""}</strong><span className="paper-state">{aiAdopted.includes(index) ? "已采纳" : "待核对"}</span></header>
+                  <header><strong>AI 第 {index + 1} 题 · 原卷{unitLabel(question.page)}{question.originalNumber ? ` · 题 ${question.originalNumber}` : ""}</strong><span className="paper-state">{aiAdopted.includes(index) ? "已采纳" : "待核对"}</span></header>
                   <p><strong>题干：</strong>{question.stem}</p>
                   {(question.parts ?? []).map((part, partIndex) => <div key={partIndex} className="ai-part">
                     <p><strong>{part.label || `(${partIndex + 1})`}</strong> {part.prompt}</p>
@@ -740,7 +758,7 @@ export default function IntakeWorkbench({ examId, onBack }: { examId: string; on
             </div>
             <div className="paper-inline">
               <label>卷内分部<select value={sectionId} onChange={(event) => { const id = event.target.value; setSectionId(id); const picked = exam?.sections.find((entry) => entry.id === id); if (picked) setForm({ ...form, source: { ...form.source, section: picked.title } }); }}>{exam?.sections.map((entry) => <option key={entry.id} value={entry.id}>{entry.title}</option>)}</select></label>
-              <label>原卷页码<input type="number" min={1} max={2000} value={form.source.pdfPage} onChange={(event) => setForm({ ...form, source: { ...form.source, pdfPage: event.target.value } })} /></label>
+              <label>{isDocx ? "原卷段号" : "原卷页码"}<input type="number" min={1} max={2000} value={form.source.pdfPage} onChange={(event) => setForm({ ...form, source: { ...form.source, pdfPage: event.target.value } })} /></label>
               <label>原题号<input value={form.source.originalNumber} onChange={(event) => setForm({ ...form, source: { ...form.source, originalNumber: event.target.value } })} /></label>
             </div>
             {section && <p className="muted">来源分部：{section.title}{section.subject ? `（${section.subject}）` : ""}；原文位置同时写入题目内容。</p>}

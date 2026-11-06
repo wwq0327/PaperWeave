@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { sourceUnitLabel, type AiSourceKind } from "../shared/ai";
 import type { AiConfig } from "../shared/ai-config";
 import type { AnswerStatus, Classification, ReviewStatus, Stage } from "../shared/question";
 import type { WholePaperIntakeItem, WholePaperIntakeSummary } from "../shared/whole-paper-intake";
@@ -20,8 +21,11 @@ function parsePoints(text: string): string[] {
   return [...new Set(text.split(/[,，、]/).map((item) => item.trim()).filter(Boolean))];
 }
 
-function intakeRowLabel(row: WholePaperIntakeItem): string {
-  return `第 ${row.batchIndex + 1} 批 · ${row.page > 0 ? `原卷第 ${row.page} 页` : "页码待核"} · 题 ${row.originalNumber || "待核"}`;
+function intakeRowLabel(row: WholePaperIntakeItem, sourceKind: AiSourceKind): string {
+  const position = row.page > 0
+    ? `原卷${sourceUnitLabel(sourceKind, row.page)}`
+    : sourceKind === "docx" ? "段号待核" : "页码待核";
+  return `第 ${row.batchIndex + 1} 批 · ${position} · 题 ${row.originalNumber || "待核"}`;
 }
 
 function intakeSelectable(row: WholePaperIntakeItem): boolean {
@@ -56,7 +60,7 @@ function classificationSummaryText(value: Classification): string {
   ].join(" · ");
 }
 
-export default function WholePaperPanel({ examId, sectionId, fileId, sectionName, onPageChange }: { examId: string; sectionId: string; fileId?: string; sectionName: string; onPageChange: (page: number) => void }) {
+export default function WholePaperPanel({ examId, sectionId, fileId, sectionName, onPageChange, sourceKind = "pdf" }: { examId: string; sectionId: string; fileId?: string; sectionName: string; sourceKind?: AiSourceKind; onPageChange: (page: number) => void }) {
   const [tasks, setTasks] = useState<WholePaperTaskView[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<WholePaperTaskDetail | null>(null);
@@ -109,6 +113,9 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
     finally { await refresh().catch(() => undefined); setRunning(null); }
   }
   const task = tasks.find((entry) => entry.id === selected);
+  /** 任务视图的 sourceKind 决定来源文案；旧任务缺失时沿用当前原卷类型。 */
+  const taskKind: AiSourceKind = task?.sourceKind ?? sourceKind;
+  const unitList = (units: number[]) => `第 ${units.join("、")} ${taskKind === "docx" ? "段" : "页"}`;
   useEffect(() => {
     let live = true;
     setDetail(null);
@@ -181,6 +188,7 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
     });
   }
   function updateClassification(patch: Partial<Classification>) { setIntakeForm((current) => ({ ...current, ...patch })); }
+  const confirmationKind: AiSourceKind = confirmation?.task.sourceKind ?? sourceKind;
   const toSend = confirmation?.task.batches.filter((batch) => batch.status === "pending" || batch.status === "failed" || batch.status === "running") ?? [];
   const pages = [...new Set(toSend.flatMap((batch) => batch.pages))];
   const succeededResults = (detail?.results ?? []).filter((result): result is WholePaperBatchResult => result !== null);
@@ -191,19 +199,21 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
   const visibleIntakes = intakes.filter((row) => intakeMatches(row, intakeFilter));
   return <section className="paper-panel" aria-label="整卷任务">
     <header><h2>整卷任务</h2></header>
-    <p>准备文字 PDF 的整卷任务，当前分部：{sectionName || "未选择"}。准备步骤不发送模型，也不创建题目。</p>
+    <p>{sourceKind === "docx" ? "准备 DOCX 段落文字的整卷任务" : "准备文字 PDF 的整卷任务"}，当前分部：{sectionName || "未选择"}。准备步骤不发送模型，也不创建题目。</p>
     <button onClick={() => void prepare()} disabled={busy || !fileId || !sectionId}>{busy ? "正在准备…" : "准备整卷文字任务"}</button>
     {error && <p role="alert" className="error">{error}</p>}
     {tasks.length === 0 ? <p className="muted">尚无整卷任务。</p> : <ul>{tasks.map((entry, index) => <li key={entry.id}><button onClick={() => { setSelected(entry.id); setConfirmation(null); }}>查看任务 {index + 1}</button> · {entry.batches.length} 批</li>)}</ul>}
     {task && <div aria-label="整卷任务详情" role="region">
       <p>已准备 {task.batches.length} 批。识别结果仍是待核草稿，需设置整卷参数后批量建档；未建档的识别结果不会进入题库。</p>
-      {task.emptyPages.length > 0 && <p role="status">第 {task.emptyPages.join("、")} 页没有可提取文字，可能是扫描页，尚未处理。</p>}
-      <ul>{task.batches.map((batch, index) => <li key={index}>第 {index + 1} 批 · 原卷第 {batch.pages.join("、")} 页 · {status[batch.status]}{batch.reviewBoundaryBefore ? " · 跨批边界待核" : ""}</li>)}</ul>
+      {task.emptyPages.length > 0 && <p role="status">{taskKind === "docx"
+        ? `第 ${task.emptyPages.join("、")} 段没有文字，尚未处理。`
+        : `第 ${task.emptyPages.join("、")} 页没有可提取文字，可能是扫描页，尚未处理。`}</p>}
+      <ul>{task.batches.map((batch, index) => <li key={index}>第 {index + 1} 批 · 原卷{unitList(batch.pages)} · {status[batch.status]}{batch.reviewBoundaryBefore ? " · 跨批边界待核" : ""}</li>)}</ul>
       {detail?.results.map((result, batchIndex) => result && <section key={batchIndex} aria-label={`第 ${batchIndex + 1} 批识别结果`}>
         <h3>第 {batchIndex + 1} 批识别结果 · 均待核对</h3>
         {result.notes.map((note, index) => <p key={index}>整体提示：{note}</p>)}
         {result.questions.map((question, index) => <article key={index} className="paper-card">
-          <div><strong>原卷第 {question.page} 页 · 题 {question.originalNumber || "待核"}</strong><p>{question.stem}</p>
+          <div><strong>原卷{sourceUnitLabel(taskKind, question.page)} · 题 {question.originalNumber || "待核"}</strong><p>{question.stem}</p>
             {question.subquestions.map((sub, i) => <p key={i}>小问：{sub}</p>)}
             {question.options.map((option, i) => <p key={i}>选项：{option}</p>)}
             {question.answer && <p>答案：{question.answer}</p>}
@@ -212,7 +222,7 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
             {question.uncertain.map((item, i) => <p key={i}>待核：{item}</p>)}
             {(question.parts ?? []).map((part, i) => <div key={i}><p>小问 {part.label || "待核"}：{part.prompt}</p>{part.options.map((option, j) => <p key={j}>选项：{option}</p>)}{part.answer && <p>答案：{part.answer}</p>}{part.explanation && <p>解析：{part.explanation}</p>}<p>原分值：{part.score === null ? "待补" : part.score}</p>{part.uncertain.map((item, j) => <p key={j}>待核：{item}</p>)}</div>)}
             {(question.materials ?? []).map((material, i) => <p key={i}>材料建议：{material.title} · {material.content} · {material.source}</p>)}
-          </div><button onClick={() => onPageChange(question.page)}>定位原页</button>
+          </div><button onClick={() => onPageChange(question.page)}>{taskKind === "docx" ? "定位原段落" : "定位原页"}</button>
         </article>)}
       </section>)}
       <button disabled={!!running || !task.batches.some((batch) => batch.status === "pending" || batch.status === "failed" || batch.status === "running")} onClick={() => void confirm(task)}>发送或重试整卷任务</button>
@@ -255,7 +265,7 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
           return <li key={row.id} className="intake-review-row">
             <input type="checkbox" aria-label={`选择第 ${row.batchIndex + 1} 批第 ${row.questionIndex + 1} 题`} checked={selectedIds.has(row.id)} disabled={intakeBusy || !intakeSelectable(row)} onChange={(event) => toggleSelected(row.id, event.target.checked)} />
             <div>
-              <p><strong>{intakeRowLabel(row)}</strong>{row.status === "duplicate" ? " · 重复候选" : row.status === "failed" ? " · 建档失败" : row.status === "skipped" ? " · 已跳过" : ""}</p>
+              <p><strong>{intakeRowLabel(row, taskKind)}</strong>{row.status === "duplicate" ? " · 重复候选" : row.status === "failed" ? " · 建档失败" : row.status === "skipped" ? " · 已跳过" : ""}</p>
               {row.preview && <p>{row.preview}</p>}
               <p><span className="intake-badge">{contentText}</span> <span className="intake-badge">{answerText}</span></p>
               {row.message && <p className="muted">{row.message}</p>}
@@ -265,7 +275,7 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
                   <button onClick={() => void resolveDuplicate(row, "skip")} disabled={intakeBusy}>跳过</button>
                   <button onClick={() => void resolveDuplicate(row, "revise")} disabled={intakeBusy}>建修订版</button>
                 </>}
-                {row.page > 0 && <button onClick={() => onPageChange(row.page)}>定位原页</button>}
+                {row.page > 0 && <button onClick={() => onPageChange(row.page)}>{taskKind === "docx" ? "定位原段落" : "定位原页"}</button>}
               </div>
             </div>
           </li>;
@@ -277,8 +287,8 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
     </section>}
     {confirmation && <section aria-label="确认整卷发送" role="region">
       <p>服务：{confirmation.config.baseUrl} · 文字模型：{confirmation.config.textModel}</p>
-      <p>将发送 {toSend.length} 个批次，原卷第 {pages.join("、")} 页的提取文字；费用按服务商规则计收。</p>
-      <p>未识别页：{confirmation.task.emptyPages.length ? confirmation.task.emptyPages.join("、") : "无"}。请确认发送范围与费用后继续；结果不会自动入库。</p>
+      <p>将发送 {toSend.length} 个批次，原卷第 {pages.join("、")} {confirmationKind === "docx" ? "段" : "页"}的提取文字；费用按服务商规则计收。</p>
+      <p>{confirmationKind === "docx" ? "未识别段" : "未识别页"}：{confirmation.task.emptyPages.length ? confirmation.task.emptyPages.join("、") : "无"}。请确认发送范围与费用后继续；结果不会自动入库。</p>
       <button onClick={() => void run()}>确认发送整卷文字</button><button onClick={() => setConfirmation(null)}>取消发送</button>
     </section>}
   </section>;

@@ -41,19 +41,19 @@ test("导入原卷、指纹去重、挂接答案并在重开后保留", async ()
     await app.evaluate(({ dialog }, target) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] });
     }, badPath);
-    await page.getByRole("button", { name: "选择 PDF 并导入" }).click();
+    await page.getByRole("button", { name: "选择原卷并导入" }).click();
     await expect(page.getByRole("alert")).toContainText("原卷必须是 PDF 文件");
 
     await app.evaluate(({ dialog }, target) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] });
     }, paperPath);
-    await page.getByRole("button", { name: "选择 PDF 并导入" }).click();
+    await page.getByRole("button", { name: "选择原卷并导入" }).click();
     await expect(page.getByText("已导入「九年级数学单元卷」。", { exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "九年级数学单元卷" })).toBeVisible();
     expect(existsSync(path.join(dir, "originals", `${sha}.pdf`))).toBe(true);
     expect(readdirSync(path.join(dir, "originals"))).toEqual([`${sha}.pdf`]);
 
-    await page.getByRole("button", { name: "选择 PDF 并导入" }).click();
+    await page.getByRole("button", { name: "选择原卷并导入" }).click();
     await expect(page.getByText("该原卷已登记为「九年级数学单元卷」，未重复导入。", { exact: true })).toBeVisible();
     await expect(page.locator("section[aria-label='考试列表'] .paper-card")).toHaveCount(1);
 
