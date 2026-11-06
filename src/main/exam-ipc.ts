@@ -3,6 +3,7 @@ import { originalFileKind } from "../shared/ai";
 import { isExamFileRole, type ExamDetailView, type ExamFileRecord, type ExamFileView, type OriginalFileRecord, type OriginalFileView } from "../shared/exam";
 import type { Database } from "./database";
 import { AttachmentStore } from "./attachments";
+import { cropScanPage } from "./scan-crop";
 import { extractDocxText } from "./docx";
 import { ExamStore } from "./exams";
 import { Intake } from "./intake";
@@ -29,7 +30,8 @@ export function registerExams(db: Database, root: string, currentWindow: () => B
   const bank = new QuestionBank(db);
   const intake = new Intake(store, bank);
   const wholePaper = new WholePaperStore(db);
-  const wholeIntake = new WholePaperIntake(db, wholePaper, intake, bank, store);
+  const attachments = new AttachmentStore(root);
+  const wholeIntake = new WholePaperIntake(db, wholePaper, intake, bank, store, (pageImage, rect) => cropScanPage(attachments, pageImage, rect));
   const sourceKindOf = (task: WholePaperTask): "pdf" | "docx" => {
     const file = task.sourceFileId === undefined ? undefined : store.getExam(task.examId).files.find((entry) => entry.id === task.sourceFileId);
     return file === undefined ? "pdf" : originalFileKind(file.originalName);
@@ -37,9 +39,8 @@ export function registerExams(db: Database, root: string, currentWindow: () => B
   const taskView = (task: WholePaperTask): WholePaperTaskView => ({
     id: task.id, sectionId: task.sectionId, revision: task.revision, sourceFileId: task.sourceFileId, sourceKind: sourceKindOf(task), createdAt: task.createdAt,
     emptyPages: task.state.plan.emptyPages,
-    batches: task.state.plan.batches.map((batch, index) => ({ pages: batch.pages, status: task.state.batches[index].status, reviewBoundaryBefore: batch.reviewBoundaryBefore })),
+    batches: task.state.plan.batches.map((batch, index) => ({ kind: batch.kind ?? "text", pages: batch.pages, status: task.state.batches[index].status, reviewBoundaryBefore: batch.reviewBoundaryBefore })),
   });
-  const attachments = new AttachmentStore(root);
   const permitted = (event: Electron.IpcMainInvokeEvent) => {
     const win = currentWindow();
     if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) throw new Error("无权访问考试资料");
@@ -109,9 +110,9 @@ export function registerExams(db: Database, root: string, currentWindow: () => B
     }
     return extractPdfText(new Uint8Array(data));
   });
-  ipcMain.handle("wholePaper:prepare", async (event, examId: unknown, sectionId: unknown, fileId: unknown) => {
+  ipcMain.handle("wholePaper:prepare", async (event, examId: unknown, sectionId: unknown, fileId: unknown, pageImages: unknown) => {
     permitted(event);
-    return taskView(await prepareWholePaper(store, wholePaper, attachments, text(examId, "考试标识"), text(sectionId, "考试分部"), text(fileId, "原卷文件")));
+    return taskView(await prepareWholePaper(store, wholePaper, attachments, text(examId, "考试标识"), text(sectionId, "考试分部"), text(fileId, "原卷文件"), pageImages));
   });
   ipcMain.handle("wholePaper:list", (event, examId: unknown) => {
     permitted(event);

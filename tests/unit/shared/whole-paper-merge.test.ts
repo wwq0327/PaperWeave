@@ -50,3 +50,14 @@ test("非相邻批次或不同题号不合并", () => {
   expect(groups).toHaveLength(3);
   expect(groups.map((group) => group.question.originalNumber)).toEqual(["7", "8", "7"]);
 });
+
+test("跨页扫描题合并两页的归一化区域，去重不去序", () => {
+  const rect = { x: 0.1, y: 0.1, width: 0.8, height: 0.4 };
+  const first = base("5", 1, { scanAreas: [{ page: 1, rect }] });
+  const second = base("5", 2, { scanAreas: [{ page: 2, rect: { ...rect, y: 0.6 } }, { page: 1, rect }] });
+  const [group] = mergeWholePaperQuestions([
+    { batchIndex: 0, questionIndex: 0, question: first },
+    { batchIndex: 1, questionIndex: 0, question: second },
+  ]);
+  expect(group.question.scanAreas).toEqual([{ page: 1, rect }, { page: 2, rect: { ...rect, y: 0.6 } }]);
+});

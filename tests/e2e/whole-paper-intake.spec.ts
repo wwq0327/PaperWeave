@@ -35,10 +35,10 @@ async function importExam(page: Page, app: Awaited<ReturnType<typeof electron.la
 /** 在整卷任务面板准备、发送并等到固定响应批次处理完成。 */
 async function prepareAndRun(page: Page) {
   const panel = page.getByRole("region", { name: "整卷任务", exact: true });
-  await panel.getByRole("button", { name: "准备整卷文字任务" }).click();
+  await panel.getByRole("button", { name: "准备整卷任务" }).click();
   await expect(panel.getByRole("region", { name: "整卷任务详情" })).toBeVisible();
   await panel.getByRole("button", { name: "发送或重试整卷任务" }).click();
-  await panel.getByRole("region", { name: "确认整卷发送" }).getByRole("button", { name: "确认发送整卷文字" }).click();
+  await panel.getByRole("region", { name: "确认整卷发送" }).getByRole("button", { name: "确认发送整卷任务" }).click();
   await expect(panel).toContainText("已处理");
   return panel;
 }

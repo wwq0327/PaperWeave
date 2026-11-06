@@ -11,6 +11,8 @@ import { WholePaperStore } from "../../../src/main/whole-paper-store";
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 const input = { title: "自制卷", stage: "初中" as const, subject: "数学", grade: "九年级", region: "", examType: "", year: "", sourceName: "" };
+const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+const pageImage = (page: number, fileId?: string) => ({ ...(fileId === undefined ? {} : { fileId }), page, dataUrl: png, width: 1200, height: 1600 });
 function setup() {
   const root = mkdtempSync(join(tmpdir(), "prepare-paper-")); dirs.push(root);
   const db = new Database(join(root, "db.sqlite"));
@@ -58,18 +60,18 @@ test("从 DOCX 原卷准备任务：按文档段落定位，空段落保留待�
   db.close();
 });
 
-test("拒绝跨考试原卷、无效分部及扫描页，不创建任务", async () => {
+test("拒绝跨考试原卷、无效分部，全扫描 PDF 缺页面图时拒绝", async () => {
   const { db, exams, tasks, attachments, source } = setup();
   const first = source("text.pdf");
   const blank = source("blank.pdf");
   await expect(prepareWholePaper(exams, tasks, attachments, first.exam.id, first.sectionId, blank.file.id)).rejects.toThrow("原卷不属于该考试");
   await expect(prepareWholePaper(exams, tasks, attachments, first.exam.id, blank.sectionId, first.file.id)).rejects.toThrow("考试分部不存在");
-  await expect(prepareWholePaper(exams, tasks, attachments, blank.exam.id, blank.sectionId, blank.file.id)).rejects.toThrow("扫描页");
+  await expect(prepareWholePaper(exams, tasks, attachments, blank.exam.id, blank.sectionId, blank.file.id)).rejects.toThrow("缺少页面图像");
   expect(tasks.list()).toHaveLength(0);
   db.close();
 });
 
-test("混合 PDF 的无文字页保留待处理提示", async () => {
+test("混合 PDF 的无文字页按页面图生成扫描批次", async () => {
   const { root, db, exams, tasks, attachments } = setup();
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
@@ -88,8 +90,60 @@ test("混合 PDF 的无文字页保留待处理提示", async () => {
   pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
   const path = join(root, "mixed.pdf"); writeFileSync(path, pdf);
   const imported = exams.importPaper(input, path);
-  const task = await prepareWholePaper(exams, tasks, attachments, imported.exam.id, exams.getExam(imported.exam.id).sections[0].id, imported.file.id);
-  expect(task.state.plan.emptyPages).toEqual([2]);
+  const task = await prepareWholePaper(exams, tasks, attachments, imported.exam.id, exams.getExam(imported.exam.id).sections[0].id, imported.file.id, [pageImage(2)]);
+  expect(task.state.plan.emptyPages).toEqual([]);
+  expect(task.state.plan.batches.map((batch) => batch.kind)).toEqual(["text", "scan"]);
+  expect(task.state.plan.batches[1].image?.page).toBe(2);
+  expect(attachments.read(task.state.plan.batches[1].image?.attachmentId as string).mime).toBe("image/png");
+  db.close();
+});
+
+test("全扫描 PDF 用页面图准备扫描批次", async () => {
+  const { db, exams, tasks, attachments, source } = setup();
+  const paper = source("blank.pdf");
+  const task = await prepareWholePaper(exams, tasks, attachments, paper.exam.id, paper.sectionId, paper.file.id, [pageImage(1)]);
+  expect(task.state.plan.batches).toHaveLength(1);
+  expect(task.state.plan.batches[0]).toMatchObject({ kind: "scan", pages: [1], text: "", sendable: true });
+  expect(task.state.plan.emptyPages).toEqual([]);
+  db.close();
+});
+
+test("答案 PDF 追加答案批次，扫描答案页使用对应页面图", async () => {
+  const { root, db, exams, tasks, attachments, source } = setup();
+  const paper = source("text.pdf");
+  const detail = exams.getExam(paper.exam.id);
+  const answerPath = join(root, "answer.pdf"); copyFileSync(join(process.cwd(), "tests/fixtures", "text.pdf"), answerPath);
+  exams.attachFile(paper.exam.id, "answer", answerPath);
+  const answer = exams.getExam(paper.exam.id).files.find((file) => file.role === "answer");
+  expect(answer).toBeDefined();
+  const task = await prepareWholePaper(exams, tasks, attachments, paper.exam.id, paper.sectionId, paper.file.id);
+  expect(task.state.plan.answerFiles).toEqual([{ fileId: answer?.id, role: "answer", name: "text.pdf" }]);
+  expect(task.state.plan.batches.map((batch) => batch.kind)).toEqual(["text", "answer-text"]);
+  expect(task.state.plan.batches[1].answer?.fileId).toBe(answer?.id);
+
+  const scanned = source("blank.pdf");
+  const scannedAnswerPath = join(root, "answer-scan.pdf"); copyFileSync(join(process.cwd(), "tests/fixtures", "blank.pdf"), scannedAnswerPath);
+  exams.attachFile(scanned.exam.id, "rubric", scannedAnswerPath);
+  const rubric = exams.getExam(scanned.exam.id).files.find((file) => file.role === "rubric");
+  const scanTask = await prepareWholePaper(exams, tasks, attachments, scanned.exam.id, scanned.sectionId, scanned.file.id, [pageImage(1), pageImage(1, rubric?.id)]);
+  expect(scanTask.state.plan.answerFiles).toEqual([{ fileId: rubric?.id, role: "rubric", name: "blank.pdf" }]);
+  expect(scanTask.state.plan.batches.map((batch) => batch.kind)).toEqual(["scan", "answer-scan"]);
+  expect(scanTask.state.plan.batches[1].answer?.role).toBe("rubric");
+  expect(detail.files.some((file) => file.role === "answer")).toBe(false);
+  db.close();
+});
+
+test("页面图只接受原卷无标识或答案／评分文件标识，拒绝其它角色", async () => {
+  const { root, db, exams, tasks, attachments, source } = setup();
+  const paper = source("blank.pdf");
+  const sheetPath = join(root, "sheet.pdf"); copyFileSync(join(process.cwd(), "tests/fixtures", "text.pdf"), sheetPath);
+  exams.attachFile(paper.exam.id, "answer_sheet", sheetPath);
+  const sheet = exams.getExam(paper.exam.id).files.find((file) => file.role === "answer_sheet");
+  const task = await prepareWholePaper(exams, tasks, attachments, paper.exam.id, paper.sectionId, paper.file.id, [pageImage(1)]);
+  expect(task.state.plan.answerFiles).toEqual([]);
+  expect(task.state.plan.batches.map((batch) => batch.kind)).toEqual(["scan"]);
+  await expect(prepareWholePaper(exams, tasks, attachments, paper.exam.id, paper.sectionId, paper.file.id, [pageImage(1, sheet?.id)])).rejects.toThrow("页面图像不属于该考试");
+  await expect(prepareWholePaper(exams, tasks, attachments, paper.exam.id, paper.sectionId, paper.file.id, [pageImage(1, paper.file.id)])).rejects.toThrow("页面图像不属于该考试");
   db.close();
 });
 

@@ -54,6 +54,26 @@ export interface AiFieldNote {
   note: string;
 }
 
+/** 扫描页归一化矩形，取值 0–1，相对整页宽高。 */
+export interface AiScanRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface AiScanFigure extends AiScanRect {
+  kind: "题图" | "材料图" | "解析图";
+  note: string;
+}
+
+/** 扫描页上一题的题面范围；跨页题每页一项。 */
+export interface AiScanArea {
+  page: number;
+  rect: AiScanRect;
+  figures?: AiScanFigure[];
+}
+
 export interface AiIgnoredRange extends AiSourceAnchor {
   kind: "instructions" | "answer" | "blank" | "other";
   note: string;
@@ -99,6 +119,8 @@ export interface AiQuestion {
   figures?: AiFigureRef[];
   fieldUncertain?: AiFieldNote[];
   answerSource?: string;
+  /** 扫描页上的题面范围；文字页留空。 */
+  scanAreas?: AiScanArea[];
 }
 
 export interface AiDraft {
@@ -108,10 +130,26 @@ export interface AiDraft {
   ignored?: AiIgnoredRange[];
 }
 
+/** 答案／评分文件抽取结果；label 为空表示整题答案。 */
+export interface AiAnswerEntry {
+  originalNumber: string;
+  label: string;
+  answer: string;
+  page: number;
+}
+
+export interface AiAnswerDraft {
+  answers: AiAnswerEntry[];
+  notes: string[];
+}
+
 const draftKeys = new Set(["questions", "notes", "ignored"]);
-const questionKeys = new Set(["stem", "subquestions", "options", "tags", "uncertain", "page", "answer", "parts", "materials", "questionType", "knowledgePoints", "originalNumber", "sourceAnchors", "figures", "fieldUncertain", "answerSource"]);
+const questionKeys = new Set(["stem", "subquestions", "options", "tags", "uncertain", "page", "answer", "parts", "materials", "questionType", "knowledgePoints", "originalNumber", "sourceAnchors", "figures", "fieldUncertain", "answerSource", "scanAreas"]);
 const partKeys = new Set(["label", "prompt", "options", "answer", "explanation", "score", "uncertain", "answerSource"]);
 const materialKeys = new Set(["title", "content", "source", "appliesTo", "sourceAnchors"]);
+const scanAreaKeys = new Set(["page", "rect", "figures"]);
+const scanFigureKeys = new Set(["x", "y", "width", "height", "kind", "note"]);
+const scanRectKeys = new Set(["x", "y", "width", "height"]);
 const figureKinds = new Set(["题图", "材料图", "解析图"]);
 const ignoredKinds = new Set(["instructions", "answer", "blank", "other"]);
 const text = (x: unknown, max = 8000): x is string => typeof x === "string" && x.length <= max;
@@ -145,6 +183,48 @@ const fieldNote = (x: unknown): x is AiFieldNote => {
   return Object.keys(value).every((key) => ["field", "note"].includes(key))
     && text(value.field, 50) && value.field.trim() !== "" && text(value.note, 2000) && value.note.trim() !== "";
 };
+const scanRectValues = (value: Record<string, unknown>): boolean => {
+  const { x: left, y: top, width, height } = value;
+  if (![left, top, width, height].every((item) => typeof item === "number" && Number.isFinite(item))) return false;
+  return (left as number) >= 0 && (top as number) >= 0 && (width as number) > 0 && (height as number) > 0
+    && (left as number) + (width as number) <= 1.000001 && (top as number) + (height as number) <= 1.000001;
+};
+const scanRect = (x: unknown): x is AiScanRect => {
+  if (typeof x !== "object" || x === null) return false;
+  const value = x as Record<string, unknown>;
+  return Object.keys(value).every((key) => scanRectKeys.has(key)) && scanRectValues(value);
+};
+const scanFigure = (x: unknown): x is AiScanFigure => {
+  if (typeof x !== "object" || x === null) return false;
+  const value = x as Record<string, unknown>;
+  return Object.keys(value).every((key) => scanFigureKeys.has(key))
+    && scanRectValues(value) && typeof value.kind === "string" && figureKinds.has(value.kind) && text(value.note, 500);
+};
+const scanArea = (x: unknown): x is AiScanArea => {
+  if (typeof x !== "object" || x === null) return false;
+  const value = x as Record<string, unknown>;
+  if (!Object.keys(value).every((key) => scanAreaKeys.has(key))) return false;
+  if (!Number.isInteger(value.page) || (value.page as number) < 1 || (value.page as number) > 2000 || !scanRect(value.rect)) return false;
+  return value.figures === undefined || (Array.isArray(value.figures) && value.figures.length <= 10 && value.figures.every(scanFigure));
+};
+
+/** 答案抽取结果严格校验；answer 不允许为空，避免静默写入空答案。 */
+export function isAiAnswerDraft(value: unknown): value is AiAnswerDraft {
+  if (typeof value !== "object" || value === null) return false;
+  const draft = value as Record<string, unknown>;
+  if (!Object.keys(draft).every((key) => key === "answers" || key === "notes")) return false;
+  if (!Array.isArray(draft.answers) || draft.answers.length < 1 || draft.answers.length > 500) return false;
+  if (!textList(draft.notes, 20, 2000)) return false;
+  return draft.answers.every((entry: unknown) => {
+    if (typeof entry !== "object" || entry === null) return false;
+    const answer = entry as Record<string, unknown>;
+    if (!Object.keys(answer).every((key) => ["originalNumber", "label", "answer", "page"].includes(key))) return false;
+    return typeof answer.originalNumber === "string" && answer.originalNumber.trim() !== "" && answer.originalNumber.length <= 20
+      && typeof answer.label === "string" && answer.label.length <= 20
+      && typeof answer.answer === "string" && answer.answer.trim() !== "" && answer.answer.length <= 2000
+      && Number.isInteger(answer.page) && (answer.page as number) >= 1 && (answer.page as number) <= 2000;
+  });
+}
 
 function isPart(value: unknown): value is AiPart {
   if (typeof value !== "object" || value === null) return false;
@@ -191,6 +271,7 @@ export function isAiDraft(value: unknown): value is AiDraft {
     if (q.figures !== undefined && (!Array.isArray(q.figures) || q.figures.length > 20 || !q.figures.every(figure))) return false;
     if (q.fieldUncertain !== undefined && (!Array.isArray(q.fieldUncertain) || q.fieldUncertain.length > 20 || !q.fieldUncertain.every(fieldNote))) return false;
     if (q.answerSource !== undefined && !text(q.answerSource, 500)) return false;
+    if (q.scanAreas !== undefined && (!Array.isArray(q.scanAreas) || q.scanAreas.length > 4 || !q.scanAreas.every(scanArea))) return false;
     return true;
   });
 }
@@ -211,7 +292,12 @@ export function checkImages(images: { bytes: number }[]): string | null {
 
 export type AiInput =
   | { mode: "text"; text: string; pages: number[]; sourceKind?: AiSourceKind; context?: AiContext }
-  | { mode: "images"; images: { dataUrl: string; page: number }[]; note?: string; context?: AiContext };
+  | { mode: "images"; images: { dataUrl: string; page: number }[]; note?: string; context?: AiContext; scan?: true };
+
+/** 答案／评分文件的抽取输入；不走渲染进程的普通裁图入口。 */
+export type AiAnswerInput =
+  | { mode: "answer-text"; text: string; pages: number[]; sourceName: string; context?: AiContext }
+  | { mode: "answer-images"; images: { dataUrl: string; page: number }[]; sourceName: string; context?: AiContext };
 
 const pageList = (x: unknown): x is number[] =>
   Array.isArray(x) && x.length >= 1 && x.length <= 50 && x.every((page) => typeof page === "number" && Number.isInteger(page) && page >= 1 && page <= 2000);
@@ -277,11 +363,40 @@ export function normalizeAiInput(value: unknown): { ok: true; input: AiInput } |
     const error = checkImages(typed.map((image) => ({ bytes: base64Bytes(image.dataUrl) })));
     if (error) return { ok: false, error };
     if (input.note !== undefined && (typeof input.note !== "string" || input.note.length > 2000)) return { ok: false, error: "说明不能超过 2000 字符" };
+    if (input.scan !== undefined && input.scan !== true) return { ok: false, error: "扫描标记无效" };
     const parsed = parseContext(input.context);
     if (!parsed.ok) return parsed;
-    return { ok: true, input: { mode: "images", images: typed, note: input.note as string | undefined, context: parsed.context } };
+    return { ok: true, input: { mode: "images", images: typed, note: input.note as string | undefined, context: parsed.context, ...(input.scan === true ? { scan: true as const } : {}) } };
   }
   return { ok: false, error: "未知的输入方式" };
+}
+
+/** 答案／评分输入只由主进程构造，仍统一校验，避免把任意内容发给模型。 */
+export function normalizeAiAnswerInput(value: unknown): { ok: true; input: AiAnswerInput } | { ok: false; error: string } {
+  if (typeof value !== "object" || value === null) return { ok: false, error: "答案输入格式无效" };
+  const input = value as Record<string, unknown>;
+  if (typeof input.sourceName !== "string" || !input.sourceName.trim() || input.sourceName.length > 255) return { ok: false, error: "答案文件名称无效" };
+  const parsed = parseContext(input.context);
+  if (!parsed.ok) return parsed;
+  if (input.mode === "answer-text") {
+    if (typeof input.text !== "string" || !pageList(input.pages)) return { ok: false, error: "答案文字或页码无效" };
+    const error = checkText(input.text);
+    if (error) return { ok: false, error };
+    return { ok: true, input: { mode: "answer-text", text: input.text, pages: input.pages, sourceName: input.sourceName, context: parsed.context } };
+  }
+  if (input.mode === "answer-images") {
+    if (!Array.isArray(input.images) || !(input.images as unknown[]).every((image) => typeof image === "object" && image !== null &&
+      typeof (image as Record<string, unknown>).dataUrl === "string" &&
+      /^data:image\/(png|jpeg);base64,/.test((image as Record<string, unknown>).dataUrl as string) &&
+      Number.isInteger((image as Record<string, unknown>).page) && ((image as Record<string, unknown>).page as number) >= 1 && ((image as Record<string, unknown>).page as number) <= 2000)) {
+      return { ok: false, error: "答案页面图格式无效" };
+    }
+    const images = input.images as { dataUrl: string; page: number }[];
+    const error = checkImages(images.map((image) => ({ bytes: base64Bytes(image.dataUrl) })));
+    if (error) return { ok: false, error };
+    return { ok: true, input: { mode: "answer-images", images, sourceName: input.sourceName, context: parsed.context } };
+  }
+  return { ok: false, error: "未知的答案输入方式" };
 }
 
 export function questionToBlocks(question: AiQuestion): { blocks: Block[]; answer: string } {

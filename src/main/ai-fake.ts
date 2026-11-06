@@ -1,4 +1,4 @@
-import type { AiDraft, AiInput } from "../shared/ai";
+import type { AiAnswerDraft, AiAnswerInput, AiDraft, AiInput } from "../shared/ai";
 
 /** 自动化测试用固定响应；仅当 PAPERWEAVE_AI_FAKE 设置时启用，不触网。 */
 export type FakeScenario = "ok" | "clean" | "invalid" | "malicious" | "timeout" | "late" | "late-success";
@@ -43,6 +43,22 @@ export async function fakeAiDraft(scenario: FakeScenario, input: AiInput, signal
   if (scenario === "late") await awaitAbortable(1500, signal);
   // 模拟已发出、取消后仍会返回的响应，验证主进程丢弃而不是交给界面。
   if (scenario === "late-success") await new Promise((resolve) => setTimeout(resolve, 1200));
+  if (input.mode === "images" && input.scan) {
+    const questions: AiDraft["questions"] = input.images.map((image) => ({
+      stem: `固定响应扫描题：第 ${image.page} 页`,
+      subquestions: [],
+      options: [],
+      tags: [],
+      uncertain: [],
+      page: image.page,
+      originalNumber: "1",
+      questionType: "解答题",
+      knowledgePoints: [],
+      scanAreas: [{ page: image.page, rect: { x: 0.06, y: 0.06, width: 0.88, height: 0.4 } }],
+      parts: [{ label: "(1)", prompt: "请作答。", options: [], answer: "", explanation: "", score: 3, uncertain: [] }],
+    }));
+    return { questions, notes: ["固定响应扫描识读，仅用于程序回归。"] };
+  }
   if (scenario === "clean") {
     const cleanPages = input.mode === "text" ? input.pages : [page];
     const questions: AiDraft["questions"] = cleanPages.map((unit, index) => {
@@ -112,4 +128,20 @@ export async function fakeAiDraft(scenario: FakeScenario, input: AiInput, signal
     });
   }
   return { questions, notes: scenario === "malicious" ? ["<img src=\"http://127.0.0.1:9/note.png\">固定响应说明"] : ["固定响应，仅用于界面与流程自测。"] };
+}
+
+/** 答案抽取固定响应：一题一整题答案，供答案匹配回归；不读取真实文件内容。 */
+export async function fakeAiAnswers(scenario: FakeScenario, input: AiAnswerInput, signal?: AbortSignal): Promise<AiAnswerDraft> {
+  if (scenario === "invalid") throw new Error("答案文件返回格式无法解析，请重试");
+  if (scenario === "timeout") {
+    await awaitAbortable(80, signal);
+    throw new Error("AI 请求超时，人工草稿已保留，可重试");
+  }
+  if (scenario === "late") await awaitAbortable(1500, signal);
+  if (scenario === "late-success") await new Promise((resolve) => setTimeout(resolve, 1200));
+  const page = input.mode === "answer-text" ? input.pages[0] : input.images[0].page;
+  return {
+    answers: [{ originalNumber: "1", label: "", answer: "4", page }],
+    notes: ["固定响应答案，仅用于程序回归。"],
+  };
 }

@@ -1,10 +1,13 @@
-import { AI_LIMITS, isAiDraft, type AiDraft, type AiSourceKind } from "./ai";
+import { AI_LIMITS, isAiAnswerDraft, isAiDraft, type AiAnswerDraft, type AiDraft, type AiSourceKind } from "./ai";
 import { wholePaperRequestText, type WholePaperBatchPlan } from "./whole-paper-batches";
 
 export type BatchStatus = "pending" | "running" | "succeeded" | "failed" | "skipped";
 export interface WholePaperBatchState {
   status: BatchStatus;
+  /** 原卷识别结果；扫描页与文字页共用。 */
   result?: AiDraft;
+  /** 答案／评分文件抽取结果。 */
+  answers?: AiAnswerDraft;
   error?: string;
 }
 export interface WholePaperRunState {
@@ -20,8 +23,26 @@ export function createWholePaperRun(plan: WholePaperBatchPlan): WholePaperRunSta
   };
 }
 
+export type WholePaperBatchInput =
+  | { mode: "text"; text: string; pages: number[]; sourceKind: AiSourceKind }
+  | { mode: "scan"; attachmentId: string; page: number }
+  | { mode: "answer-text"; text: string; pages: number[]; sourceName: string }
+  | { mode: "answer-scan"; attachmentId: string; page: number; sourceName: string };
+
 type Save = (state: WholePaperRunState) => Promise<void>;
-type Request = (input: { text: string; pages: number[]; sourceKind: AiSourceKind }, signal: AbortSignal) => Promise<unknown>;
+type Request = (input: WholePaperBatchInput, signal: AbortSignal) => Promise<unknown>;
+
+function validResult(batch: WholePaperRunState["plan"]["batches"][number], result: unknown): boolean {
+  const kind = batch.kind ?? "text";
+  if (kind === "answer-text" || kind === "answer-scan") {
+    return isAiAnswerDraft(result) && result.answers.every((entry) => batch.pages.includes(entry.page));
+  }
+  if (!isAiDraft(result)) return false;
+  if (kind === "scan") {
+    return result.questions.every((question) => question.page === batch.pages[0] && question.scanAreas?.some((area) => area.page === batch.pages[0]));
+  }
+  return result.questions.every((question) => batch.pages.includes(question.page));
+}
 
 /**
  * 执行器只负责单任务调度；调用方负责授权、加密存储、界面及人工审核。
@@ -54,6 +75,7 @@ export class WholePaperRunner {
         batch.status = "running";
         delete batch.error;
         delete batch.result;
+        delete batch.answers;
         await this.save(structuredClone(state));
         if (signal.aborted) {
           batch.status = "failed";
@@ -62,14 +84,30 @@ export class WholePaperRunner {
           return;
         }
         try {
-          const sourceKind = state.plan.sourceKind ?? "pdf";
-          const text = wholePaperRequestText(input, sourceKind);
-          if ([...text].length > AI_LIMITS.textChars) throw new Error("附加页码后超过模型输入限制");
-          const result = await this.request({ text, pages: [...input.pages], sourceKind }, signal);
+          const kind = input.kind ?? "text";
+          let payload: WholePaperBatchInput;
+          if (kind === "scan" || kind === "answer-scan") {
+            if (input.image === undefined) throw new Error("扫描批次缺少页面图");
+            if (kind === "scan") {
+              payload = { mode: "scan", attachmentId: input.image.attachmentId, page: input.image.page };
+            } else {
+              if (input.answer === undefined) throw new Error("答案扫描批次缺少来源");
+              payload = { mode: "answer-scan", attachmentId: input.image.attachmentId, page: input.image.page, sourceName: input.answer.name };
+            }
+          } else {
+            const sourceKind = state.plan.sourceKind ?? "pdf";
+            const text = wholePaperRequestText(input, sourceKind);
+            if ([...text].length > AI_LIMITS.textChars) throw new Error("附加页码后超过模型输入限制");
+            payload = kind === "answer-text"
+              ? { mode: "answer-text", text, pages: [...input.pages], sourceName: input.answer?.name ?? "答案文件" }
+              : { mode: "text", text, pages: [...input.pages], sourceKind };
+          }
+          const result = await this.request(payload, signal);
           if (signal.aborted) throw new Error("已取消，请重试");
-          if (!isAiDraft(result)) throw new Error("模型返回格式无效，请重试");
+          if (!validResult(input, result)) throw new Error("模型返回格式无效，请重试");
           batch.status = "succeeded";
-          batch.result = result;
+          if (kind === "answer-text" || kind === "answer-scan") batch.answers = result as AiAnswerDraft;
+          else batch.result = result as AiDraft;
         } catch (error) {
           batch.status = "failed";
           // 服务错误可能包含密钥或原卷内容，持久化固定提示，避免泄漏。

@@ -82,3 +82,32 @@ test("保存 DOCX 媒体定位并拒绝无效附件标识", () => {
   expect(() => store.create(exam.id, section.id, invalid)).toThrow("初始状态无效");
   db.close();
 });
+
+test("保存扫描批次与答案批次，并拒绝缺失结果的完成状态", () => {
+  const { db, exam, section } = setup();
+  const store = new WholePaperStore(db);
+  const image = { page: 1, attachmentId: "a".repeat(64), width: 1200, height: 1600 };
+  const answer = { fileId: "file-1", role: "answer" as const, name: "答案.pdf" };
+  const scanPlan = {
+    batches: [
+      { kind: "scan" as const, fragments: [], pages: [1], text: "", sendable: true, reviewBoundaryBefore: false, image },
+      { kind: "answer-text" as const, fragments: [{ page: 1, start: 0, end: 4, text: "1. 4" }], pages: [1], text: "1. 4", sendable: true, reviewBoundaryBefore: true, answer },
+    ],
+    emptyPages: [],
+    answerFiles: [answer],
+  };
+  const task = store.create(exam.id, section.id, createWholePaperRun(scanPlan));
+  const succeeded = structuredClone(task.state);
+  succeeded.batches[0] = { status: "succeeded", result: { questions: [{ stem: "题", subquestions: [], options: [], tags: [], uncertain: [], page: 1, scanAreas: [{ page: 1, rect: { x: 0, y: 0, width: 1, height: 1 } }] }], notes: [] } };
+  succeeded.batches[1] = { status: "succeeded", answers: { answers: [{ originalNumber: "1", label: "", answer: "4", page: 1 }], notes: [] } };
+  const saved = store.save(task.id, task.revision, succeeded);
+  expect(store.get(saved.id).state.plan.batches.map((batch) => batch.kind)).toEqual(["scan", "answer-text"]);
+
+  const missing = structuredClone(saved.state);
+  delete (missing.batches[1] as { answers?: unknown }).answers;
+  expect(() => store.save(saved.id, saved.revision, missing)).toThrow("状态无效");
+  const badImage = structuredClone(saved.state.plan);
+  badImage.batches[0].image = { ...image, attachmentId: "bad" };
+  expect(() => store.create(exam.id, section.id, createWholePaperRun(badImage))).toThrow("初始状态无效");
+  db.close();
+});

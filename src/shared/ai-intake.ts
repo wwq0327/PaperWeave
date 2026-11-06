@@ -1,4 +1,4 @@
-import type { AiFigureRef, AiMaterialSuggestion, AiQuestion, AiSourceAnchor } from "./ai";
+import type { AiFigureRef, AiMaterialSuggestion, AiQuestion, AiScanArea, AiSourceAnchor } from "./ai";
 import { blankOption, blankSubQuestion, type IntakeBlock, type IntakeForm, type IntakeSubQuestion } from "./intake";
 import type { Classification } from "./question";
 
@@ -7,6 +7,8 @@ export interface AiIntakeEvidence {
   materialAnchors: AiSourceAnchor[];
   figures: AiFigureRef[];
   answerSources: string[];
+  scanRegions: AiScanArea[];
+  answerKeys: string[];
 }
 
 export interface AiIntakeResult {
@@ -85,6 +87,8 @@ export function aiQuestionToIntake(
       ...(question.answerSource?.trim() ? [`整题：${question.answerSource.trim()}`] : []),
       ...parts.flatMap((part) => part.answerSource?.trim() ? [`${part.label.trim() || "?"}：${part.answerSource.trim()}`] : []),
     ],
+    scanRegions: question.scanAreas ?? [],
+    answerKeys: [],
   };
   const uncertain = [
     ...question.uncertain,

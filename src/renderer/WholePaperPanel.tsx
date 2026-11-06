@@ -5,8 +5,10 @@ import type { AnswerStatus, Classification, ReviewStatus, Stage } from "../share
 import type { WholePaperIntakeItem, WholePaperIntakeSummary, WholePaperQuality } from "../shared/whole-paper-intake";
 import type { WholePaperCoverage } from "../shared/whole-paper-coverage";
 import type { WholePaperTaskDetail, WholePaperTaskView } from "../shared/whole-paper-view";
+import { collectScanPageImages } from "./scan-pages";
 
 const status = { pending: "待处理", running: "进行中", succeeded: "已处理", failed: "失败待重试", skipped: "无文字" };
+const batchKindLabels = { text: "文字页", scan: "扫描页", "answer-text": "答案文字", "answer-scan": "答案扫描页" } as const;
 const stages: Stage[] = ["小学", "初中", "高中"];
 const intakeFilters = ["all", "attention", "pending", "duplicate", "failed", "approved"] as const;
 type IntakeFilter = (typeof intakeFilters)[number];
@@ -48,6 +50,8 @@ function intakeSummaryText(summary: WholePaperIntakeSummary): string {
   const parts = [`已建档 ${summary.created} 题`, `需处理 ${summary.needsAttention} 题`, `重复候选 ${summary.duplicates} 题`, `失败 ${summary.failed} 题`];
   if (summary.existing > 0) parts.push(`已有 ${summary.existing} 题`);
   if (summary.materials > 0) parts.push(`新建材料 ${summary.materials} 份`);
+  if (summary.answerMatched > 0) parts.push(`匹配答案 ${summary.answerMatched} 条`);
+  if (summary.answerAmbiguous > 0) parts.push(`答案歧义 ${summary.answerAmbiguous} 条`);
   return `${parts.join("，")}。`;
 }
 
@@ -103,11 +107,16 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
     }).catch(() => undefined);
     return () => { live = false; };
   }, [examId]);
+  async function prepareTask() {
+    if (!fileId) throw new Error("未选择原卷");
+    const pageImages = sourceKind === "docx" ? undefined : await collectScanPageImages(examId, fileId);
+    return window.paperweave.prepareWholePaper(examId, sectionId, fileId, pageImages);
+  }
   async function prepare() {
     if (!fileId || !sectionId || busy) return;
     setBusy(true); setError("");
     try {
-      const task = await window.paperweave.prepareWholePaper(examId, sectionId, fileId);
+      const task = await prepareTask();
       setTasks((previous) => [...previous, task]); setSelected(task.id);
     } catch (reason) { setError(`准备任务失败：${String(reason)}`); }
     finally { setBusy(false); }
@@ -121,7 +130,7 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
     if (!fileId || !sectionId || busy || running) return;
     setBusy(true); setError("");
     try {
-      const task = await window.paperweave.prepareWholePaper(examId, sectionId, fileId);
+      const task = await prepareTask();
       setTasks((previous) => [...previous, task]); setSelected(task.id);
       setConfirmation({ task, config: await window.paperweave.getAiConfig(), auto: true });
     } catch (reason) { setError(`准备自动录题失败：${String(reason)}`); }
@@ -139,9 +148,12 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
     const reasons: string[] = [];
     if (!current || current.batches.some((batch) => batch.status !== "succeeded" && batch.status !== "skipped")) reasons.push("仍有批次未成功");
     if (report.percent !== 100) reasons.push(`覆盖率 ${report.percent}%`);
+    if (report.scanPercent !== 100) reasons.push(`扫描页覆盖 ${report.scanPercent}%`);
     if (report.gaps.length > 0) reasons.push(`存在 ${report.gaps.length} 处未归属或重叠片段`);
     if (report.duplicates.length > 0) reasons.push(`存在 ${report.duplicates.length} 个重号`);
     if (report.missingAnchors.length > 0) reasons.push(`有 ${report.missingAnchors.length} 题缺少来源锚点`);
+    if (report.answerMatches.ambiguous > 0) reasons.push(`答案歧义 ${report.answerMatches.ambiguous} 条`);
+    if (report.answerMatches.unmatched > 0) reasons.push(`答案未匹配 ${report.answerMatches.unmatched} 条`);
     const ids = rows.filter(intakeSelectable).map((row) => row.id);
     if (reasons.length === 0 && ids.length === 0) reasons.push("没有可自动确认的题目");
     if (reasons.length > 0) {
@@ -159,7 +171,7 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
     const { task, config, auto } = confirmation;
     setConfirmation(null); setRunning(task.id); setError("");
     try {
-      await window.paperweave.runWholePaper(examId, task.id, task.revision, { baseUrl: config.baseUrl, textModel: config.textModel });
+      await window.paperweave.runWholePaper(examId, task.id, task.revision, { baseUrl: config.baseUrl, textModel: config.textModel, imageModel: config.imageModel });
       if (auto) await autoIntake(task.id);
     }
     catch (reason) { setError(`执行任务失败：${String(reason)}`); }
@@ -288,7 +300,13 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
   function updateClassification(patch: Partial<Classification>) { setIntakeForm((current) => ({ ...current, ...patch })); }
   const confirmationKind: AiSourceKind = confirmation?.task.sourceKind ?? sourceKind;
   const toSend = confirmation?.task.batches.filter((batch) => batch.status === "pending" || batch.status === "failed" || batch.status === "running") ?? [];
-  const pages = [...new Set(toSend.flatMap((batch) => batch.pages))];
+  const paperTextBatches = toSend.filter((batch) => batch.kind === "text");
+  const scanBatches = toSend.filter((batch) => batch.kind === "scan");
+  const answerTextBatches = toSend.filter((batch) => batch.kind === "answer-text");
+  const answerScanBatches = toSend.filter((batch) => batch.kind === "answer-scan");
+  const pages = [...new Set(paperTextBatches.flatMap((batch) => batch.pages))];
+  const answerPages = [...new Set([...answerTextBatches, ...answerScanBatches].flatMap((batch) => batch.pages))];
+  const needsImageModel = scanBatches.length > 0 || answerScanBatches.length > 0;
   const succeededResults = (detail?.results ?? []).filter((result): result is WholePaperBatchResult => result !== null);
   const succeededBatches = succeededResults.length;
   const questionCount = succeededResults.reduce((sum, result) => sum + result.questions.length, 0);
@@ -300,8 +318,8 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
   const pendingMaterialCount = materialVersions.filter((material) => material.status !== "approved").length;
   return <section className="paper-panel" aria-label="整卷任务">
     <header><h2>整卷任务</h2></header>
-    <p>{sourceKind === "docx" ? "准备 DOCX 段落文字的整卷任务" : "准备文字 PDF 的整卷任务"}，当前分部：{sectionName || "未选择"}。准备步骤不发送模型，也不创建题目。</p>
-    <button onClick={() => void prepare()} disabled={busy || !fileId || !sectionId}>{busy ? "正在准备…" : "准备整卷文字任务"}</button>
+    <p>{sourceKind === "docx" ? "准备 DOCX 段落文字的整卷任务" : "准备 PDF（文字页与扫描页）的整卷任务；已挂接的答案／评分 PDF 一并识读"}，当前分部：{sectionName || "未选择"}。准备步骤不发送模型，也不创建题目。</p>
+    <button onClick={() => void prepare()} disabled={busy || !fileId || !sectionId}>{busy ? "正在准备（含扫描页渲染）…" : "准备整卷任务"}</button>
     <button onClick={() => void autoPrepare()} disabled={busy || !!running || !fileId || !sectionId}>自动录题并建档</button>
     {error && <p role="alert" className="error">{error}</p>}
     {tasks.length === 0 ? <p className="muted">尚无整卷任务。</p> : <ul>{tasks.map((entry, index) => <li key={entry.id}><button onClick={() => { setSelected(entry.id); setConfirmation(null); }}>查看任务 {index + 1}</button> · {entry.batches.length} 批</li>)}</ul>}
@@ -310,10 +328,10 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
       {task.emptyPages.length > 0 && <p role="status">{taskKind === "docx"
         ? `第 ${task.emptyPages.join("、")} 段没有文字，尚未处理。`
         : `第 ${task.emptyPages.join("、")} 页没有可提取文字，可能是扫描页，尚未处理。`}</p>}
-      <ul>{task.batches.map((batch, index) => <li key={index}>第 {index + 1} 批 · 原卷{unitList(batch.pages)} · {status[batch.status]}{batch.reviewBoundaryBefore ? " · 跨批边界待核" : ""}</li>)}</ul>
+      <ul>{task.batches.map((batch, index) => <li key={index}>第 {index + 1} 批 · {batchKindLabels[batch.kind]} · 原卷{unitList(batch.pages)} · {status[batch.status]}{batch.reviewBoundaryBefore ? " · 跨批边界待核" : ""}</li>)}</ul>
       {coverage && <section aria-label="原卷覆盖" role="region">
         <h3>原卷覆盖</h3>
-        <p>覆盖率 {coverage.percent}% · 页数 {coverage.pages.length}</p>
+        <p>覆盖率 {coverage.percent}% · 页数 {coverage.pages.length}{coverage.scanPages.length > 0 ? ` · 扫描页覆盖 ${coverage.scanPercent}%（${coverage.scanPages.filter((page) => page.covered).length}/${coverage.scanPages.length}）` : ""}{coverage.answerMatches.total > 0 ? ` · 答案匹配 ${coverage.answerMatches.matched} / ${coverage.answerMatches.total}（歧义 ${coverage.answerMatches.ambiguous}，未匹配 ${coverage.answerMatches.unmatched}）` : ""}</p>
         <ul>
           <li>未归属片段：{coverage.gaps.filter((gap) => gap.kind === "unassigned").length}</li>
           <li>重叠：{coverage.gaps.filter((gap) => gap.kind === "overlap").length}</li>
@@ -418,10 +436,10 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
       {auditAlert && <p role="alert" className="error">{auditAlert}</p>}
     </section>}
     {confirmation && <section aria-label="确认整卷发送" role="region">
-      <p>服务：{confirmation.config.baseUrl} · 文字模型：{confirmation.config.textModel}</p>
-      <p>将发送 {toSend.length} 个批次，原卷第 {pages.join("、")} {confirmationKind === "docx" ? "段" : "页"}的提取文字；费用按服务商规则计收。</p>
-      <p>{confirmationKind === "docx" ? "未识别段" : "未识别页"}：{confirmation.task.emptyPages.length ? confirmation.task.emptyPages.join("、") : "无"}。{confirmation.auto ? "执行后自动建档；只有覆盖干净时才会自动确认通过，异常仍保留待核。" : "请确认发送范围与费用后继续；结果不会自动入库。"}</p>
-      <button onClick={() => void run()}>{confirmation.auto ? "确认发送并自动建档" : "确认发送整卷文字"}</button><button onClick={() => setConfirmation(null)}>取消发送</button>
+      <p>服务：{confirmation.config.baseUrl} · 文字模型：{confirmation.config.textModel}{needsImageModel ? ` · 图像模型：${confirmation.config.imageModel}` : ""}</p>
+      <p>将发送 {toSend.length} 个批次：文字页 {paperTextBatches.length} 批（原卷第 {pages.join("、") || "无"} {confirmationKind === "docx" ? "段" : "页"}的提取文字）、扫描页 {scanBatches.length} 批、答案文字 {answerTextBatches.length} 批、答案扫描页 {answerScanBatches.length} 批{answerPages.length > 0 ? `（答案页第 ${answerPages.join("、")} 页）` : ""}；费用按服务商规则计收。</p>
+      <p>{confirmationKind === "docx" ? "未识别段" : "未识别页"}：{confirmation.task.emptyPages.length ? confirmation.task.emptyPages.join("、") : "无"}。扫描页图像只在授权的整卷任务中发送，裁图坐标与结果保存在本机。{confirmation.auto ? "执行后自动建档；只有覆盖干净时才会自动确认通过，异常仍保留待核。" : "请确认发送范围与费用后继续；结果不会自动入库。"}</p>
+      <button onClick={() => void run()}>{confirmation.auto ? "确认发送并自动建档" : "确认发送整卷任务"}</button><button onClick={() => setConfirmation(null)}>取消发送</button>
     </section>}
   </section>;
 }

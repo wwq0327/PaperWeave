@@ -1,12 +1,13 @@
 import { app, BrowserWindow, dialog, ipcMain, safeStorage } from "electron";
 import { open } from "node:fs/promises";
 import { basename } from "node:path";
-import { AI_LIMITS, isAiDraft, normalizeAiInput } from "../shared/ai";
+import { AI_LIMITS, isAiDraft, normalizeAiAnswerInput, normalizeAiInput } from "../shared/ai";
 import { normalizeAiConfig, parseAiConfig } from "../shared/ai-config";
 import { Database } from "./database";
-import { fakeAiDraft, type FakeScenario } from "./ai-fake";
+import { AttachmentStore } from "./attachments";
+import { fakeAiAnswers, fakeAiDraft, type FakeScenario } from "./ai-fake";
 import { clearApiKey, keyExists, loadApiKey, saveApiKey, type KeyStore } from "./ai-key";
-import { requestAiDraft } from "./ai-provider";
+import { requestAiAnswers, requestAiDraft } from "./ai-provider";
 import { extractPdfText } from "./pdf-text";
 import { QuestionBank } from "./question-bank";
 import { ExamStore } from "./exams";
@@ -34,6 +35,7 @@ export function registerAi(db: Database, root: string, currentWindow: () => Brow
   const wholeInFlight = new Map<string, AbortController>();
   const wholeTasks = new WholePaperStore(db);
   const exams = new ExamStore(db, root);
+  const attachments = new AttachmentStore(root);
   const choosePdf = async () => {
     const win = currentWindow();
     if (!win) throw new Error("窗口已关闭");
@@ -119,6 +121,8 @@ export function registerAi(db: Database, root: string, currentWindow: () => Brow
     if (task.revision !== revision) throw new Error("任务已变化，请重新确认发送范围");
     const config = parseAiConfig(db.getSetting(configKey));
     if (typeof confirmedConfig !== "object" || confirmedConfig === null || (confirmedConfig as Record<string, unknown>).baseUrl !== config.baseUrl || (confirmedConfig as Record<string, unknown>).textModel !== config.textModel) throw new Error("模型配置已变化，请重新确认");
+    const needsImageModel = task.state.plan.batches.some((batch) => batch.kind === "scan" || batch.kind === "answer-scan");
+    if (needsImageModel && (confirmedConfig as Record<string, unknown>).imageModel !== config.imageModel) throw new Error("图像模型配置已变化，请重新确认");
     const exam = exams.getExam(examId);
     const section = exam.sections.find((item) => item.id === task.sectionId);
     if (!section) throw new Error("考试分部不存在");
@@ -132,11 +136,24 @@ export function registerAi(db: Database, root: string, currentWindow: () => Brow
     wholeInFlight.set(taskId, controller);
     try {
       const runner = new WholePaperRunner(async (state) => { task = wholeTasks.save(task.id, task.revision, state); }, async (batch, signal) => {
-        const checked = normalizeAiInput({ mode: "text", text: batch.text, pages: batch.pages, sourceKind: batch.sourceKind, context });
+        if (batch.mode === "text") {
+          const checked = normalizeAiInput({ mode: "text", text: batch.text, pages: batch.pages, sourceKind: batch.sourceKind, context });
+          if (!checked.ok) throw new Error(checked.error);
+          const result = fake ? await fakeAiDraft(fake, checked.input, signal) : await requestAiDraft(config, apiKey as string, checked.input, signal, undefined, tagCandidates);
+          if (result.questions.some((question) => !batch.pages.includes(question.page))) throw new Error("模型返回页码不属于本批");
+          return result;
+        }
+        if (batch.mode === "scan") {
+          const checked = normalizeAiInput({ mode: "images", images: [{ dataUrl: attachments.readDataUrl(batch.attachmentId), page: batch.page }], scan: true, context });
+          if (!checked.ok) throw new Error(checked.error);
+          return fake ? await fakeAiDraft(fake, checked.input, signal) : await requestAiDraft(config, apiKey as string, checked.input, signal, undefined, tagCandidates);
+        }
+        const answerInput = batch.mode === "answer-text"
+          ? { mode: "answer-text" as const, text: batch.text, pages: batch.pages, sourceName: batch.sourceName, context }
+          : { mode: "answer-images" as const, images: [{ dataUrl: attachments.readDataUrl(batch.attachmentId), page: batch.page }], sourceName: batch.sourceName, context };
+        const checked = normalizeAiAnswerInput(answerInput);
         if (!checked.ok) throw new Error(checked.error);
-        const result = fake ? await fakeAiDraft(fake, checked.input, signal) : await requestAiDraft(config, apiKey as string, checked.input, signal, undefined, tagCandidates);
-        if (result.questions.some((question) => !batch.pages.includes(question.page))) throw new Error("模型返回页码不属于本批");
-        return result;
+        return fake ? await fakeAiAnswers(fake, checked.input, signal) : await requestAiAnswers(config, apiKey as string, checked.input, signal);
       });
       await runner.run(task.state, controller.signal, true, true);
     } finally {

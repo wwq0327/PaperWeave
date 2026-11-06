@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { AI_LIMITS, isAiDraft } from "../shared/ai";
-import type { WholePaperDocxImage } from "../shared/whole-paper-batches";
+import { AI_LIMITS, isAiAnswerDraft, isAiDraft } from "../shared/ai";
+import type { WholePaperAnswerFile, WholePaperBatchKind, WholePaperPageImage } from "../shared/whole-paper-batches";
 import type { WholePaperRunState } from "../shared/whole-paper-runner";
 import { Database } from "./database";
 
@@ -11,6 +11,21 @@ const object = (value: unknown): value is Record<string, unknown> => typeof valu
 const keys = (value: Record<string, unknown>, allowed: string[]) => Object.keys(value).every((key) => allowed.includes(key));
 const pageNumber = (page: unknown): page is number => Number.isInteger(page) && (page as number) >= 1 && (page as number) <= 2000;
 const finiteNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+const attachmentId = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+const batchKinds = new Set<WholePaperBatchKind>(["text", "scan", "answer-text", "answer-scan"]);
+const kindOf = (batch: Record<string, unknown>): WholePaperBatchKind => batch.kind === undefined ? "text" : batch.kind as WholePaperBatchKind;
+const isScanKind = (kind: WholePaperBatchKind): boolean => kind === "scan" || kind === "answer-scan";
+const isAnswerKind = (kind: WholePaperBatchKind): boolean => kind === "answer-text" || kind === "answer-scan";
+const validAnswerFile = (value: unknown): value is WholePaperAnswerFile =>
+  object(value) && keys(value, ["fileId", "role", "name"])
+  && typeof value.fileId === "string" && value.fileId.length > 0 && value.fileId.length <= 200
+  && (value.role === "answer" || value.role === "rubric")
+  && typeof value.name === "string" && value.name.length > 0 && value.name.length <= 255;
+const validImage = (value: unknown): value is WholePaperPageImage =>
+  object(value) && keys(value, ["page", "attachmentId", "width", "height"])
+  && pageNumber(value.page) && attachmentId(value.attachmentId)
+  && Number.isInteger(value.width) && (value.width as number) > 0 && (value.width as number) <= 20000
+  && Number.isInteger(value.height) && (value.height as number) > 0 && (value.height as number) <= 20000;
 const validDocxImages = (value: unknown): boolean =>
   value === undefined || (Array.isArray(value) && value.length <= 2000 && value.every((image: unknown) => {
     if (!object(image) || !keys(image, ["unit", "start", "end", "name", "attachmentId", "note"])) return false;
@@ -32,17 +47,37 @@ const validBlocks = (blocks: unknown, start: number, end: number): boolean =>
 
 /** 不信任数据库中的 JSON；拒绝不一致、未知字段和未校验的模型结果。 */
 function validState(value: unknown): value is WholePaperRunState {
-  if (!object(value) || !keys(value, ["plan", "batches"]) || !object(value.plan) || !keys(value.plan, ["sourceKind", "batches", "emptyPages", "docxImages"]) || (value.plan.sourceKind !== undefined && value.plan.sourceKind !== "pdf" && value.plan.sourceKind !== "docx") || !Array.isArray(value.plan.batches) || !Array.isArray(value.plan.emptyPages) || !Array.isArray(value.batches)) return false;
+  if (!object(value) || !keys(value, ["plan", "batches"]) || !object(value.plan) || !keys(value.plan, ["sourceKind", "batches", "emptyPages", "docxImages", "answerFiles"]) || (value.plan.sourceKind !== undefined && value.plan.sourceKind !== "pdf" && value.plan.sourceKind !== "docx") || !Array.isArray(value.plan.batches) || !Array.isArray(value.plan.emptyPages) || !Array.isArray(value.batches)) return false;
   if (value.plan.batches.length !== value.batches.length || value.batches.length > 20000 || !value.plan.emptyPages.every(pageNumber) || !validDocxImages(value.plan.docxImages)) return false;
+  if (value.plan.answerFiles !== undefined && (!Array.isArray(value.plan.answerFiles) || value.plan.answerFiles.length > 20 || !value.plan.answerFiles.every(validAnswerFile))) return false;
   if (value.plan.emptyPages.some((p, i, a) => i > 0 && p <= a[i - 1])) return false;
   for (let i = 0; i < value.batches.length; i++) {
     const plan = value.plan.batches[i];
     const batch = value.batches[i];
-    if (!object(plan) || !keys(plan, ["fragments", "pages", "text", "sendable", "reviewBoundaryBefore"]) || !Array.isArray(plan.fragments) || plan.fragments.length === 0 || !Array.isArray(plan.pages) || plan.pages.length > 50 || typeof plan.text !== "string" || [...plan.text].length > AI_LIMITS.textChars || plan.sendable !== !!plan.text.trim() || plan.reviewBoundaryBefore !== (i > 0)) return false;
-    if (!plan.fragments.every((part: unknown) => object(part) && keys(part, ["page", "start", "end", "text", "blocks"]) && pageNumber(part.page) && Number.isInteger(part.start) && Number.isInteger(part.end) && (part.start as number) >= 0 && typeof part.text === "string" && (part.end as number) - (part.start as number) === [...part.text].length && (part.end as number) > (part.start as number) && (part.blocks === undefined || validBlocks(part.blocks, part.start as number, part.end as number)))) return false;
-    if (plan.fragments.map((part: { text: string }) => part.text).join("") !== plan.text || JSON.stringify([...new Set(plan.fragments.map((part: { page: number }) => part.page))]) !== JSON.stringify(plan.pages)) return false;
-    if (!object(batch) || !keys(batch, ["status", "result", "error"]) || !["pending", "running", "succeeded", "failed", "skipped"].includes(batch.status as string)) return false;
-    if ((batch.status === "skipped") !== !plan.sendable || (batch.status === "succeeded" ? !isAiDraft(batch.result) : batch.result !== undefined) || (batch.status === "failed" ? typeof batch.error !== "string" || !errors.has(batch.error) : batch.error !== undefined)) return false;
+    if (!object(plan) || !object(batch)) return false;
+    const kind = kindOf(plan);
+    if (!batchKinds.has(kind) || !keys(plan, ["kind", "fragments", "pages", "text", "sendable", "reviewBoundaryBefore", "image", "answer"])) return false;
+    if (plan.reviewBoundaryBefore !== (i > 0) || !Array.isArray(plan.pages) || plan.pages.length > 50) return false;
+    if (isScanKind(kind)) {
+      if (!Array.isArray(plan.fragments) || plan.fragments.length !== 0 || plan.text !== "" || plan.sendable !== true || !validImage(plan.image)) return false;
+      if (plan.pages.length !== 1 || plan.pages[0] !== plan.image.page) return false;
+    } else {
+      if (!Array.isArray(plan.fragments) || plan.fragments.length === 0 || typeof plan.text !== "string" || [...plan.text].length > AI_LIMITS.textChars || plan.sendable !== !!plan.text.trim() || plan.image !== undefined) return false;
+      if (!plan.fragments.every((part: unknown) => object(part) && keys(part, ["page", "start", "end", "text", "blocks"]) && pageNumber(part.page) && Number.isInteger(part.start) && Number.isInteger(part.end) && (part.start as number) >= 0 && typeof part.text === "string" && (part.end as number) - (part.start as number) === [...part.text].length && (part.end as number) > (part.start as number) && (part.blocks === undefined || validBlocks(part.blocks, part.start as number, part.end as number)))) return false;
+      if (plan.fragments.map((part: { text: string }) => part.text).join("") !== plan.text || JSON.stringify([...new Set(plan.fragments.map((part: { page: number }) => part.page))]) !== JSON.stringify(plan.pages)) return false;
+    }
+    if (isAnswerKind(kind) ? !validAnswerFile(plan.answer) : plan.answer !== undefined) return false;
+    if (!keys(batch, ["status", "result", "error", "answers"]) || !["pending", "running", "succeeded", "failed", "skipped"].includes(batch.status as string)) return false;
+    if ((batch.status === "skipped") !== !plan.sendable) return false;
+    const succeeded = batch.status === "succeeded";
+    if (isAnswerKind(kind)) {
+      if (succeeded ? !isAiAnswerDraft(batch.answers) : batch.answers !== undefined) return false;
+      if (batch.result !== undefined) return false;
+    } else {
+      if (succeeded ? !isAiDraft(batch.result) : batch.result !== undefined) return false;
+      if (batch.answers !== undefined) return false;
+    }
+    if (batch.status === "failed" ? typeof batch.error !== "string" || !errors.has(batch.error) : batch.error !== undefined) return false;
   }
   return true;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planWholePaperBatches, wholePaperRequestText } from "../../../src/shared/whole-paper-batches";
+import { planWholePaperAnswerBatches, planWholePaperBatches, wholePaperRequestText } from "../../../src/shared/whole-paper-batches";
 
 describe("整卷文字分批", () => {
   it("按含页码的字符上限无损分批，保留页内偏移与边界", () => {
@@ -37,5 +37,39 @@ describe("整卷文字分批", () => {
   it("拒绝乱序、重复页码及无效上限", () => {
     expect(() => planWholePaperBatches([{ page: 2, text: "a" }, { page: 2, text: "b" }])).toThrow();
     expect(() => planWholePaperBatches([], 8001)).toThrow();
+  });
+});
+
+describe("扫描页与答案批次", () => {
+  const image = { page: 2, attachmentId: "a".repeat(64), width: 1200, height: 1600 };
+  it("按页序把无文字页换成扫描批次，文字页仍按字符分批", () => {
+    const plan = planWholePaperBatches([{ page: 1, text: "甲" }, { page: 2, text: "" }, { page: 3, text: "乙" }], 100, "pdf", { scanPages: [image] });
+    expect(plan.emptyPages).toEqual([]);
+    expect(plan.batches.map((batch) => batch.kind)).toEqual(["text", "scan", "text"]);
+    expect(plan.batches[1]).toMatchObject({ fragments: [], text: "", sendable: true, pages: [2], image });
+    expect(plan.batches.map((batch) => batch.reviewBoundaryBefore)).toEqual([false, true, true]);
+  });
+
+  it("扫描页必须对应空文字页，不能重复或越界", () => {
+    expect(() => planWholePaperBatches([{ page: 1, text: "甲" }], 100, "pdf", { scanPages: [{ ...image, page: 1 }] })).toThrow("空文字页");
+    expect(() => planWholePaperBatches([{ page: 1, text: "" }], 100, "pdf", { scanPages: [{ ...image, page: 1 }, { ...image, page: 1 }] })).toThrow();
+  });
+
+  it("答案文件文字页与扫描页分别生成答案批次", () => {
+    const answer = { fileId: "file-1", role: "answer" as const, name: "答案.pdf" };
+    const batches = planWholePaperAnswerBatches(
+      [{ page: 1, text: "1. 4" }, { page: 2, text: "" }],
+      [{ ...image, page: 2 }],
+      100,
+      answer,
+    );
+    expect(batches.map((batch) => batch.kind)).toEqual(["answer-text", "answer-scan"]);
+    expect(batches[0]).toMatchObject({ answer, text: "1. 4", reviewBoundaryBefore: false });
+    expect(batches[1]).toMatchObject({ answer, fragments: [], text: "", sendable: true, pages: [2], image: { ...image, page: 2 } });
+  });
+
+  it("答案扫描页缺图时报错", () => {
+    const answer = { fileId: "file-1", role: "answer" as const, name: "答案.pdf" };
+    expect(() => planWholePaperAnswerBatches([{ page: 1, text: "" }], [], 100, answer)).toThrow("答案文件第 1 页");
   });
 });
