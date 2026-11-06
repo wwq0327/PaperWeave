@@ -8,9 +8,9 @@ import { Intake } from "../../../src/main/intake";
 import { QuestionBank } from "../../../src/main/question-bank";
 import { WholePaperIntake } from "../../../src/main/whole-paper-intake";
 import { WholePaperStore } from "../../../src/main/whole-paper-store";
-import type { AiDraft } from "../../../src/shared/ai";
+import type { AiAnswerDraft, AiDraft, AiScanRect } from "../../../src/shared/ai";
 import { createWholePaperRun } from "../../../src/shared/whole-paper-runner";
-import type { WholePaperBatchPlan } from "../../../src/shared/whole-paper-batches";
+import type { WholePaperBatchPlan, WholePaperPageImage } from "../../../src/shared/whole-paper-batches";
 import type { Classification } from "../../../src/shared/question";
 import { note } from "../fixtures/questions";
 
@@ -27,11 +27,11 @@ function setup(metadata: Partial<{ stage: "小学" | "初中" | "高中"; subjec
   return { root, db, exams, exam, section };
 }
 
-function stores({ db, exams, exam, section }: ReturnType<typeof setup>) {
+function stores({ db, exams, exam, section }: ReturnType<typeof setup>, cropScan?: (pageImage: WholePaperPageImage, rect: AiScanRect) => { attachmentId: string } | { error: string }) {
   const bank = new QuestionBank(db);
   const intake = new Intake(exams, bank);
   const tasks = new WholePaperStore(db);
-  const wholeIntake = new WholePaperIntake(db, tasks, intake, bank, exams);
+  const wholeIntake = new WholePaperIntake(db, tasks, intake, bank, exams, cropScan);
   return { bank, intake, tasks, wholeIntake, exam, section };
 }
 
@@ -90,7 +90,46 @@ function makeDocxTask(tasks: WholePaperStore, examId: string, sectionId: string,
   return tasks.save(task.id, task.revision, done);
 }
 
+function makeAnswerTask(tasks: WholePaperStore, examId: string, sectionId: string, draft: AiDraft, answers: AiAnswerDraft) {
+  // 文字批与答案批共用页号：答案文字不能混入原卷覆盖。
+  const text = "甲".repeat(10);
+  const answerText = "Question 1: Answer 4";
+  const answer = { fileId: "file-1", role: "answer" as const, name: "答案.pdf" };
+  const plan: WholePaperBatchPlan = {
+    emptyPages: [],
+    answerFiles: [answer],
+    batches: [
+      { fragments: [{ page: 1, start: 0, end: 10, text }], pages: [1], text, sendable: true, reviewBoundaryBefore: false },
+      { kind: "answer-text", fragments: [{ page: 1, start: 0, end: [...answerText].length, text: answerText }], pages: [1], text: answerText, sendable: true, reviewBoundaryBefore: true, answer },
+    ],
+  };
+  const state = createWholePaperRun(plan);
+  const task = tasks.create(examId, sectionId, state);
+  const done = {
+    ...state,
+    batches: [
+      { ...state.batches[0], status: "succeeded" as const, result: draft },
+      { ...state.batches[1], status: "succeeded" as const, answers },
+    ],
+  };
+  return tasks.save(task.id, task.revision, done);
+}
+
+
+
 const attachment = "a".repeat(64);
+const cropAttachment = "c".repeat(64);
+
+function makeScanTask(tasks: WholePaperStore, examId: string, sectionId: string, draft: AiDraft) {
+  const plan: WholePaperBatchPlan = {
+    emptyPages: [1],
+    batches: [{ kind: "scan", fragments: [], pages: [1], text: "", sendable: true, reviewBoundaryBefore: false, image: { page: 1, attachmentId: attachment, width: 1200, height: 1600 } }],
+  };
+  const state = createWholePaperRun(plan);
+  const task = tasks.create(examId, sectionId, state);
+  const done = { ...state, batches: state.batches.map((batch) => ({ ...batch, status: "succeeded" as const, result: draft })) };
+  return tasks.save(task.id, task.revision, done);
+}
 
 const SHARED_MATERIAL = { title: "共享材料", content: "材料正文", source: "固定响应" };
 
@@ -138,6 +177,61 @@ test("覆盖对账汇总成功批次与记录锚点", () => {
   expect(coverage.percent).toBe(100);
   expect(coverage.gaps).toEqual([]);
   expect(coverage.pages).toEqual([{ page: 1, total: 10, covered: 10 }]);
+});
+
+test("答案文字批次不计入原卷覆盖", () => {
+  const context = setup();
+  const { tasks, wholeIntake, exam, section } = stores(context);
+  const task = makeAnswerTask(tasks, exam.id, section.id, draftOf(validQuestion("1", "覆盖题题干")), { answers: [{ originalNumber: "1", label: "", answer: "4", page: 1 }], notes: [] });
+  wholeIntake.create(task.id, classification);
+  const coverage = wholeIntake.coverage(task.id);
+  expect(coverage.percent).toBe(100);
+  expect(coverage.pages).toEqual([{ page: 1, total: 10, covered: 10 }]);
+  expect(coverage.gaps).toEqual([]);
+});
+
+test("同卷答案唯一匹配：填入空白小问并记录答案条目", () => {
+  const context = setup();
+  const { bank, tasks, wholeIntake, exam, section } = stores(context);
+  const question = validQuestion("1", "答案题", { parts: [{ ...part("求值。"), answer: "" }] });
+  const task = makeAnswerTask(tasks, exam.id, section.id, draftOf(question), { answers: [{ originalNumber: "1", label: "", answer: "4", page: 1 }], notes: [] });
+  const summary = wholeIntake.create(task.id, classification);
+  expect(summary.answerMatched).toBe(1);
+  expect(summary.answerAmbiguous).toBe(0);
+  const item = wholeIntake.list(task.id)[0];
+  expect(item.evidence.answerKeys).toEqual(["1:0"]);
+  expect(item.issues.map((entry) => entry.code)).not.toContain("answer_missing");
+  const content = bank.getLatestQuestionVersion(item.questionId!)!.content;
+  expect(content.subQuestions[0].answers).toHaveLength(1);
+  expect(JSON.stringify(content.subQuestions[0].answers)).toContain('"text":"4"');
+  expect(wholeIntake.coverage(task.id).answerMatches).toEqual({ total: 1, matched: 1, ambiguous: 0, unmatched: 0 });
+});
+
+test("同小问多条答案记为歧义，不填入且阻止自动通过", () => {
+  const context = setup();
+  const { bank, tasks, wholeIntake, exam, section } = stores(context);
+  const question = validQuestion("1", "歧义题", { parts: [{ ...part("求值。"), answer: "" }] });
+  const task = makeAnswerTask(tasks, exam.id, section.id, draftOf(question), {
+    answers: [{ originalNumber: "1", label: "(1)", answer: "4", page: 1 }, { originalNumber: "1", label: "(1)", answer: "5", page: 1 }],
+    notes: [],
+  });
+  const summary = wholeIntake.create(task.id, classification);
+  expect(summary.answerAmbiguous).toBe(2);
+  expect(summary.answerMatched).toBe(0);
+  const item = wholeIntake.list(task.id)[0];
+  expect(item.quality).toBe("needs_attention");
+  expect(item.issues.map((entry) => entry.code)).toContain("answer_ambiguous");
+  const content = bank.getLatestQuestionVersion(item.questionId!)!.content;
+  expect(content.subQuestions[0].answers).toEqual([]);
+  expect(wholeIntake.coverage(task.id).answerMatches).toEqual({ total: 2, matched: 0, ambiguous: 2, unmatched: 0 });
+});
+
+test("答案题号无对应题时进入覆盖未匹配", () => {
+  const context = setup();
+  const { tasks, wholeIntake, exam, section } = stores(context);
+  const task = makeAnswerTask(tasks, exam.id, section.id, draftOf(validQuestion("1", "普通题")), { answers: [{ originalNumber: "99", label: "(1)", answer: "4", page: 1 }], notes: [] });
+  wholeIntake.create(task.id, classification);
+  expect(wholeIntake.coverage(task.id).answerMatches).toEqual({ total: 1, matched: 0, ambiguous: 0, unmatched: 1 });
 });
 
 test("无锚点且题号无法定位时记 anchor_missing 并阻止自动通过", () => {
@@ -191,6 +285,42 @@ test("DOCX 缺失图片关系提示人工补录", () => {
   expect(item.issues.map((entry) => entry.code)).toContain("image_review");
 });
 
+test("扫描题按归一化区域在本机裁图并写入小问", () => {
+  const context = setup();
+  const calls: { pageImage: WholePaperPageImage; rect: AiScanRect }[] = [];
+  const { bank, tasks, wholeIntake, exam, section } = stores(context, (pageImage, rect) => {
+    calls.push({ pageImage, rect });
+    return { attachmentId: cropAttachment };
+  });
+  const seeded = bank.createQuestion(note());
+  bank.setClassification(seeded.questionId, { ...classification, questionType: "选择题", knowledgePoints: ["词语运用"] });
+  const rect = { x: 0.1, y: 0.2, width: 0.8, height: 0.5 };
+  const task = makeScanTask(tasks, exam.id, section.id, draftOf(validQuestion("1", "扫描题干", { sourceAnchors: [], scanAreas: [{ page: 1, rect }] })));
+  wholeIntake.create(task.id, classification);
+  const item = wholeIntake.list(task.id)[0];
+  expect(item.quality).toBe("auto_passed");
+  expect(calls).toEqual([{ pageImage: { page: 1, attachmentId: attachment, width: 1200, height: 1600 }, rect }]);
+  expect(item.evidence.scanRegions).toEqual([{ page: 1, rect }]);
+  expect(item.issues.map((entry) => entry.code)).not.toContain("anchor_missing");
+  const content = bank.getLatestQuestionVersion(item.questionId!)!.content;
+  expect(content.subQuestions[0].prompt).toContainEqual({ type: "image", id: cropAttachment, alt: "扫描裁图 第 1 页" });
+  const coverage = wholeIntake.coverage(task.id);
+  expect(coverage.scanPages).toEqual([{ page: 1, covered: true }]);
+  expect(coverage.scanPercent).toBe(100);
+});
+
+test("扫描裁图失败记为待核异常并保留区域证据", () => {
+  const context = setup();
+  const { tasks, wholeIntake, exam, section } = stores(context, () => ({ error: "页面图像损坏" }));
+  const rect = { x: 0.1, y: 0.2, width: 0.8, height: 0.5 };
+  const task = makeScanTask(tasks, exam.id, section.id, draftOf(validQuestion("1", "扫描题干", { sourceAnchors: [], scanAreas: [{ page: 1, rect }] })));
+  wholeIntake.create(task.id, classification);
+  const item = wholeIntake.list(task.id)[0];
+  expect(item.quality).toBe("needs_attention");
+  expect(item.evidence.scanRegions).toEqual([{ page: 1, rect }]);
+  expect(item.issues.find((entry) => entry.code === "image_review")?.message).toContain("页面图像损坏");
+});
+
 test("旧记录缺少证据列时按空证据读取", () => {
   const context = setup();
   const { tasks, wholeIntake, exam, section } = stores(context);
@@ -201,7 +331,7 @@ test("旧记录缺少证据列时按空证据读取", () => {
   });
   const legacy = wholeIntake.list(task.id).find((item) => item.id === "legacy");
   expect(legacy?.memberKeys).toEqual([]);
-  expect(legacy?.evidence).toEqual({ anchors: [], materialAnchors: [], figures: [], answerSources: [] });
+  expect(legacy?.evidence).toEqual({ anchors: [], materialAnchors: [], figures: [], answerSources: [], scanRegions: [], answerKeys: [] });
 });
 
 test("参数继承：整卷分类的空字段由考试元数据补齐", () => {
@@ -229,7 +359,7 @@ test("建档：分类继承、材料去重、提交待核，重复建档幂等",
   const task = makeTask(tasks, exam.id, section.id, draft);
 
   const summary = wholeIntake.create(task.id, classification);
-  expect(summary).toEqual({ created: 2, duplicates: 0, failed: 0, existing: 0, materials: 1, needsAttention: 2 });
+  expect(summary).toEqual({ created: 2, duplicates: 0, failed: 0, existing: 0, materials: 1, needsAttention: 2, answerMatched: 0, answerAmbiguous: 0 });
 
   // 提交待核：题 1 有答案 → 内容/答案均待核；题 2 无答案 → 答案缺失。
   const questions = context.exams.listQuestions(exam.id);
@@ -259,7 +389,7 @@ test("建档：分类继承、材料去重、提交待核，重复建档幂等",
 
   // 重复建档幂等：不产生新题、不重建材料。
   const again = wholeIntake.create(task.id, classification);
-  expect(again).toEqual({ created: 0, duplicates: 0, failed: 0, existing: 2, materials: 0, needsAttention: 0 });
+  expect(again).toEqual({ created: 0, duplicates: 0, failed: 0, existing: 2, materials: 0, needsAttention: 0, answerMatched: 0, answerAmbiguous: 0 });
   expect(context.exams.listQuestions(exam.id)).toHaveLength(2);
 });
 
@@ -282,7 +412,7 @@ test("重复候选：记录并提示，可跳过或建修订版，已审核旧�
     validQuestion("2", "整卷第二题题干"),
   ));
   const summary = wholeIntake.create(task.id, classification);
-  expect(summary).toEqual({ created: 1, duplicates: 1, failed: 0, existing: 0, materials: 0, needsAttention: 1 });
+  expect(summary).toEqual({ created: 1, duplicates: 1, failed: 0, existing: 0, materials: 0, needsAttention: 1, answerMatched: 0, answerAmbiguous: 0 });
 
   const items = wholeIntake.list(task.id);
   expect(items[0].status).toBe("duplicate");
@@ -367,7 +497,7 @@ test("异常持久化：不确定项、新标签、缺答案、缺分值与材�
   });
   const task = makeTask(tasks, exam.id, section.id, draftOf(question));
   const summary = wholeIntake.create(task.id, classification);
-  expect(summary).toEqual({ created: 1, duplicates: 0, failed: 0, existing: 0, materials: 1, needsAttention: 1 });
+  expect(summary).toEqual({ created: 1, duplicates: 0, failed: 0, existing: 0, materials: 1, needsAttention: 1, answerMatched: 0, answerAmbiguous: 0 });
 
   const before = wholeIntake.list(task.id)[0];
   expect(before.quality).toBe("needs_attention");

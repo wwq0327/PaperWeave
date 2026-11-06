@@ -140,6 +140,8 @@ test("来源锚点、材料锚点、图表与答案来源进入证据，字段�
     materialAnchors: [{ page: 2, start: 55, end: 70 }],
     figures: [{ page: 2, start: 20, end: 40, kind: "题图", note: "第 1 题配图" }],
     answerSources: ["整题：原卷答案第 3 页", "(1)：原卷答案第 3 页 (1)"],
+    scanRegions: [],
+    answerKeys: [],
   });
   expect(result.uncertain).toContain("题图引用待裁切：第 2 页（题图）。");
   expect(result.uncertain).toContain("字段待核（answer）：答案字迹模糊");

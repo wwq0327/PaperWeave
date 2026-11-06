@@ -19,6 +19,10 @@ export interface WholePaperCoverage {
   gaps: WholePaperCoverageGap[];
   duplicates: WholePaperCoverageDuplicate[];
   missingAnchors: { originalNumber: string; page: number }[];
+  /** 扫描页只按“是否有题目归属”对账，不伪造文字覆盖率。 */
+  scanPages: { page: number; covered: boolean }[];
+  scanPercent: number;
+  answerMatches: { total: number; matched: number; ambiguous: number; unmatched: number };
   percent: number;
 }
 
@@ -83,7 +87,9 @@ export function locateWholePaperAnchor(fragments: WholePaperFragment[], original
 export function wholePaperCoverage(input: {
   fragments: WholePaperFragment[];
   ignored: AiIgnoredRange[];
-  records: { originalNumber: string; page: number; anchors: AiSourceAnchor[] }[];
+  records: { originalNumber: string; page: number; anchors: AiSourceAnchor[]; scanPages?: number[] }[];
+  scanPages?: number[];
+  answerMatches?: { total: number; matched: number; ambiguous: number; unmatched: number };
 }): WholePaperCoverage {
   const pages = pageTexts(input.fragments);
   const content = new Map<number, boolean[]>();
@@ -110,9 +116,10 @@ export function wholePaperCoverage(input: {
 
   const missingAnchors: { originalNumber: string; page: number }[] = [];
   for (const record of input.records) {
+    const scanPages = record.scanPages ?? [];
     const anchors = record.anchors.filter(validAnchor);
-    const fallback = anchors.length === 0 ? locateWholePaperAnchor(input.fragments, record.originalNumber, record.page) : undefined;
-    if (anchors.length === 0 && fallback === undefined) missingAnchors.push({ originalNumber: record.originalNumber, page: record.page });
+    const fallback = anchors.length === 0 && scanPages.length === 0 ? locateWholePaperAnchor(input.fragments, record.originalNumber, record.page) : undefined;
+    if (anchors.length === 0 && scanPages.length === 0 && fallback === undefined) missingAnchors.push({ originalNumber: record.originalNumber, page: record.page });
     const effective = anchors.length > 0 ? anchors : fallback === undefined ? [] : [fallback];
     for (const anchor of effective) apply(anchor.page, anchor.start, anchor.end, true);
   }
@@ -166,11 +173,17 @@ export function wholePaperCoverage(input: {
 
   const total = pageReports.reduce((sum, page) => sum + page.total, 0);
   const coveredTotal = pageReports.reduce((sum, page) => sum + page.covered, 0);
+  const assignedScanPages = new Set(input.records.flatMap((record) => record.scanPages ?? []));
+  const scanReports = (input.scanPages ?? []).map((page) => ({ page, covered: assignedScanPages.has(page) }));
+  const scanCovered = scanReports.filter((page) => page.covered).length;
   return {
     pages: pageReports,
     gaps,
     duplicates,
     missingAnchors,
+    scanPages: scanReports,
+    scanPercent: scanReports.length === 0 ? 100 : Math.round((scanCovered / scanReports.length) * 100),
+    answerMatches: input.answerMatches ?? { total: 0, matched: 0, ambiguous: 0, unmatched: 0 },
     percent: total === 0 ? 100 : Math.round((coveredTotal / total) * 100),
   };
 }

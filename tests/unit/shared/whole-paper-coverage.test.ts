@@ -87,3 +87,32 @@ test("无锚点且题号无法定位时报缺失", () => {
   });
   expect(coverage.missingAnchors).toEqual([{ originalNumber: "9", page: 2 }]);
 });
+
+test("扫描页按题目归属对账，不伪造文字覆盖率", () => {
+  const coverage = wholePaperCoverage({
+    fragments: [],
+    ignored: [],
+    records: [{ originalNumber: "1", page: 1, anchors: [], scanPages: [1] }],
+    scanPages: [1, 2],
+  });
+  expect(coverage.percent).toBe(100);
+  expect(coverage.scanPages).toEqual([{ page: 1, covered: true }, { page: 2, covered: false }]);
+  expect(coverage.scanPercent).toBe(50);
+  expect(coverage.missingAnchors).toEqual([]);
+});
+
+test("扫描页无任何题目归属时覆盖率为 0", () => {
+  const coverage = wholePaperCoverage({ fragments: [], ignored: [], records: [], scanPages: [1] });
+  expect(coverage.scanPages).toEqual([{ page: 1, covered: false }]);
+  expect(coverage.scanPercent).toBe(0);
+});
+
+test("答案匹配统计原样进入覆盖报告，无答案文件时为零", () => {
+  const empty = wholePaperCoverage({ fragments: [], ignored: [], records: [] });
+  expect(empty.answerMatches).toEqual({ total: 0, matched: 0, ambiguous: 0, unmatched: 0 });
+  const matched = wholePaperCoverage({
+    fragments: [], ignored: [], records: [],
+    answerMatches: { total: 3, matched: 1, ambiguous: 1, unmatched: 1 },
+  });
+  expect(matched.answerMatches).toEqual({ total: 3, matched: 1, ambiguous: 1, unmatched: 1 });
+});

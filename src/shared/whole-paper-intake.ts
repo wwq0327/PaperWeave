@@ -1,4 +1,4 @@
-import type { AiFigureRef, AiSourceAnchor } from "./ai";
+import type { AiFigureRef, AiScanArea, AiSourceAnchor } from "./ai";
 import type { AnswerStatus, ReviewStatus } from "./question";
 
 export const wholePaperIntakeStatuses = ["created", "duplicate", "failed", "skipped", "revised"] as const;
@@ -14,6 +14,8 @@ export const wholePaperIssueCodes = [
   "anchor_missing",
   "formula_review",
   "image_review",
+  "answer_ambiguous",
+  "answer_unmatched",
   "duplicate",
   "failed",
 ] as const;
@@ -41,6 +43,8 @@ export interface WholePaperIntakeSummary {
   existing: number;
   materials: number;
   needsAttention: number;
+  answerMatched: number;
+  answerAmbiguous: number;
 }
 
 export interface WholePaperEvidence {
@@ -48,6 +52,10 @@ export interface WholePaperEvidence {
   materialAnchors: AiSourceAnchor[];
   figures: AiFigureRef[];
   answerSources: string[];
+  /** 扫描页题面区域；文字页为空。 */
+  scanRegions: AiScanArea[];
+  /** 已唯一匹配到的答案条目键（批次:条目）。 */
+  answerKeys: string[];
 }
 
 export interface WholePaperIntakeItem {
