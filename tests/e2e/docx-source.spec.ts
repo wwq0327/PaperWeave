@@ -27,6 +27,33 @@ async function importDocxExam(page: Page, app: Awaited<ReturnType<typeof electro
   await expect(page.getByRole("complementary", { name: "DOCX 原卷文字" })).toBeVisible({ timeout: 15000 });
 }
 
+test("DOCX 一键自动录题：内嵌图绑定、公式待核与覆盖对账", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-docx-auto-"));
+  const app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`], env: { ...process.env, PAPERWEAVE_AI_FAKE: "clean" } });
+  try {
+    const page = await app.firstWindow();
+    await importDocxExam(page, app);
+    const whole = page.getByRole("region", { name: "整卷任务", exact: true });
+    await whole.getByRole("button", { name: "自动录题并建档" }).click();
+    await whole.getByRole("region", { name: "确认整卷发送" }).getByRole("button", { name: "确认发送并自动建档" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "已建档 4 题" })).toBeVisible({ timeout: 30000 });
+    await expect(page.getByRole("status").filter({ hasText: "自动通过 3 题" })).toBeVisible();
+
+    const review = whole.getByRole("region", { name: "整卷审核" });
+    await expect(review).toContainText("第 2 段含 OMML 公式");
+    const imageRow = review.locator("li.intake-review-row").filter({ hasText: "第 3 段" });
+    await expect(imageRow).toContainText("image1.png");
+    await expect(imageRow).toContainText("自动通过");
+
+    const coverage = whole.getByRole("region", { name: "原卷覆盖" });
+    await expect(coverage).toContainText("覆盖率 100%");
+    await expect(coverage).toContainText("缺锚点：0");
+  } finally {
+    await closeApp(app);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("DOCX 原卷：段落文字视图、按段准备整卷任务并批量建档", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "paperweave-docx-source-"));
   const app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`], env: { ...process.env, PAPERWEAVE_AI_FAKE: "ok" } });

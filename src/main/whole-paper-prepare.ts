@@ -1,4 +1,5 @@
 import { originalFileKind } from "../shared/ai";
+import { AttachmentStore } from "./attachments";
 import { planWholePaperBatches } from "../shared/whole-paper-batches";
 import { createWholePaperRun } from "../shared/whole-paper-runner";
 import { extractDocxText } from "./docx";
@@ -7,7 +8,7 @@ import { extractPdfText } from "./pdf-text";
 import type { WholePaperStore, WholePaperTask } from "./whole-paper-store";
 
 /** 本机准备任务，不发送原卷；页面/段落无文字不等于空白，后续必须复核。 */
-export async function prepareWholePaper(exams: ExamStore, tasks: WholePaperStore, examId: string, sectionId: string, fileId: string): Promise<WholePaperTask> {
+export async function prepareWholePaper(exams: ExamStore, tasks: WholePaperStore, attachments: AttachmentStore, examId: string, sectionId: string, fileId: string): Promise<WholePaperTask> {
   const exam = exams.getExam(examId);
   if (!exam.sections.some((section) => section.id === sectionId)) throw new Error("考试分部不存在");
   const source = exam.files.find((file) => file.id === fileId && file.role === "paper");
@@ -19,6 +20,15 @@ export async function prepareWholePaper(exams: ExamStore, tasks: WholePaperStore
     if (!extracted.hasText) throw new Error("原卷没有可提取文字；请检查 DOCX 内容");
     // DOCX 没有版式分页，用文档段落序号作为来源定位，避免把段落当页码。
     const plan = planWholePaperBatches(extracted.units.map((unit) => ({ page: unit.unit, text: unit.text })), undefined, "docx");
+    plan.docxImages = extracted.media.map((media) => {
+      const base = { unit: media.unit, start: media.start, end: media.end, name: media.name };
+      if (media.mime === null || media.data === undefined) return { ...base, note: media.problem ?? "图片无法自动提取" };
+      try {
+        return { ...base, attachmentId: attachments.save(media.data).id };
+      } catch (error) {
+        return { ...base, note: `图片无法写入附件池：${error instanceof Error ? error.message : String(error)}` };
+      }
+    });
     return tasks.create(examId, sectionId, createWholePaperRun(plan), fileId);
   }
   const extracted = await extractPdfText(new Uint8Array(data));

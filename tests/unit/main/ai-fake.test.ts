@@ -42,3 +42,15 @@ test("clean 固定响应与黄金样本一致", async () => {
     anchor: question.sourceAnchors?.[0],
   }))).toEqual(golden.questions);
 });
+
+test("clean 场景按 DOCX 输入段落逐段返回稳定题目", async () => {
+  const docx = {
+    mode: "text" as const,
+    text: "\n[原卷第 1 段]\n甲\n[原卷第 2 段]\n[公式]\n[原卷第 3 段]\n[图片：pic.png]\n[原卷第 5 段]\n表",
+    pages: [1, 2, 3, 5],
+  };
+  const draft = await fakeAiDraft("clean", docx);
+  expect(draft.questions.map((question) => question.originalNumber)).toEqual(["1", "2", "3", "4"]);
+  expect(draft.questions.map((question) => question.page)).toEqual([1, 2, 3, 5]);
+  expect(draft.questions.every((question) => question.sourceAnchors?.length === 1)).toBe(true);
+});

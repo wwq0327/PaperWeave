@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { AI_LIMITS, isAiDraft } from "../shared/ai";
+import type { WholePaperDocxImage } from "../shared/whole-paper-batches";
 import type { WholePaperRunState } from "../shared/whole-paper-runner";
 import { Database } from "./database";
 
@@ -10,6 +11,17 @@ const object = (value: unknown): value is Record<string, unknown> => typeof valu
 const keys = (value: Record<string, unknown>, allowed: string[]) => Object.keys(value).every((key) => allowed.includes(key));
 const pageNumber = (page: unknown): page is number => Number.isInteger(page) && (page as number) >= 1 && (page as number) <= 2000;
 const finiteNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+const validDocxImages = (value: unknown): boolean =>
+  value === undefined || (Array.isArray(value) && value.length <= 2000 && value.every((image: unknown) => {
+    if (!object(image) || !keys(image, ["unit", "start", "end", "name", "attachmentId", "note"])) return false;
+    const attachment = image.attachmentId;
+    return pageNumber(image.unit)
+      && Number.isInteger(image.start) && Number.isInteger(image.end) && (image.start as number) >= 0 && (image.end as number) > (image.start as number)
+      && typeof image.name === "string" && image.name.length > 0 && image.name.length <= 255
+      && (attachment === undefined || (typeof attachment === "string" && /^[a-f0-9]{64}$/.test(attachment)))
+      && (image.note === undefined || (typeof image.note === "string" && image.note.length > 0 && image.note.length <= 500));
+  }));
+
 const validBlocks = (blocks: unknown, start: number, end: number): boolean =>
   Array.isArray(blocks) && blocks.every((block: unknown) =>
     object(block) && keys(block, ["start", "end", "text", "x", "y", "width", "height"])
@@ -20,8 +32,8 @@ const validBlocks = (blocks: unknown, start: number, end: number): boolean =>
 
 /** 不信任数据库中的 JSON；拒绝不一致、未知字段和未校验的模型结果。 */
 function validState(value: unknown): value is WholePaperRunState {
-  if (!object(value) || !keys(value, ["plan", "batches"]) || !object(value.plan) || !keys(value.plan, ["sourceKind", "batches", "emptyPages"]) || (value.plan.sourceKind !== undefined && value.plan.sourceKind !== "pdf" && value.plan.sourceKind !== "docx") || !Array.isArray(value.plan.batches) || !Array.isArray(value.plan.emptyPages) || !Array.isArray(value.batches)) return false;
-  if (value.plan.batches.length !== value.batches.length || value.batches.length > 20000 || !value.plan.emptyPages.every(pageNumber)) return false;
+  if (!object(value) || !keys(value, ["plan", "batches"]) || !object(value.plan) || !keys(value.plan, ["sourceKind", "batches", "emptyPages", "docxImages"]) || (value.plan.sourceKind !== undefined && value.plan.sourceKind !== "pdf" && value.plan.sourceKind !== "docx") || !Array.isArray(value.plan.batches) || !Array.isArray(value.plan.emptyPages) || !Array.isArray(value.batches)) return false;
+  if (value.plan.batches.length !== value.batches.length || value.batches.length > 20000 || !value.plan.emptyPages.every(pageNumber) || !validDocxImages(value.plan.docxImages)) return false;
   if (value.plan.emptyPages.some((p, i, a) => i > 0 && p <= a[i - 1])) return false;
   for (let i = 0; i < value.batches.length; i++) {
     const plan = value.plan.batches[i];

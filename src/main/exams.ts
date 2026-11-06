@@ -140,6 +140,7 @@ function readSourcePdf(path: unknown): { bytes: Buffer; originalName: string } {
 /** 原卷接受 PDF 或 DOCX：扩展名决定预期类型，魔数只做真实内容校验。 */
 function readSourceFile(path: unknown): { bytes: Buffer; originalName: string; kind: AiSourceKind } {
   const extension = typeof path === "string" && path ? extname(path).toLowerCase() : "";
+  if (extension === ".doc") throw new Error("旧版 .doc 不支持，请另存为 .docx");
   if (extension !== ".pdf" && extension !== ".docx") throw new Error("原卷必须是 PDF 或 DOCX 文件");
   const { bytes, originalName } = readSourceBytes(path, {
     missing: "无法读取原卷文件",

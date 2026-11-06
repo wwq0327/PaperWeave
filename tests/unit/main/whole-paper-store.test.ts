@@ -70,3 +70,15 @@ test("损坏状态不会被读取或覆盖", () => {
   expect(db.getSetting(`whole-paper.task.${task.id}`)).toBe("{");
   db.close();
 });
+
+test("保存 DOCX 媒体定位并拒绝无效附件标识", () => {
+  const { db, exam, section, state } = setup();
+  state.plan.docxImages = [{ unit: 1, start: 0, end: 3, name: "pic.png", attachmentId: "a".repeat(64) }];
+  const store = new WholePaperStore(db);
+  const task = store.create(exam.id, section.id, state);
+  expect(store.get(task.id).state.plan.docxImages).toEqual(state.plan.docxImages);
+  const invalid = structuredClone(state);
+  invalid.plan.docxImages = [{ unit: 1, start: 0, end: 3, name: "pic.png", attachmentId: "bad" }];
+  expect(() => store.create(exam.id, section.id, invalid)).toThrow("初始状态无效");
+  db.close();
+});
