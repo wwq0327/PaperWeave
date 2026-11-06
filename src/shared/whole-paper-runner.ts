@@ -1,10 +1,13 @@
-import { AI_LIMITS, isAiDraft, type AiDraft, type AiSourceKind } from "./ai";
+import { AI_LIMITS, isAiAnswerDraft, isAiDraft, type AiAnswerDraft, type AiDraft, type AiSourceKind } from "./ai";
 import { wholePaperRequestText, type WholePaperBatchPlan } from "./whole-paper-batches";
 
 export type BatchStatus = "pending" | "running" | "succeeded" | "failed" | "skipped";
 export interface WholePaperBatchState {
   status: BatchStatus;
+  /** 原卷识别结果；扫描页与文字页共用。 */
   result?: AiDraft;
+  /** 答案／评分文件抽取结果。 */
+  answers?: AiAnswerDraft;
   error?: string;
 }
 export interface WholePaperRunState {

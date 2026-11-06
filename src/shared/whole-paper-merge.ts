@@ -78,6 +78,7 @@ function mergeQuestion(first: AiQuestion, second: AiQuestion): AiQuestion {
   const answer = chooseText(first.answer ?? "", second.answer ?? "");
   if (answer.conflict) notes.push("跨批答案不一致，请核对。");
   const figures = [...new Map([...(first.figures ?? []), ...(second.figures ?? [])].map((figure) => [`${figure.page}:${figure.start}:${figure.end}:${figure.kind}`, figure])).values()];
+  const scanAreas = [...new Map([...(first.scanAreas ?? []), ...(second.scanAreas ?? [])].map((area) => [`${area.page}:${area.rect.x}:${area.rect.y}:${area.rect.width}:${area.rect.height}`, area])).values()];
   const fieldNotes = [...new Map([...(first.fieldUncertain ?? []), ...(second.fieldUncertain ?? [])].map((entry) => [`${entry.field}:${entry.note}`, entry])).values()];
   return {
     ...first,
@@ -94,6 +95,7 @@ function mergeQuestion(first: AiQuestion, second: AiQuestion): AiQuestion {
     answerSource: first.answerSource || second.answerSource,
     sourceAnchors: [...new Map([...anchorsOf(first), ...anchorsOf(second)].map((anchor) => [anchorKey(anchor), anchor])).values()],
     figures: figures.length > 0 ? figures : undefined,
+    scanAreas: scanAreas.length > 0 ? scanAreas : undefined,
     fieldUncertain: fieldNotes.length > 0 ? fieldNotes : undefined,
     questionType: first.questionType || second.questionType,
   };
