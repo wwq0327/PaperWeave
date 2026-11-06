@@ -109,7 +109,7 @@ export default function WholePaperPanel({ examId, sectionId, fileId, sectionName
   }, [examId]);
   async function prepareTask() {
     if (!fileId) throw new Error("未选择原卷");
-    const pageImages = await collectScanPageImages(examId, fileId);
+    const pageImages = sourceKind === "docx" ? undefined : await collectScanPageImages(examId, fileId);
     return window.paperweave.prepareWholePaper(examId, sectionId, fileId, pageImages);
   }
   async function prepare() {
