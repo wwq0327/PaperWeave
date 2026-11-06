@@ -1,4 +1,4 @@
-import { AI_LIMITS, isAiDraft, type AiDraft } from "./ai";
+import { AI_LIMITS, isAiDraft, type AiDraft, type AiSourceKind } from "./ai";
 import { wholePaperRequestText, type WholePaperBatchPlan } from "./whole-paper-batches";
 
 export type BatchStatus = "pending" | "running" | "succeeded" | "failed" | "skipped";
@@ -21,7 +21,7 @@ export function createWholePaperRun(plan: WholePaperBatchPlan): WholePaperRunSta
 }
 
 type Save = (state: WholePaperRunState) => Promise<void>;
-type Request = (input: { text: string; pages: number[] }, signal: AbortSignal) => Promise<unknown>;
+type Request = (input: { text: string; pages: number[]; sourceKind: AiSourceKind }, signal: AbortSignal) => Promise<unknown>;
 
 /**
  * 执行器只负责单任务调度；调用方负责授权、加密存储、界面及人工审核。
@@ -64,9 +64,10 @@ export class WholePaperRunner {
           break;
         }
         try {
-          const text = wholePaperRequestText(input);
+          const sourceKind = state.plan.sourceKind ?? "pdf";
+          const text = wholePaperRequestText(input, sourceKind);
           if ([...text].length > AI_LIMITS.textChars) throw new Error("附加页码后超过模型输入限制");
-          const result = await this.request({ text, pages: [...input.pages] }, signal);
+          const result = await this.request({ text, pages: [...input.pages], sourceKind }, signal);
           if (signal.aborted) throw new Error("已取消，请重试");
           if (!isAiDraft(result)) throw new Error("模型返回格式无效，请重试");
           batch.status = "succeeded";
