@@ -109,9 +109,9 @@ export function registerExams(db: Database, root: string, currentWindow: () => B
     }
     return extractPdfText(new Uint8Array(data));
   });
-  ipcMain.handle("wholePaper:prepare", async (event, examId: unknown, sectionId: unknown, fileId: unknown) => {
+  ipcMain.handle("wholePaper:prepare", async (event, examId: unknown, sectionId: unknown, fileId: unknown, pageImages: unknown) => {
     permitted(event);
-    return taskView(await prepareWholePaper(store, wholePaper, attachments, text(examId, "考试标识"), text(sectionId, "考试分部"), text(fileId, "原卷文件")));
+    return taskView(await prepareWholePaper(store, wholePaper, attachments, text(examId, "考试标识"), text(sectionId, "考试分部"), text(fileId, "原卷文件"), pageImages));
   });
   ipcMain.handle("wholePaper:list", (event, examId: unknown) => {
     permitted(event);

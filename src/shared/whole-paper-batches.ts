@@ -179,7 +179,7 @@ export function planWholePaperBatches(pages: WholePaperPage[], limit: number = A
 }
 
 /** 答案／评分 PDF 的文字页与扫描页分别生成答案批次。 */
-export function planWholePaperAnswerBatches(pages: WholePaperPage[], scanPages: WholePaperPageImage[], limit: number, answer: WholePaperAnswerFile): WholePaperBatch[] {
-  if (answer.role !== "answer" && answer.role !== "rubric") throw new Error("答案文件角色无效");
+export function planWholePaperAnswerBatches(pages: WholePaperPage[], scanPages: WholePaperPageImage[], limit: number = AI_LIMITS.textChars, answer?: WholePaperAnswerFile): WholePaperBatch[] {
+  if (answer === undefined || (answer.role !== "answer" && answer.role !== "rubric")) throw new Error("答案文件角色无效");
   return planPages(pages, limit, "pdf", { kind: "answer-text", answer, scanPages, emptyPolicy: "error" }).batches;
 }

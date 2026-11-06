@@ -98,7 +98,7 @@ declare global {
       getExamFile(fileId: string): Promise<{ file: OriginalFileView; data: Uint8Array }>;
       runWholePaper(examId: string, taskId: string, revision: number, config: { baseUrl: string; textModel: string }): Promise<void>;
       cancelWholePaper(taskId: string): Promise<boolean>;
-      prepareWholePaper(examId: string, sectionId: string, fileId: string): Promise<WholePaperTaskView>;
+      prepareWholePaper(examId: string, sectionId: string, fileId: string, pageImages?: unknown): Promise<WholePaperTaskView>;
       getWholePaperDetail(examId: string, taskId: string): Promise<WholePaperTaskDetail>;
       listWholePaper(examId: string): Promise<WholePaperTaskView[]>;
       createWholePaperIntake(examId: string, taskId: string, classification: unknown): Promise<WholePaperIntakeSummary>;
