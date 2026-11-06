@@ -145,6 +145,15 @@ button.primary { background: #225c3d; color: #fff; border-color: #225c3d; }
 .intake-page-view img { max-width: 100%; display: block; margin: 0 auto; user-select: none; }
 .intake-cropping { cursor: crosshair; }
 .exam-selection { position: absolute; border: 2px solid #225c3d; background: rgba(34, 92, 61, .15); pointer-events: none; }
+.docx-source { background: #fff; border: 1px solid #dbe4db; border-radius: 10px; padding: 14px; }
+.docx-source h2 { margin: 0; font-size: 18px; }
+.docx-source > header { margin-bottom: 6px; }
+.docx-source-list { list-style: none; margin: 10px 0 0; padding: 0; max-height: calc(100vh - 240px); overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.docx-source-unit { display: block; width: 100%; text-align: left; background: #fbfcfb; border: 1px solid #e3e9e3; border-radius: 8px; padding: 8px 10px; }
+.docx-source-unit.active { border-color: #225c3d; background: #eef5ef; box-shadow: inset 3px 0 0 #225c3d; }
+.docx-source-unit:disabled { cursor: default; }
+.docx-source-label { display: block; font-size: 12px; font-weight: 600; color: #225c3d; margin-bottom: 2px; }
+.docx-source-text { display: block; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; color: #202923; }
 .intake-block { border: 1px solid #e3e9e3; border-radius: 8px; padding: 10px; margin: 8px 0; background: #fbfcfb; }
 .intake-blocks { border: 1px solid #dbe4db; border-radius: 8px; padding: 10px; margin: 10px 0; }
 .intake-blocks legend { font-weight: 600; padding: 0 6px; }
@@ -162,7 +171,7 @@ button.primary { background: #225c3d; color: #fff; border-color: #225c3d; }
 .intake-badge { border: 1px solid #dbe4db; border-radius: 999px; padding: 1px 8px; font-size: 12px; background: #fbfcfb; }
 .intake-review-row { display: flex; gap: 10px; align-items: flex-start; margin: 8px 0; }
 .intake-review-row > input[type="checkbox"] { margin-top: 4px; }
-@media (max-width: 1000px) { .intake-grid { grid-template-columns: 1fr; } .intake-left { position: static; } .intake-page-view { max-height: 60vh; } }
+@media (max-width: 1000px) { .intake-grid { grid-template-columns: 1fr; } .intake-left { position: static; } .intake-page-view { max-height: 60vh; } .docx-source-list { max-height: 60vh; } }
 .review-sub, .review-material { border-top: 1px solid #dbe4db; margin-top: 12px; padding-top: 12px; }
 .review-sub > header, .review-material > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .review-blocks img { max-width: 100%; }

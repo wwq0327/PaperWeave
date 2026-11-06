@@ -1,12 +1,14 @@
 import { BrowserWindow, dialog, ipcMain } from "electron";
+import { originalFileKind } from "../shared/ai";
 import { isExamFileRole, type ExamDetailView, type ExamFileRecord, type ExamFileView, type OriginalFileRecord, type OriginalFileView } from "../shared/exam";
 import type { Database } from "./database";
 import { AttachmentStore } from "./attachments";
+import { extractDocxText } from "./docx";
 import { ExamStore } from "./exams";
 import { Intake } from "./intake";
 import { extractPdfText } from "./pdf-text";
 import { QuestionBank } from "./question-bank";
-import { prepareWholePaperPdf } from "./whole-paper-prepare";
+import { prepareWholePaper } from "./whole-paper-prepare";
 import { WholePaperIntake } from "./whole-paper-intake";
 import { WholePaperStore, type WholePaperTask } from "./whole-paper-store";
 import type { WholePaperTaskDetail, WholePaperTaskView } from "../shared/whole-paper-view";
@@ -28,8 +30,12 @@ export function registerExams(db: Database, root: string, currentWindow: () => B
   const intake = new Intake(store, bank);
   const wholePaper = new WholePaperStore(db);
   const wholeIntake = new WholePaperIntake(db, wholePaper, intake, bank, store);
+  const sourceKindOf = (task: WholePaperTask): "pdf" | "docx" => {
+    const file = task.sourceFileId === undefined ? undefined : store.getExam(task.examId).files.find((entry) => entry.id === task.sourceFileId);
+    return file === undefined ? "pdf" : originalFileKind(file.originalName);
+  };
   const taskView = (task: WholePaperTask): WholePaperTaskView => ({
-    id: task.id, sectionId: task.sectionId, revision: task.revision, sourceFileId: task.sourceFileId, createdAt: task.createdAt,
+    id: task.id, sectionId: task.sectionId, revision: task.revision, sourceFileId: task.sourceFileId, sourceKind: sourceKindOf(task), createdAt: task.createdAt,
     emptyPages: task.state.plan.emptyPages,
     batches: task.state.plan.batches.map((batch, index) => ({ pages: batch.pages, status: task.state.batches[index].status, reviewBoundaryBefore: batch.reviewBoundaryBefore })),
   });
@@ -43,10 +49,12 @@ export function registerExams(db: Database, root: string, currentWindow: () => B
     if (typeof value !== "string" || !value.trim()) throw new Error(`${name}无效`);
     return value.trim();
   };
-  const choosePdf = async (win: BrowserWindow, title: string): Promise<string | null> => {
-    const result = await dialog.showOpenDialog(win, { title, properties: ["openFile"], filters: [{ name: "PDF", extensions: ["pdf"] }] });
+  const chooseFile = async (win: BrowserWindow, title: string, filterName: string, extensions: string[]): Promise<string | null> => {
+    const result = await dialog.showOpenDialog(win, { title, properties: ["openFile"], filters: [{ name: filterName, extensions }] });
     return result.canceled ? null : result.filePaths[0] ?? null;
   };
+  const choosePaper = (win: BrowserWindow) => chooseFile(win, "选择原卷 PDF 或 DOCX", "原卷文件", ["pdf", "docx"]);
+  const choosePdf = (win: BrowserWindow, title: string) => chooseFile(win, title, "PDF", ["pdf"]);
   const ownedWholeTask = (examId: unknown, taskId: unknown): WholePaperTask => {
     const id = text(examId, "考试标识");
     const task = wholePaper.get(text(taskId, "整卷任务"));
@@ -65,7 +73,7 @@ export function registerExams(db: Database, root: string, currentWindow: () => B
   });
   ipcMain.handle("exam:import", async (event, input: unknown) => {
     const win = permitted(event);
-    const path = await choosePdf(win, "选择原卷 PDF");
+    const path = await choosePaper(win);
     if (path === null) return { status: "canceled" as const };
     const { file, ...result } = store.importPaper(input, path);
     return { status: "imported" as const, ...result, file: fileView(file) };
@@ -94,12 +102,16 @@ export function registerExams(db: Database, root: string, currentWindow: () => B
   });
   ipcMain.handle("exam:fileText", async (event, fileId: unknown) => {
     permitted(event);
-    const { data } = store.readFile(text(fileId, "原卷文件"));
+    const { file, data } = store.readFile(text(fileId, "原卷文件"));
+    if (originalFileKind(file.originalName) === "docx") {
+      const extracted = extractDocxText(data);
+      return { pages: extracted.units.map((unit) => ({ page: unit.unit, text: unit.text })), hasText: extracted.hasText };
+    }
     return extractPdfText(new Uint8Array(data));
   });
   ipcMain.handle("wholePaper:prepare", async (event, examId: unknown, sectionId: unknown, fileId: unknown) => {
     permitted(event);
-    return taskView(await prepareWholePaperPdf(store, wholePaper, text(examId, "考试标识"), text(sectionId, "考试分部"), text(fileId, "原卷文件")));
+    return taskView(await prepareWholePaper(store, wholePaper, text(examId, "考试标识"), text(sectionId, "考试分部"), text(fileId, "原卷文件")));
   });
   ipcMain.handle("wholePaper:list", (event, examId: unknown) => {
     permitted(event);

@@ -11,6 +11,18 @@ export const AI_LIMITS = {
   contextChars: 100,
 } as const;
 
+/** 整卷来源类型：PDF 按页定位，DOCX 按文档段落定位。 */
+export type AiSourceKind = "pdf" | "docx";
+
+export function originalFileKind(originalName: string): AiSourceKind {
+  return originalName.toLowerCase().endsWith(".docx") ? "docx" : "pdf";
+}
+
+/** 来源位置文案；DOCX 的编号是文档段落序号，不是 Word 分页。 */
+export function sourceUnitLabel(kind: AiSourceKind, unit: number): string {
+  return kind === "docx" ? `第 ${unit} 段` : `第 ${unit} 页`;
+}
+
 /** 生成草稿时随请求发送的科目信息；标签候选由主进程按题库补充。 */
 export interface AiContext {
   stage: Stage;
@@ -126,7 +138,7 @@ export function checkImages(images: { bytes: number }[]): string | null {
 }
 
 export type AiInput =
-  | { mode: "text"; text: string; pages: number[]; context?: AiContext }
+  | { mode: "text"; text: string; pages: number[]; sourceKind?: AiSourceKind; context?: AiContext }
   | { mode: "images"; images: { dataUrl: string; page: number }[]; note?: string; context?: AiContext };
 
 const pageList = (x: unknown): x is number[] =>
@@ -164,11 +176,21 @@ export function normalizeAiInput(value: unknown): { ok: true; input: AiInput } |
   const input = value as Record<string, unknown>;
   if (input.mode === "text") {
     if (typeof input.text !== "string" || !pageList(input.pages)) return { ok: false, error: "文字或页码无效" };
+    if (input.sourceKind !== undefined && input.sourceKind !== "pdf" && input.sourceKind !== "docx") return { ok: false, error: "来源类型无效" };
     const error = checkText(input.text);
     if (error) return { ok: false, error };
     const parsed = parseContext(input.context);
     if (!parsed.ok) return parsed;
-    return { ok: true, input: { mode: "text", text: input.text, pages: input.pages, context: parsed.context } };
+    return {
+      ok: true,
+      input: {
+        mode: "text",
+        text: input.text,
+        pages: input.pages,
+        ...(input.sourceKind === undefined ? {} : { sourceKind: input.sourceKind as AiSourceKind }),
+        context: parsed.context,
+      },
+    };
   }
   if (input.mode === "images") {
     if (!Array.isArray(input.images)) return { ok: false, error: "裁图格式无效" };

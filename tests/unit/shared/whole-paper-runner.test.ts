@@ -53,13 +53,21 @@ describe("整卷任务调度", () => {
     const request = vi.fn().mockResolvedValue(draft);
     const runner = new WholePaperRunner(async () => {}, request);
     await runner.run(createWholePaperRun(planWholePaperBatches([{ page: 4, text: "题目" }])), new AbortController().signal);
-    expect(request.mock.calls[0][0]).toEqual({ text: "\n[原卷第 4 页]\n题目", pages: [4] });
+    expect(request.mock.calls[0][0]).toEqual({ text: "\n[原卷第 4 页]\n题目", pages: [4], sourceKind: "pdf" });
     const old = createWholePaperRun(planWholePaperBatches([{ page: 1, text: "甲" }]));
     old.plan.batches[0].text = "甲".repeat(8000);
     old.plan.batches[0].fragments[0] = { page: 1, start: 0, end: 8000, text: "甲".repeat(8000) };
     const result = await runner.run(old, new AbortController().signal);
     expect(result.batches[0].status).toBe("failed");
     expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("DOCX 计划按文档段落标注来源，不把段落当页码", async () => {
+    const request = vi.fn().mockResolvedValue(draft);
+    const runner = new WholePaperRunner(async () => {}, request);
+    const state = createWholePaperRun(planWholePaperBatches([{ page: 1, text: "题目" }], undefined, "docx"));
+    await runner.run(state, new AbortController().signal);
+    expect(request.mock.calls[0][0]).toEqual({ text: "\n[原卷第 1 段]\n题目", pages: [1], sourceKind: "docx" });
   });
 
   it("持久化失败时停止执行并抛错", async () => {

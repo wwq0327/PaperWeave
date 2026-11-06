@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { Database } from "../../../src/main/database";
 import { ExamStore } from "../../../src/main/exams";
-import { prepareWholePaperPdf } from "../../../src/main/whole-paper-prepare";
+import { prepareWholePaper } from "../../../src/main/whole-paper-prepare";
 import { WholePaperStore } from "../../../src/main/whole-paper-store";
 
 const dirs: string[] = [];
@@ -26,11 +26,27 @@ function setup() {
 test("从已关联文字 PDF 准备任务并持久保存来源和逐页内容", async () => {
   const { db, exams, tasks, source } = setup();
   const paper = source("two-pages.pdf");
-  const task = await prepareWholePaperPdf(exams, tasks, paper.exam.id, paper.sectionId, paper.file.id);
+  const task = await prepareWholePaper(exams, tasks, paper.exam.id, paper.sectionId, paper.file.id);
   expect(task.sourceFileId).toBe(paper.file.id);
+  expect(task.state.plan.sourceKind).toBe("pdf");
   expect(tasks.get(task.id).state.plan.batches[0].pages).toEqual([1, 2]);
   expect(task.state.plan.batches[0].text).toContain("Page one text.");
   expect(task.state.plan.batches[0].text).toContain("Page two text.");
+  db.close();
+});
+
+test("从 DOCX 原卷准备任务：按文档段落定位，空段落保留待处理提示", async () => {
+  const { db, exams, tasks, source } = setup();
+  const paper = source("sample.docx");
+  const task = await prepareWholePaper(exams, tasks, paper.exam.id, paper.sectionId, paper.file.id);
+  expect(task.sourceFileId).toBe(paper.file.id);
+  expect(tasks.get(task.id).state.plan.sourceKind).toBe("docx");
+  expect(task.state.plan.batches).toHaveLength(1);
+  // 第 4 个文档段落为空，表格是第 5 个单元：定位用的是段落序号而不是 Word 分页。
+  expect(task.state.plan.batches[0].pages).toEqual([1, 2, 3, 5]);
+  expect(task.state.plan.batches[0].text).toContain("1. 计算：3 + 5");
+  expect(task.state.plan.batches[0].text).toContain("[公式]");
+  expect(task.state.plan.emptyPages).toEqual([4]);
   db.close();
 });
 
@@ -38,9 +54,9 @@ test("拒绝跨考试原卷、无效分部及扫描页，不创建任务", async
   const { db, exams, tasks, source } = setup();
   const first = source("text.pdf");
   const blank = source("blank.pdf");
-  await expect(prepareWholePaperPdf(exams, tasks, first.exam.id, first.sectionId, blank.file.id)).rejects.toThrow("原卷不属于该考试");
-  await expect(prepareWholePaperPdf(exams, tasks, first.exam.id, blank.sectionId, first.file.id)).rejects.toThrow("考试分部不存在");
-  await expect(prepareWholePaperPdf(exams, tasks, blank.exam.id, blank.sectionId, blank.file.id)).rejects.toThrow("扫描页");
+  await expect(prepareWholePaper(exams, tasks, first.exam.id, first.sectionId, blank.file.id)).rejects.toThrow("原卷不属于该考试");
+  await expect(prepareWholePaper(exams, tasks, first.exam.id, blank.sectionId, first.file.id)).rejects.toThrow("考试分部不存在");
+  await expect(prepareWholePaper(exams, tasks, blank.exam.id, blank.sectionId, blank.file.id)).rejects.toThrow("扫描页");
   expect(tasks.list()).toHaveLength(0);
   db.close();
 });
@@ -64,7 +80,7 @@ test("混合 PDF 的无文字页保留待处理提示", async () => {
   pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
   const path = join(root, "mixed.pdf"); writeFileSync(path, pdf);
   const imported = exams.importPaper(input, path);
-  const task = await prepareWholePaperPdf(exams, tasks, imported.exam.id, exams.getExam(imported.exam.id).sections[0].id, imported.file.id);
+  const task = await prepareWholePaper(exams, tasks, imported.exam.id, exams.getExam(imported.exam.id).sections[0].id, imported.file.id);
   expect(task.state.plan.emptyPages).toEqual([2]);
   db.close();
 });
@@ -74,7 +90,7 @@ test("损坏 PDF 提取失败时不创建任务", async () => {
   const path = join(root, "bad.pdf"); writeFileSync(path, "%PDF-1.4\ninvalid\n%%EOF");
   const imported = exams.importPaper(input, path);
   const section = exams.getExam(imported.exam.id).sections[0];
-  await expect(prepareWholePaperPdf(exams, tasks, imported.exam.id, section.id, imported.file.id)).rejects.toThrow("无法读取 PDF");
+  await expect(prepareWholePaper(exams, tasks, imported.exam.id, section.id, imported.file.id)).rejects.toThrow("无法读取 PDF");
   expect(tasks.list()).toHaveLength(0);
   db.close();
 });

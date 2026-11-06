@@ -25,7 +25,7 @@ async function importExam(page: Page, app: Awaited<ReturnType<typeof electron.la
   await app.evaluate(({ dialog }, target) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] });
   }, fixture);
-  await page.getByRole("button", { name: "选择 PDF 并导入" }).click();
+  await page.getByRole("button", { name: "选择原卷并导入" }).click();
   await expect(page.getByText(/已导入「九年级数学单元卷」。|该原卷已登记为「九年级数学单元卷」，未重复导入。/)).toBeVisible();
   await page.locator(".paper-card").filter({ hasText: "九年级数学单元卷" }).getByRole("button", { name: "进入录题" }).click();
   await expect(page.getByRole("region", { name: "原卷预览" })).toBeVisible();

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { originalFileKind } from "../shared/ai";
 import type { ExamDetailView, ExamFileRole, ExamInput, ExamRecord } from "../shared/exam";
 import type { Stage } from "../shared/question";
 
@@ -85,14 +86,14 @@ export default function ExamLibrary({ onBack, onOpenExam }: { onBack: () => void
 
   return <main className="paper-app">
     <header className="paper-top">
-      <div><h1>考试原卷</h1><p>登记整卷 PDF、答案与评分细则；录题时从这里进入双栏工作台。</p></div>
+      <div><h1>考试原卷</h1><p>登记整卷原卷（PDF 或 DOCX）、答案与评分细则；录题时从这里进入双栏工作台。</p></div>
       <button onClick={onBack}>返回录题草稿</button>
     </header>
     {message && <p role="status" className="paper-message">{message}</p>}
     {error && <p role="alert" className="error">{error} <button onClick={() => setError("")}>关闭</button></p>}
 
     <section className="paper-panel" aria-label="导入原卷">
-      <h2>导入原卷 PDF</h2>
+      <h2>导入原卷</h2>
       <div className="paper-grid">
         <label>考试标题<input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label>
         <label>学段<select value={form.stage} onChange={(e) => setForm({ ...form, stage: e.target.value as Stage })}>{stages.map((stage) => <option key={stage}>{stage}</option>)}</select></label>
@@ -103,13 +104,14 @@ export default function ExamLibrary({ onBack, onOpenExam }: { onBack: () => void
         <label>学年<input value={form.year} onChange={(e) => setForm({ ...form, year: e.target.value })} /></label>
         <label>来源<input value={form.sourceName} onChange={(e) => setForm({ ...form, sourceName: e.target.value })} /></label>
       </div>
-      <p className="muted">同一 PDF 会按文件指纹去重；重复导入直接打开原考试。</p>
-      <button className="primary" onClick={() => void importExam()} disabled={busy}>{busy ? "处理中…" : "选择 PDF 并导入"}</button>
+      <p className="muted">支持 PDF 或 DOCX 原卷；附件（答案/评分细则/答题卡）仍为 PDF。</p>
+      <p className="muted">同一原卷会按文件指纹去重；重复导入直接打开原考试。</p>
+      <button className="primary" onClick={() => void importExam()} disabled={busy}>{busy ? "处理中…" : "选择原卷并导入"}</button>
     </section>
 
     <section className="paper-panel" aria-label="考试列表">
       <h2>考试列表</h2>
-      {exams.length === 0 ? <p className="muted">还没有登记考试。先导入一份原卷 PDF。</p> : <ul className="paper-list">
+      {exams.length === 0 ? <p className="muted">还没有登记考试。先导入一份原卷。</p> : <ul className="paper-list">
         {exams.map((exam) => <li key={exam.id} className="paper-card">
           <div>
             <strong>{exam.title}</strong>
@@ -131,7 +133,7 @@ export default function ExamLibrary({ onBack, onOpenExam }: { onBack: () => void
       <ul className="paper-list">
         {detail.files.map((file) => <li key={`${file.id}-${file.role}`} className="paper-card">
           <div><strong>{file.originalName}</strong><p className="muted">{Math.ceil(file.size / 1024)} KB · SHA-256 {file.sha256.slice(0, 12)}…</p></div>
-          <span className="paper-state">{roleLabels[file.role]}</span>
+          <span className="paper-state">{file.role === "paper" ? `原卷（${originalFileKind(file.originalName) === "docx" ? "DOCX" : "PDF"}）` : roleLabels[file.role]}</span>
         </li>)}
       </ul>
       <div className="paper-actions">

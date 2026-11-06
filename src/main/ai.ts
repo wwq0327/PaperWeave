@@ -132,7 +132,7 @@ export function registerAi(db: Database, root: string, currentWindow: () => Brow
     wholeInFlight.set(taskId, controller);
     try {
       const runner = new WholePaperRunner(async (state) => { task = wholeTasks.save(task.id, task.revision, state); }, async (batch, signal) => {
-        const checked = normalizeAiInput({ mode: "text", ...batch, context });
+        const checked = normalizeAiInput({ mode: "text", text: batch.text, pages: batch.pages, sourceKind: batch.sourceKind, context });
         if (!checked.ok) throw new Error(checked.error);
         const result = fake ? await fakeAiDraft(fake, checked.input, signal) : await requestAiDraft(config, apiKey as string, checked.input, signal, undefined, tagCandidates);
         if (result.questions.some((question) => !batch.pages.includes(question.page))) throw new Error("模型返回页码不属于本批");

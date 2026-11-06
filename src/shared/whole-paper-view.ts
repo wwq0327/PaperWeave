@@ -1,3 +1,4 @@
+import type { AiSourceKind } from "./ai";
 import type { BatchStatus } from "./whole-paper-runner";
 
 export interface WholePaperTaskView {
@@ -5,6 +6,8 @@ export interface WholePaperTaskView {
   sectionId: string;
   revision: number;
   sourceFileId?: string;
+  /** PDF 按页、DOCX 按文档段落显示来源。 */
+  sourceKind: AiSourceKind;
   createdAt: string;
   emptyPages: number[];
   batches: { pages: number[]; status: BatchStatus; reviewBoundaryBefore: boolean }[];

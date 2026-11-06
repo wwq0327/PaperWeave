@@ -41,7 +41,10 @@ function contextText(input: AiInput, tagCandidates: string[]): string {
 
 function requestContent(input: AiInput, tagCandidates: string[]): MessageBlock[] | (MessageBlock | ImageBlock)[] {
   const context = contextText(input, tagCandidates);
-  if (input.mode === "text") return [{ type: "text", text: `${context ? `${context}\n\n` : ""}以下是原卷第 ${input.pages.join("、")} 页的文字：\n\n${input.text}` }];
+  if (input.mode === "text") {
+    const unit = (input.sourceKind ?? "pdf") === "docx" ? "段" : "页";
+    return [{ type: "text", text: `${context ? `${context}\n\n` : ""}以下是原卷第 ${input.pages.join("、")} ${unit}的文字：\n\n${input.text}` }];
+  }
   const blocks: (MessageBlock | ImageBlock)[] = [];
   input.images.forEach((image, index) => {
     blocks.push({ type: "text", text: `第 ${image.page} 页裁图 ${index + 1}` });

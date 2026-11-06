@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, extname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import type { AiSourceKind } from "../shared/ai";
 import type { Database } from "./database";
 import {
   examInputProblem,
@@ -17,8 +18,10 @@ import {
 } from "../shared/exam";
 import { isQuestionContent, type AnswerStatus, type ReviewStatus, type Stage } from "../shared/question";
 
-const MAX_PDF_BYTES = 100 * 1024 * 1024;
+const MAX_FILE_BYTES = 100 * 1024 * 1024;
 const PDF_HEADER = Buffer.from("%PDF-");
+const ZIP_HEADER = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+const DOCX_ENTRY = Buffer.from("word/document.xml");
 const timestamp = () => new Date().toISOString();
 const sha256 = (data: Buffer) => createHash("sha256").update(data).digest("hex");
 
@@ -94,25 +97,65 @@ function validExamInput(value: unknown): ExamInput {
   };
 }
 
-function readSourcePdf(path: unknown): { bytes: Buffer; originalName: string } {
-  if (typeof path !== "string" || !path) throw new Error("原卷文件无效");
-  let stats;
+interface SourceMessages {
+  missing: string;
+  notFile: string;
+  empty: string;
+  tooBig: string;
+}
+
+/** 读取候选原卷字节并做大小/类型前置校验；错误文案由调用方按 PDF 或通用原卷区分。 */
+function readSourceBytes(path: unknown, messages: SourceMessages): { bytes: Buffer; originalName: string } {
+  if (typeof path !== "string" || !path) throw new Error(messages.notFile);
+  let stats: ReturnType<typeof statSync>;
   try {
     stats = statSync(path);
   } catch {
-    throw new Error("无法读取 PDF 文件");
+    throw new Error(messages.missing);
   }
-  if (!stats.isFile()) throw new Error("原卷必须是 PDF 文件");
-  if (stats.size === 0) throw new Error("PDF 文件为空");
-  if (stats.size > MAX_PDF_BYTES) throw new Error("PDF 文件超过 100 MiB");
+  if (!stats.isFile()) throw new Error(messages.notFile);
+  if (stats.size === 0) throw new Error(messages.empty);
+  if (stats.size > MAX_FILE_BYTES) throw new Error(messages.tooBig);
   let bytes: Buffer;
   try {
     bytes = readFileSync(path);
   } catch {
-    throw new Error("无法读取 PDF 文件");
+    throw new Error(messages.missing);
   }
-  if (bytes.length < PDF_HEADER.length || !bytes.subarray(0, PDF_HEADER.length).equals(PDF_HEADER)) throw new Error("原卷必须是 PDF 文件");
   return { bytes, originalName: basename(path) };
+}
+
+/** 答案/评分等附件仍只接受 PDF。 */
+function readSourcePdf(path: unknown): { bytes: Buffer; originalName: string } {
+  const { bytes, originalName } = readSourceBytes(path, {
+    missing: "无法读取 PDF 文件",
+    notFile: "原卷必须是 PDF 文件",
+    empty: "PDF 文件为空",
+    tooBig: "PDF 文件超过 100 MiB",
+  });
+  if (bytes.length < PDF_HEADER.length || !bytes.subarray(0, PDF_HEADER.length).equals(PDF_HEADER)) throw new Error("原卷必须是 PDF 文件");
+  return { bytes, originalName };
+}
+
+/** 原卷接受 PDF 或 DOCX：扩展名决定预期类型，魔数只做真实内容校验。 */
+function readSourceFile(path: unknown): { bytes: Buffer; originalName: string; kind: AiSourceKind } {
+  const extension = typeof path === "string" && path ? extname(path).toLowerCase() : "";
+  if (extension !== ".pdf" && extension !== ".docx") throw new Error("原卷必须是 PDF 或 DOCX 文件");
+  const { bytes, originalName } = readSourceBytes(path, {
+    missing: "无法读取原卷文件",
+    notFile: "原卷必须是 PDF 或 DOCX 文件",
+    empty: "原卷文件为空",
+    tooBig: "原卷文件超过 100 MiB",
+  });
+  if (extension === ".pdf") {
+    if (bytes.length < PDF_HEADER.length || !bytes.subarray(0, PDF_HEADER.length).equals(PDF_HEADER)) throw new Error("原卷必须是 PDF 文件");
+    return { bytes, originalName, kind: "pdf" };
+  }
+  // 加密的 DOCX 实际是 OLE 复合文档而非 ZIP；缺 word/document.xml 的普通 ZIP 也不能当原卷。
+  if (bytes.length < ZIP_HEADER.length || !bytes.subarray(0, ZIP_HEADER.length).equals(ZIP_HEADER) || !bytes.includes(DOCX_ENTRY)) {
+    throw new Error("DOCX 文件无效或已加密");
+  }
+  return { bytes, originalName, kind: "docx" };
 }
 
 /** 考试与原卷文件的主进程入口：文件按指纹去重，读取时校验完整性。 */
@@ -125,7 +168,7 @@ export class ExamStore {
 
   importPaper(input: unknown, sourcePath: unknown): ImportedExam {
     const valid = validExamInput(input);
-    const { bytes, originalName } = readSourcePdf(sourcePath);
+    const { bytes, originalName, kind } = readSourceFile(sourcePath);
     const sha = sha256(bytes);
     const existingFile = this.fileBySha(sha);
     if (existingFile) {
@@ -136,7 +179,7 @@ export class ExamStore {
       return { exam, file: existingFile, existing: false };
     }
 
-    const copy = this.storeCopy(sha, bytes);
+    const copy = this.storeCopy(sha, bytes, kind);
     try {
       return this.db.transaction((sqlite) => {
         const file = this.fileBySha(sha, sqlite) ?? this.insertFile(sqlite, sha, copy.relativePath, originalName, bytes.length);
@@ -157,7 +200,7 @@ export class ExamStore {
     const sha = sha256(bytes);
     const existingFile = this.fileBySha(sha);
     if (existingFile) this.readFile(existingFile.id);
-    const copy = existingFile ? undefined : this.storeCopy(sha, bytes);
+    const copy = existingFile ? undefined : this.storeCopy(sha, bytes, "pdf");
     try {
       return this.db.transaction((sqlite) => {
         const file = this.fileBySha(sha, sqlite) ?? this.insertFile(sqlite, sha, copy!.relativePath, originalName, bytes.length);
@@ -325,10 +368,10 @@ export class ExamStore {
     return record;
   }
 
-  private storeCopy(sha: string, bytes: Buffer): { relativePath: string; path: string; created: boolean } {
+  private storeCopy(sha: string, bytes: Buffer, kind: AiSourceKind): { relativePath: string; path: string; created: boolean } {
     mkdirSync(this.originals, { recursive: true });
-    const relativePath = `originals/${sha}.pdf`;
-    const target = join(this.originals, `${sha}.pdf`);
+    const relativePath = `originals/${sha}.${kind}`;
+    const target = join(this.originals, `${sha}.${kind}`);
     if (existsSync(target)) {
       if (sha256(readFileSync(target)) !== sha) throw new Error("原卷存储校验失败");
       return { relativePath, path: target, created: false };
@@ -346,8 +389,10 @@ export class ExamStore {
   }
 
   private storedPath(file: OriginalFileRecord): string {
-    if (file.relativePath !== `originals/${file.sha256}.pdf`) throw new Error("原卷路径无效");
-    const path = join(this.originals, `${file.sha256}.pdf`);
+    // 旧记录都是 .pdf；按相对路径里的扩展名定位磁盘文件，索引字段不参与拼路径。
+    const match = /^originals\/([0-9a-f]{64})\.(pdf|docx)$/.exec(file.relativePath);
+    if (match === null || match[1] !== file.sha256) throw new Error("原卷路径无效");
+    const path = join(this.originals, `${file.sha256}.${match[2]}`);
     let stats;
     try {
       stats = lstatSync(path);
