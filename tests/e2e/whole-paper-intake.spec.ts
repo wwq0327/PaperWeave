@@ -81,6 +81,37 @@ function seedApprovedDuplicate(dir: string) {
   db.close();
 }
 
+test("一键自动录题：单次确认后自动建档并通过覆盖干净的题", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paperweave-whole-auto-"));
+  const app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`], env: { ...process.env, PAPERWEAVE_AI_FAKE: "clean" } });
+  try {
+    const page = await app.firstWindow();
+    await importExam(page, app);
+    const panel = page.getByRole("region", { name: "整卷任务", exact: true });
+    await panel.getByRole("button", { name: "自动录题并建档" }).click();
+    const confirmation = panel.getByRole("region", { name: "确认整卷发送" });
+    await expect(confirmation).toContainText("执行后自动建档");
+    await confirmation.getByRole("button", { name: "确认发送并自动建档" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "自动通过 2 题" })).toBeVisible({ timeout: 30000 });
+    await expect(page.getByRole("status").filter({ hasText: "已建档 2 题" })).toBeVisible();
+
+    const review = page.getByRole("region", { name: "整卷审核" });
+    await expect(review).toContainText("第 1 批 · 原卷第 1 页 · 题 1");
+    await expect(review).toContainText("第 1 批 · 原卷第 2 页 · 题 2");
+    await expect(review).toContainText("内容已通过");
+
+    const coverage = panel.getByRole("region", { name: "原卷覆盖" });
+    await expect(coverage).toContainText("覆盖率 100%");
+    await expect(coverage).toContainText("未归属片段：0");
+    await expect(coverage).toContainText("重叠：0");
+    await expect(coverage).toContainText("重号：0");
+    await expect(coverage).toContainText("缺锚点：0");
+  } finally {
+    await closeApp(app);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("整卷建档：分类继承、材料门槛与整卷审核批量通过", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "paperweave-whole-intake-"));
   const app = await electron.launch({ args: [entry, `--user-data-dir=${dir}`], env: { ...process.env, PAPERWEAVE_AI_FAKE: "ok" } });
