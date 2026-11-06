@@ -167,7 +167,7 @@ test("整卷任务准备后重开可见，且不跨考试读取或创建", async
     const page = await app.firstWindow();
     await importExam(page, app);
     const panel = page.getByRole("region", { name: "整卷任务", exact: true });
-    await panel.getByRole("button", { name: "准备整卷文字任务" }).click();
+    await panel.getByRole("button", { name: "准备整卷任务" }).click();
     await expect(panel.getByRole("region", { name: "整卷任务详情" })).toContainText("原卷第 1、2 页");
     await expect(panel).toContainText("不发送模型");
     const isolated = await page.evaluate(async ({ otherId, otherSectionId }) => {
@@ -200,7 +200,7 @@ test("整卷文字先确认发送，失败后重新确认并重试", async () =>
     const page = await app.firstWindow();
     await importExam(page, app);
     const panel = page.getByRole("region", { name: "整卷任务", exact: true });
-    await panel.getByRole("button", { name: "准备整卷文字任务" }).click();
+    await panel.getByRole("button", { name: "准备整卷任务" }).click();
     await panel.getByRole("button", { name: "发送或重试整卷任务" }).click();
     const confirm = panel.getByRole("region", { name: "确认整卷发送" });
     await expect(confirm).toContainText("原卷第 1、2 页");
@@ -208,11 +208,11 @@ test("整卷文字先确认发送，失败后重新确认并重试", async () =>
     await confirm.getByRole("button", { name: "取消发送" }).click();
     await expect(panel).toContainText("待处理");
     await panel.getByRole("button", { name: "发送或重试整卷任务" }).click();
-    await confirm.getByRole("button", { name: "确认发送整卷文字" }).click();
+    await confirm.getByRole("button", { name: "确认发送整卷任务" }).click();
     await expect(panel).toContainText("失败待重试");
     await app.evaluate(() => { process.env.PAPERWEAVE_AI_FAKE = "malicious"; });
     await panel.getByRole("button", { name: "发送或重试整卷任务" }).click();
-    await confirm.getByRole("button", { name: "确认发送整卷文字" }).click();
+    await confirm.getByRole("button", { name: "确认发送整卷任务" }).click();
     await expect(panel).toContainText("已处理");
     await expect(panel).toContainText("识别结果仍是待核草稿");
     const results = panel.getByRole("region", { name: "第 1 批识别结果" });
@@ -237,14 +237,14 @@ test("整卷取消后丢弃迟到响应；返回页码不属于本批也失败",
     const page = await app.firstWindow();
     await importExam(page, app, path.resolve("tests/fixtures/text.pdf"));
     const panel = page.getByRole("region", { name: "整卷任务", exact: true });
-    await panel.getByRole("button", { name: "准备整卷文字任务" }).click();
+    await panel.getByRole("button", { name: "准备整卷任务" }).click();
     await panel.getByRole("button", { name: "发送或重试整卷任务" }).click();
-    await panel.getByRole("button", { name: "确认发送整卷文字" }).click();
+    await panel.getByRole("button", { name: "确认发送整卷任务" }).click();
     await panel.getByRole("button", { name: "取消整卷处理" }).click();
     await expect(panel).toContainText("失败待重试");
     await app.evaluate(() => { process.env.PAPERWEAVE_AI_FAKE = "ok"; });
     await panel.getByRole("button", { name: "发送或重试整卷任务" }).click();
-    await panel.getByRole("button", { name: "确认发送整卷文字" }).click();
+    await panel.getByRole("button", { name: "确认发送整卷任务" }).click();
     await expect(panel).toContainText("失败待重试");
     await expect(panel).not.toContainText("已处理");
   } finally { await closeApp(app); rmSync(dir, { recursive: true, force: true }); }

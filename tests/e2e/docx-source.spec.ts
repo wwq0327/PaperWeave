@@ -79,7 +79,7 @@ test("DOCX 原卷：段落文字视图、按段准备整卷任务并批量建档
 
     // 准备整卷任务：空段落不进入批次页码，来源显示为段。
     const whole = page.getByRole("region", { name: "整卷任务", exact: true });
-    await whole.getByRole("button", { name: "准备整卷文字任务" }).click();
+    await whole.getByRole("button", { name: "准备整卷任务" }).click();
     const detail = whole.getByRole("region", { name: "整卷任务详情" });
     await expect(detail).toContainText("原卷第 1、2、3、5 段");
     await expect(detail).toContainText("第 4 段没有文字");
@@ -88,7 +88,7 @@ test("DOCX 原卷：段落文字视图、按段准备整卷任务并批量建档
     await whole.getByRole("button", { name: "发送或重试整卷任务" }).click();
     const sendConfirm = whole.getByRole("region", { name: "确认整卷发送" });
     await expect(sendConfirm).toContainText("原卷第 1、2、3、5 段的提取文字");
-    await sendConfirm.getByRole("button", { name: "确认发送整卷文字" }).click();
+    await sendConfirm.getByRole("button", { name: "确认发送整卷任务" }).click();
     await expect(whole).toContainText("已处理");
     const results = whole.getByRole("region", { name: "第 1 批识别结果" });
     await expect(results).toContainText("原卷第 1 段");
