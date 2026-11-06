@@ -133,6 +133,20 @@ test("答案 PDF 追加答案批次，扫描答案页使用对应页面图", asy
   db.close();
 });
 
+test("页面图只接受原卷无标识或答案／评分文件标识，拒绝其它角色", async () => {
+  const { root, db, exams, tasks, attachments, source } = setup();
+  const paper = source("blank.pdf");
+  const sheetPath = join(root, "sheet.pdf"); copyFileSync(join(process.cwd(), "tests/fixtures", "text.pdf"), sheetPath);
+  exams.attachFile(paper.exam.id, "answer_sheet", sheetPath);
+  const sheet = exams.getExam(paper.exam.id).files.find((file) => file.role === "answer_sheet");
+  const task = await prepareWholePaper(exams, tasks, attachments, paper.exam.id, paper.sectionId, paper.file.id, [pageImage(1)]);
+  expect(task.state.plan.answerFiles).toEqual([]);
+  expect(task.state.plan.batches.map((batch) => batch.kind)).toEqual(["scan"]);
+  await expect(prepareWholePaper(exams, tasks, attachments, paper.exam.id, paper.sectionId, paper.file.id, [pageImage(1, sheet?.id)])).rejects.toThrow("页面图像不属于该考试");
+  await expect(prepareWholePaper(exams, tasks, attachments, paper.exam.id, paper.sectionId, paper.file.id, [pageImage(1, paper.file.id)])).rejects.toThrow("页面图像不属于该考试");
+  db.close();
+});
+
 test("损坏 PDF 提取失败时不创建任务", async () => {
   const { root, db, exams, tasks, attachments } = setup();
   const path = join(root, "bad.pdf"); writeFileSync(path, "%PDF-1.4\ninvalid\n%%EOF");
