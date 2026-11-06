@@ -11,6 +11,17 @@ describe("整卷文字分批", () => {
     expect(plan.batches.every((batch) => [...wholePaperRequestText(batch)].length <= 20)).toBe(true);
   });
 
+  it("分批保留文本块坐标，只把块放进覆盖它的片段", () => {
+    const blocks = [
+      { start: 0, end: 2, text: "甲😀", x: 10, y: 30, width: 20, height: 12 },
+      { start: 2, end: 9, text: "乙丙丁戊己庚", x: 30, y: 30, width: 70, height: 12 },
+      { start: 9, end: 10, text: "壬", x: 100, y: 30, width: 10, height: 12 },
+    ];
+    const plan = planWholePaperBatches([{ page: 1, text: "甲😀乙丙丁戊己庚辛壬", blocks }], 20);
+    expect(plan.batches[0].fragments[0]).toMatchObject({ start: 0, end: 9, text: "甲😀乙丙丁戊己庚辛", blocks: blocks.slice(0, 2) });
+    expect(plan.batches[1].fragments[0]).toMatchObject({ start: 9, end: 10, text: "壬", blocks: [blocks[2]] });
+  });
+
   it("发送文字区分不同原页，报告空白页且保留空白", () => {
     const plan = planWholePaperBatches([{ page: 1, text: "题" }, { page: 2, text: "  " }, { page: 3, text: "" }], 100);
     expect(plan.emptyPages).toEqual([2, 3]);
